@@ -1,0 +1,11 @@
+{
+	"InstallScripts" : 
+	[
+		"C:/develop/rps/build/cmake_install.cmake",
+		"C:/develop/rps/build/libs/rps-core/cmake_install.cmake",
+		"C:/develop/rps/build/libs/rps-ipc/cmake_install.cmake",
+		"C:/develop/rps/build/apps/rps-pluginscanorchestrator/cmake_install.cmake",
+		"C:/develop/rps/build/apps/rps-pluginscanner/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
