@@ -1,3 +1,10 @@
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 #include <iostream>
 #include <string>
 #include <thread>
@@ -25,6 +32,12 @@ std::vector<std::unique_ptr<IPluginFormatScanner>> ScannerFactory::createAllScan
 }
 
 int main(int argc, char* argv[]) {
+#ifdef _WIN32
+    // Suppress Windows error/crash dialog boxes from plugin DLLs.
+    // This prevents pop-ups for access violations, missing DLLs, etc.
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+#endif
+
     namespace po = boost::program_options;
     namespace fs = boost::filesystem;
     

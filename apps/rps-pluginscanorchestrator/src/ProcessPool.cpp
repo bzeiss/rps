@@ -2,6 +2,7 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+#include <windows.h>
 #endif
 
 #include <rps/orchestrator/ProcessPool.hpp>
@@ -96,6 +97,31 @@ void ProcessPool::processJob(const ScanJob& job) {
 
         bp::ipstream errStream;
         bp::child scannerProc(job.scannerBin, bp::args(scanArgs), bp::std_err > errStream);
+
+#ifdef _WIN32
+        // Restrict scanner child process from showing Win32 UI (dialogs, message boxes).
+        // JOB_OBJECT_UILIMIT_HANDLES prevents the process from using USER handles (HWNDs)
+        // owned by processes outside the job - this silently suppresses MessageBox calls
+        // from plugin DLLs (e.g. Kilohearts session mutex dialog) without affecting
+        // pipe/kernel handles used for IPC.
+        {
+            HANDLE hJob = CreateJobObject(nullptr, nullptr);
+            if (hJob) {
+                JOBOBJECT_BASIC_UI_RESTRICTIONS uiRestr = {};
+                uiRestr.UIRestrictionsClass =
+                    JOB_OBJECT_UILIMIT_HANDLES |
+                    JOB_OBJECT_UILIMIT_GLOBALATOMS |
+                    JOB_OBJECT_UILIMIT_READCLIPBOARD |
+                    JOB_OBJECT_UILIMIT_WRITECLIPBOARD |
+                    JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS |
+                    JOB_OBJECT_UILIMIT_EXITWINDOWS;
+                SetInformationJobObject(hJob, JobObjectBasicUIRestrictions,
+                    &uiRestr, sizeof(uiRestr));
+                AssignProcessToJobObject(hJob, scannerProc.native_handle());
+                CloseHandle(hJob);
+            }
+        }
+#endif
 
         const bool printVerbose = job.verbose;
         std::thread stderrDrainer([&errStream, printVerbose, this]() {
