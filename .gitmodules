@@ -1,0 +1,6 @@
+[submodule "libs/rps-core/include/rps/core/clap"]
+	path = libs/rps-core/include/rps/core/clap
+	url = https://github.com/free-audio/clap.git
+[submodule "libs/rps-core/include/rps/core/vst3sdk"]
+	path = libs/rps-core/include/rps/core/vst3sdk
+	url = https://github.com/steinbergmedia/vst3sdk.git

@@ -2,11 +2,28 @@
 #include <string>
 #include <thread>
 #include <chrono>
+#include <vector>
+#include <memory>
 #include <boost/program_options.hpp>
+#include <boost/filesystem.hpp>
 #include <rps/ipc/Connection.hpp>
+#include <rps/scanner/IPluginFormatScanner.hpp>
+#include <rps/scanner/ClapScanner.hpp>
+#include <rps/scanner/Vst3Scanner.hpp>
+
+namespace rps::scanner {
+std::vector<std::unique_ptr<IPluginFormatScanner>> ScannerFactory::createAllScanners() {
+    std::vector<std::unique_ptr<IPluginFormatScanner>> scanners;
+    scanners.push_back(std::make_unique<ClapScanner>());
+    scanners.push_back(std::make_unique<Vst3Scanner>());
+    // Add AU, LV2 here later
+    return scanners;
+}
+}
 
 int main(int argc, char* argv[]) {
     namespace po = boost::program_options;
+    namespace fs = boost::filesystem;
     
     po::options_description desc("Scanner Options");
     desc.add_options()
@@ -34,7 +51,8 @@ int main(int argc, char* argv[]) {
     }
 
     std::string ipcId = vm["ipc-id"].as<std::string>();
-    std::string pluginPath = vm.count("plugin-path") ? vm["plugin-path"].as<std::string>() : "unknown";
+    std::string pluginPathStr = vm.count("plugin-path") ? vm["plugin-path"].as<std::string>() : "unknown";
+    fs::path pluginPath(pluginPathStr);
 
     try {
         // 1. Connect to Orchestrator IPC Queue
@@ -49,22 +67,43 @@ int main(int argc, char* argv[]) {
 
         auto req = std::get<rps::ipc::ScanRequest>(maybeMsg.value().payload);
 
-        // 3. Simulate Scanning Process with Progress Events
-        rps::ipc::Message progMsg;
-        progMsg.type = rps::ipc::MessageType::ProgressEvent;
+        // 3. Find appropriate scanner
+        auto scanners = rps::scanner::ScannerFactory::createAllScanners();
+        rps::scanner::IPluginFormatScanner* activeScanner = nullptr;
 
-        progMsg.payload = rps::ipc::ProgressEvent{"Loading DLL/SO into memory...", 10};
-        connection->sendMessage(progMsg);
-        std::this_thread::sleep_for(std::chrono::milliseconds(300));
-        
+        for (auto& s : scanners) {
+            if (s->canHandle(pluginPath)) {
+                activeScanner = s.get();
+                break;
+            }
+        }
+
+        if (!activeScanner && pluginPathStr != "CRASH_ME" && pluginPathStr != "HANG_ME") {
+            rps::ipc::Message errMsg;
+            errMsg.type = rps::ipc::MessageType::ErrorMessage;
+            errMsg.payload = rps::ipc::ErrorMessage{"Unsupported Format", "No scanner handles: " + pluginPathStr};
+            connection->sendMessage(errMsg);
+            return 1;
+        }
+
+        // 4. Progress Callback closure
+        auto progressCb = [&connection](int percentage, const std::string& status) {
+            rps::ipc::Message progMsg;
+            progMsg.type = rps::ipc::MessageType::ProgressEvent;
+            progMsg.payload = rps::ipc::ProgressEvent{status, percentage};
+            connection->sendMessage(progMsg);
+        };
+
         // --- CRASH TEST SIMULATION ---
-        if (pluginPath == "CRASH_ME") {
+        if (pluginPathStr == "CRASH_ME") {
+            progressCb(10, "Simulating crash...");
             std::cerr << "Scanner triggering intentional crash!\n";
             int* ptr = nullptr;
             *ptr = 42; // Segmentation fault
         }
         
-        if (pluginPath == "HANG_ME") {
+        if (pluginPathStr == "HANG_ME") {
+            progressCb(10, "Simulating hang...");
             std::cerr << "Scanner triggering intentional hang!\n";
             while (true) {
                 std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -72,30 +111,15 @@ int main(int argc, char* argv[]) {
         }
         // -----------------------------
 
-        progMsg.payload = rps::ipc::ProgressEvent{"Instantiating plugin factory...", 40};
-        connection->sendMessage(progMsg);
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(300));
-
-        progMsg.payload = rps::ipc::ProgressEvent{"Extracting parameters...", 70};
-        connection->sendMessage(progMsg);
-        std::this_thread::sleep_for(std::chrono::milliseconds(300));
-
-        // 4. Send Dummy Success Result
-        rps::ipc::Message resMsg;
-        resMsg.type = rps::ipc::MessageType::ScanResult;
-        
-        rps::ipc::ScanResult res;
-        res.name = "Dummy EQ";
-        res.vendor = "RPS Audio";
-        res.version = "1.0.0";
-        res.numInputs = 2;
-        res.numOutputs = 2;
-        res.parameters.push_back({0, "Gain", 0.0});
-        res.parameters.push_back({1, "Frequency", 1000.0});
-        
-        resMsg.payload = res;
-        connection->sendMessage(resMsg);
+        // 5. Execute Scan
+        if (activeScanner) {
+            auto result = activeScanner->scan(pluginPath, progressCb);
+            
+            rps::ipc::Message resMsg;
+            resMsg.type = rps::ipc::MessageType::ScanResult;
+            resMsg.payload = result;
+            connection->sendMessage(resMsg);
+        }
 
         // Give IPC time to flush
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -107,4 +131,5 @@ int main(int argc, char* argv[]) {
 
     return 0;
 }
+
 

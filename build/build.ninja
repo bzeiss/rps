@@ -282,9 +282,27 @@ build apps/rps-pluginscanner/CMakeFiles/rps-pluginscanner.dir/src/main.cpp.obj: 
   DEFINES = -DBOOST_CONTAINER_NO_LIB -DBOOST_CONTAINER_STATIC_LINK -DBOOST_FILESYSTEM_NO_LIB -DBOOST_FILESYSTEM_STATIC_LINK=1 -DBOOST_JSON_NO_LIB=1 -DBOOST_JSON_STATIC_LINK=1 -DBOOST_PROGRAM_OPTIONS_NO_LIB -DBOOST_PROGRAM_OPTIONS_STATIC_LINK
   DEP_FILE = apps\rps-pluginscanner\CMakeFiles\rps-pluginscanner.dir\src\main.cpp.obj.d
   FLAGS = -std=c++23 -Wall -Wextra -Wpedantic -Werror
-  INCLUDES = -IC:/develop/rps/apps/rps-pluginscanner/include -IC:/develop/rps/libs/rps-core/include -IC:/develop/rps/libs/rps-ipc/include
+  INCLUDES = -IC:/develop/rps/apps/rps-pluginscanner/include -IC:/develop/rps/libs/rps-core/include/rps/core/vst3sdk -IC:/develop/rps/libs/rps-core/include -IC:/develop/rps/libs/rps-ipc/include
   OBJECT_DIR = apps\rps-pluginscanner\CMakeFiles\rps-pluginscanner.dir
   OBJECT_FILE_DIR = apps\rps-pluginscanner\CMakeFiles\rps-pluginscanner.dir\src
+  TARGET_SUPPORT_DIR = apps\rps-pluginscanner\CMakeFiles\rps-pluginscanner.dir
+
+build apps/rps-pluginscanner/CMakeFiles/rps-pluginscanner.dir/src/scanners/ClapScanner.cpp.obj: CXX_COMPILER__rps-pluginscanner_unscanned_ C$:/develop/rps/apps/rps-pluginscanner/src/scanners/ClapScanner.cpp || cmake_object_order_depends_target_rps-pluginscanner
+  DEFINES = -DBOOST_CONTAINER_NO_LIB -DBOOST_CONTAINER_STATIC_LINK -DBOOST_FILESYSTEM_NO_LIB -DBOOST_FILESYSTEM_STATIC_LINK=1 -DBOOST_JSON_NO_LIB=1 -DBOOST_JSON_STATIC_LINK=1 -DBOOST_PROGRAM_OPTIONS_NO_LIB -DBOOST_PROGRAM_OPTIONS_STATIC_LINK
+  DEP_FILE = apps\rps-pluginscanner\CMakeFiles\rps-pluginscanner.dir\src\scanners\ClapScanner.cpp.obj.d
+  FLAGS = -std=c++23 -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -IC:/develop/rps/apps/rps-pluginscanner/include -IC:/develop/rps/libs/rps-core/include/rps/core/vst3sdk -IC:/develop/rps/libs/rps-core/include -IC:/develop/rps/libs/rps-ipc/include
+  OBJECT_DIR = apps\rps-pluginscanner\CMakeFiles\rps-pluginscanner.dir
+  OBJECT_FILE_DIR = apps\rps-pluginscanner\CMakeFiles\rps-pluginscanner.dir\src\scanners
+  TARGET_SUPPORT_DIR = apps\rps-pluginscanner\CMakeFiles\rps-pluginscanner.dir
+
+build apps/rps-pluginscanner/CMakeFiles/rps-pluginscanner.dir/src/scanners/Vst3Scanner.cpp.obj: CXX_COMPILER__rps-pluginscanner_unscanned_ C$:/develop/rps/apps/rps-pluginscanner/src/scanners/Vst3Scanner.cpp || cmake_object_order_depends_target_rps-pluginscanner
+  DEFINES = -DBOOST_CONTAINER_NO_LIB -DBOOST_CONTAINER_STATIC_LINK -DBOOST_FILESYSTEM_NO_LIB -DBOOST_FILESYSTEM_STATIC_LINK=1 -DBOOST_JSON_NO_LIB=1 -DBOOST_JSON_STATIC_LINK=1 -DBOOST_PROGRAM_OPTIONS_NO_LIB -DBOOST_PROGRAM_OPTIONS_STATIC_LINK
+  DEP_FILE = apps\rps-pluginscanner\CMakeFiles\rps-pluginscanner.dir\src\scanners\Vst3Scanner.cpp.obj.d
+  FLAGS = -std=c++23 -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -IC:/develop/rps/apps/rps-pluginscanner/include -IC:/develop/rps/libs/rps-core/include/rps/core/vst3sdk -IC:/develop/rps/libs/rps-core/include -IC:/develop/rps/libs/rps-ipc/include
+  OBJECT_DIR = apps\rps-pluginscanner\CMakeFiles\rps-pluginscanner.dir
+  OBJECT_FILE_DIR = apps\rps-pluginscanner\CMakeFiles\rps-pluginscanner.dir\src\scanners
   TARGET_SUPPORT_DIR = apps\rps-pluginscanner\CMakeFiles\rps-pluginscanner.dir
 
 
@@ -295,7 +313,7 @@ build apps/rps-pluginscanner/CMakeFiles/rps-pluginscanner.dir/src/main.cpp.obj: 
 #############################################
 # Link the executable apps\rps-pluginscanner\rps-pluginscanner.exe
 
-build apps/rps-pluginscanner/rps-pluginscanner.exe: CXX_EXECUTABLE_LINKER__rps-pluginscanner_ apps/rps-pluginscanner/CMakeFiles/rps-pluginscanner.dir/src/main.cpp.obj | libs/rps-core/librps-core.a libs/rps-ipc/librps-ipc.a C$:/msys64/mingw64/lib/libboost_program_options-mt.a C$:/msys64/mingw64/lib/libboost_json-mt.a C$:/msys64/mingw64/lib/libboost_filesystem-mt.a C$:/msys64/mingw64/lib/libboost_atomic-mt.a C$:/msys64/mingw64/lib/libboost_container-mt.a || libs/rps-core/librps-core.a libs/rps-ipc/librps-ipc.a
+build apps/rps-pluginscanner/rps-pluginscanner.exe: CXX_EXECUTABLE_LINKER__rps-pluginscanner_ apps/rps-pluginscanner/CMakeFiles/rps-pluginscanner.dir/src/main.cpp.obj apps/rps-pluginscanner/CMakeFiles/rps-pluginscanner.dir/src/scanners/ClapScanner.cpp.obj apps/rps-pluginscanner/CMakeFiles/rps-pluginscanner.dir/src/scanners/Vst3Scanner.cpp.obj | libs/rps-core/librps-core.a libs/rps-ipc/librps-ipc.a C$:/msys64/mingw64/lib/libboost_program_options-mt.a C$:/msys64/mingw64/lib/libboost_json-mt.a C$:/msys64/mingw64/lib/libboost_filesystem-mt.a C$:/msys64/mingw64/lib/libboost_atomic-mt.a C$:/msys64/mingw64/lib/libboost_container-mt.a || libs/rps-core/librps-core.a libs/rps-ipc/librps-ipc.a
   LINK_LIBRARIES = libs/rps-core/librps-core.a  libs/rps-ipc/librps-ipc.a  C:/msys64/mingw64/lib/libboost_program_options-mt.a  C:/msys64/mingw64/lib/libboost_json-mt.a  C:/msys64/mingw64/lib/libboost_filesystem-mt.a  -lws2_32  C:/msys64/mingw64/lib/libboost_atomic-mt.a  -lsynchronization  -lbcrypt  C:/msys64/mingw64/lib/libboost_container-mt.a  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
   OBJECT_DIR = apps\rps-pluginscanner\CMakeFiles\rps-pluginscanner.dir
   POST_BUILD = cd .
