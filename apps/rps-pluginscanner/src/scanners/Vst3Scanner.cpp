@@ -13,19 +13,28 @@
 #include <cstring>
 #include <algorithm>
 
+// Suppress warnings from third-party Steinberg SDK headers
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat"
+#pragma GCC diagnostic ignored "-Wpragma-pack"
+#endif
+
 // Include minimum VST3 COM interfaces needed to parse the factory
 #include <pluginterfaces/base/ipluginbase.h>
 #include <pluginterfaces/vst/ivstcomponent.h>
 #include <pluginterfaces/vst/ivstaudioprocessor.h>
 
-// Disable GCC format warnings for the Steinberg SDK file which triggers -Werror
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat"
+#pragma GCC diagnostic ignored "-Wpragma-pack"
 #endif
-
 #include <pluginterfaces/base/funknown.cpp>
-
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop
 #endif

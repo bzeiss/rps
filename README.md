@@ -24,21 +24,22 @@ RPS solves this by using a **multi-process architecture**:
 | Dependency | Minimum Version | Notes |
 |---|---|---|
 | CMake | 3.25 | Build system |
-| C++ Compiler | C++23 capable | GCC 13+, Clang 16+, MSVC 2022 17.5+ |
+| C++ Compiler | C++23 capable | Clang 16+ (recommended), GCC 13+, MSVC 2022 17.5+ |
 | Boost | 1.81 | `json`, `process`, `interprocess`, `filesystem`, `program_options` |
 | SQLite3 | 3.x | For the plugin database |
 
-### Windows (MSYS2 / MinGW-w64)
+### Windows (MSYS2 / Clang) — Recommended
 
-Install dependencies via MSYS2:
+Use the MSYS2 `clang64` environment for the best C++23 support on Windows. Open the **MSYS2 CLANG64** shell and install dependencies:
 ```bash
-pacman -S mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja \
-          mingw-w64-x86_64-boost mingw-w64-x86_64-sqlite3
+pacman -S mingw-w64-clang-x86_64-cmake mingw-w64-clang-x86_64-ninja \
+          mingw-w64-clang-x86_64-clang mingw-w64-clang-x86_64-boost \
+          mingw-w64-clang-x86_64-sqlite3
 ```
 
 Configure and build:
 ```bash
-cmake -G "Ninja" -B build
+cmake -G "Ninja" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -B build
 cmake --build build
 ```
 

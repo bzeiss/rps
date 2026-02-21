@@ -1,9 +1,11 @@
 cmake_minimum_required(VERSION 3.25)
 
+cmake_policy(SET CMP0167 NEW)
+
 project(rps-plugin-scanner
     VERSION 0.1.0
     DESCRIPTION "Reliable Plugin Scanner"
-    LANGUAGES CXX
+    LANGUAGES C CXX
 )
 
 # Enforce strictly C++23
