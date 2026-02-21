@@ -54,7 +54,6 @@ public:
         std::vector<fs::path> paths;
 #if defined(_WIN32)
         paths.push_back("C:\\Program Files\\Common Files\\VST3");
-        paths.push_back("C:\\Program Files (x86)\\Common Files\\VST3");
 #elif defined(__APPLE__)
         paths.push_back("/Library/Audio/Plug-Ins/VST3");
         paths.push_back(getHomeDir() / "Library/Audio/Plug-Ins/VST3");
@@ -95,7 +94,6 @@ public:
         std::vector<fs::path> paths;
 #if defined(_WIN32)
         paths.push_back("C:\\Program Files\\Common Files\\CLAP");
-        paths.push_back("C:\\Program Files (x86)\\Common Files\\CLAP");
 #elif defined(__APPLE__)
         paths.push_back("/Library/Audio/Plug-Ins/CLAP");
         paths.push_back(getHomeDir() / "Library/Audio/Plug-Ins/CLAP");

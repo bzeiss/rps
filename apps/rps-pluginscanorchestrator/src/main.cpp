@@ -168,25 +168,29 @@ int main(int argc, char* argv[]) {
     std::cout << "RPS Plugin Scan Orchestrator starting...\n";
     std::cout << "Discovered " << pluginsToScan.size() << " plugins.\n";
     std::cout << "Using scanner binary: " << scannerPath.string() << "\n";
-    std::cout << "Starting process pool with " << numWorkers << " workers (timeout: " << timeoutMs << "ms)...\n";
-    std::cout << "--------------------------------------------------------\n";
 
     std::vector<rps::orchestrator::ScanJob> jobs;
     for (const auto& p : pluginsToScan) {
         jobs.push_back({ p, scannerPath.string(), timeoutMs, verbose });
     }
 
-    std::string dbPath = vm["db"].as<std::string>();
-    std::cout << "Output database: " << dbPath << "\n";
-
-    rps::orchestrator::db::DatabaseManager db(dbPath);
+    rps::orchestrator::db::DatabaseManager db(vm["db"].as<std::string>());
     db.initializeSchema();
 
     rps::orchestrator::ProcessPool pool(numWorkers, &db);
+    
+    auto startTime = std::chrono::steady_clock::now();
+    std::cout << "Starting process pool with " << numWorkers << " workers (timeout: " << timeoutMs << "ms)...\n";
+    std::cout << "--------------------------------------------------------\n";
+    std::cout << "Output database: " << vm["db"].as<std::string>() << "\n";
+
     pool.runJobs(jobs);
 
+    auto endTime = std::chrono::steady_clock::now();
+    auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+
     std::cout << "--------------------------------------------------------\n";
-    std::cout << "Orchestrator shutdown complete.\n";
+    std::cout << "Orchestrator shutdown complete. Total scan time: " << elapsedMs << " ms.\n";
     return 0;
 }
 

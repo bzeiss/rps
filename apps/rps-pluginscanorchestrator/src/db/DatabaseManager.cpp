@@ -41,6 +41,7 @@ void DatabaseManager::initializeSchema() {
             num_outputs INTEGER DEFAULT 0,
             status TEXT NOT NULL,
             error_message TEXT,
+            scan_time_ms INTEGER DEFAULT 0,
             last_scanned TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     )";
@@ -60,15 +61,15 @@ void DatabaseManager::initializeSchema() {
     executeQuery(createTableParameters);
 }
 
-void DatabaseManager::upsertPluginResult(const boost::filesystem::path& pluginPath, const rps::ipc::ScanResult& result) {
+void DatabaseManager::upsertPluginResult(const boost::filesystem::path& pluginPath, const rps::ipc::ScanResult& result, int64_t scanTimeMs) {
     std::lock_guard<std::mutex> lock(m_dbMutex);
 
     sqlite3_stmt* stmt = nullptr;
     
     // 1. Upsert into plugins table
     const std::string upsertPluginSql = R"(
-        INSERT INTO plugins (path, name, vendor, version, num_inputs, num_outputs, status, error_message, last_scanned)
-        VALUES (?, ?, ?, ?, ?, ?, 'SUCCESS', NULL, CURRENT_TIMESTAMP)
+        INSERT INTO plugins (path, name, vendor, version, num_inputs, num_outputs, status, error_message, scan_time_ms, last_scanned)
+        VALUES (?, ?, ?, ?, ?, ?, 'SUCCESS', NULL, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(path) DO UPDATE SET
             name=excluded.name,
             vendor=excluded.vendor,
@@ -77,6 +78,7 @@ void DatabaseManager::upsertPluginResult(const boost::filesystem::path& pluginPa
             num_outputs=excluded.num_outputs,
             status=excluded.status,
             error_message=excluded.error_message,
+            scan_time_ms=excluded.scan_time_ms,
             last_scanned=excluded.last_scanned;
     )";
 
@@ -92,6 +94,7 @@ void DatabaseManager::upsertPluginResult(const boost::filesystem::path& pluginPa
     sqlite3_bind_text(stmt, 4, result.version.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(stmt, 5, result.numInputs);
     sqlite3_bind_int(stmt, 6, result.numOutputs);
+    sqlite3_bind_int64(stmt, 7, scanTimeMs);
 
     if (sqlite3_step(stmt) != SQLITE_DONE) {
         std::cerr << "Failed to execute plugin upsert.\n";
@@ -139,17 +142,18 @@ void DatabaseManager::upsertPluginResult(const boost::filesystem::path& pluginPa
     }
 }
 
-void DatabaseManager::recordPluginFailure(const boost::filesystem::path& pluginPath, const std::string& errorMsg) {
+void DatabaseManager::recordPluginFailure(const boost::filesystem::path& pluginPath, const std::string& errorMsg, int64_t scanTimeMs) {
     std::lock_guard<std::mutex> lock(m_dbMutex);
 
     sqlite3_stmt* stmt = nullptr;
     
     const std::string upsertFailureSql = R"(
-        INSERT INTO plugins (path, status, error_message, last_scanned)
-        VALUES (?, 'ERROR', ?, CURRENT_TIMESTAMP)
+        INSERT INTO plugins (path, status, error_message, scan_time_ms, last_scanned)
+        VALUES (?, 'ERROR', ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(path) DO UPDATE SET
             status=excluded.status,
             error_message=excluded.error_message,
+            scan_time_ms=excluded.scan_time_ms,
             last_scanned=excluded.last_scanned;
     )";
 
@@ -161,6 +165,7 @@ void DatabaseManager::recordPluginFailure(const boost::filesystem::path& pluginP
     std::string pathStr = pluginPath.string();
     sqlite3_bind_text(stmt, 1, pathStr.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 2, errorMsg.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 3, scanTimeMs);
 
     if (sqlite3_step(stmt) != SQLITE_DONE) {
         std::cerr << "Failed to execute plugin failure update.\n";

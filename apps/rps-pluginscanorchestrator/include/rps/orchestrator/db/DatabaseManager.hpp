@@ -21,10 +21,10 @@ public:
     void initializeSchema();
 
     // Insert or update a plugin scan result
-    void upsertPluginResult(const boost::filesystem::path& pluginPath, const rps::ipc::ScanResult& result);
+    void upsertPluginResult(const boost::filesystem::path& pluginPath, const rps::ipc::ScanResult& result, int64_t scanTimeMs);
 
     // Record a failed scan
-    void recordPluginFailure(const boost::filesystem::path& pluginPath, const std::string& errorMsg);
+    void recordPluginFailure(const boost::filesystem::path& pluginPath, const std::string& errorMsg, int64_t scanTimeMs);
 
 private:
     sqlite3* m_db = nullptr;

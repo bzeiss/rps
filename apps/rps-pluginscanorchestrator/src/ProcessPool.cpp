@@ -163,39 +163,51 @@ void ProcessPool::processJob(const ScanJob& job) {
                 } 
                 else if (msg.type == rps::ipc::MessageType::ScanResult) {
                     auto res = std::get<rps::ipc::ScanResult>(msg.payload);
+                    auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count();
                     {
                         std::lock_guard<std::mutex> lock(m_consoleMutex);
-                        std::cout << "[SUCCESS] " << job.pluginPath.filename().string() << " -> " << res.name << " v" << res.version << "\n";
+                        std::cout << "[SUCCESS] " << job.pluginPath.filename().string() 
+                                  << " -> " << res.name << " v" << res.version 
+                                  << " (" << elapsedMs << " ms)\n";
                     }
-                    if (m_db) m_db->upsertPluginResult(job.pluginPath, res);
+                    if (m_db) m_db->upsertPluginResult(job.pluginPath, res, elapsedMs);
                     done = true;
                 }
                 else if (msg.type == rps::ipc::MessageType::ErrorMessage) {
                     auto err = std::get<rps::ipc::ErrorMessage>(msg.payload);
+                    auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count();
                     {
                         std::lock_guard<std::mutex> lock(m_consoleMutex);
-                        std::cerr << "[ERROR] " << job.pluginPath.filename().string() << ": " << err.error << "\n";
+                        std::cerr << "[ERROR] " << job.pluginPath.filename().string() 
+                                  << ": " << err.error 
+                                  << " (" << elapsedMs << " ms)\n";
                     }
-                    if (m_db) m_db->recordPluginFailure(job.pluginPath, err.error + ": " + err.details);
+                    if (m_db) m_db->recordPluginFailure(job.pluginPath, err.error + ": " + err.details, elapsedMs);
                     done = true;
                 }
             } else {
                 if (!scannerProc.running()) {
+                    auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count();
                     std::string errMsg = "Process crashed (exit code: " + std::to_string(scannerProc.exit_code()) + ")";
                     {
                         std::lock_guard<std::mutex> lock(m_consoleMutex);
-                        std::cerr << "[CRASH] " << job.pluginPath.filename().string() << " " << errMsg << "\n";
+                        std::cerr << "[CRASH] " << job.pluginPath.filename().string() 
+                                  << " " << errMsg 
+                                  << " (" << elapsedMs << " ms)\n";
                     }
-                    if (m_db) m_db->recordPluginFailure(job.pluginPath, errMsg);
+                    if (m_db) m_db->recordPluginFailure(job.pluginPath, errMsg, elapsedMs);
                     done = true;
                 } 
                 else if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastResponseTime).count() > job.timeoutMs) {
+                    auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count();
                     std::string errMsg = "Process timed out (deadlocked/hung plugin)";
                     {
                         std::lock_guard<std::mutex> lock(m_consoleMutex);
-                        std::cerr << "[TIMEOUT] " << job.pluginPath.filename().string() << " " << errMsg << "\n";
+                        std::cerr << "[TIMEOUT] " << job.pluginPath.filename().string() 
+                                  << " " << errMsg 
+                                  << " (" << elapsedMs << " ms)\n";
                     }
-                    if (m_db) m_db->recordPluginFailure(job.pluginPath, errMsg);
+                    if (m_db) m_db->recordPluginFailure(job.pluginPath, errMsg, elapsedMs);
                     scannerProc.terminate();
                     done = true;
                 }
