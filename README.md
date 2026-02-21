@@ -98,6 +98,7 @@ Orchestrator Options:
   -b [ --scanner-bin ] arg              Path to the scanner binary (default: rps-pluginscanner.exe)
   -t [ --timeout ] arg (=10000)         Timeout in milliseconds for the scanner to respond
   -j [ --jobs ] arg                     Number of parallel workers (default: system CPU core count)
+     --db arg (=rps-plugins.db)         Path to the output SQLite database file
 ```
 
 ### Examples

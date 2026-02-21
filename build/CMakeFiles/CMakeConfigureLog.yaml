@@ -12591,3 +12591,1157 @@ events:
         - "C:/msys64/mingw64"
         - "C:/Program Files (x86)/rps-plugin-scanner"
 ...
+
+---
+events:
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineSystem.cmake:212 (message)"
+      - "CMakeLists.txt:3 (project)"
+    message: |
+      The system is: Windows - 10.0.26100 - AMD64
+  -
+    kind: "find-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:462 (find_file)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:500 (CMAKE_DETERMINE_COMPILER_ID_WRITE)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:8 (CMAKE_DETERMINE_COMPILER_ID_BUILD)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:3 (project)"
+    mode: "file"
+    variable: "src_in"
+    description: "Path to a file."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "CMakeCXXCompilerId.cpp.in"
+    candidate_directories:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/"
+    found: "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeCXXCompilerId.cpp.in"
+    search_context:
+      ENV{PATH}:
+        - "C:\\Program Files\\ImageMagick-7.1.2-Q16-HDRI"
+        - "C:\\tools\\ruby34\\bin"
+        - "C:\\WINDOWS\\system32"
+        - "C:\\WINDOWS"
+        - "C:\\WINDOWS\\System32\\Wbem"
+        - "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\"
+        - "C:\\WINDOWS\\System32\\OpenSSH\\"
+        - "C:\\Program Files\\Youlean\\Youlean Loudness Meter 2"
+        - "C:\\Program Files\\dotnet\\"
+        - "C:\\Program Files\\Go\\bin"
+        - "C:\\apps"
+        - "C:\\Program Files\\CMake\\bin"
+        - "C:\\ProgramData\\chocolatey\\bin"
+        - "c:\\Program Files (x86)\\Acustica\\Framework\\"
+        - "c:\\Program Files\\Acustica\\Framework\\"
+        - "C:\\Program Files\\WireGuard\\"
+        - "C:\\Program Files\\PowerShell\\7\\"
+        - "C:\\Program Files\\TortoiseGit\\bin"
+        - "C:\\Program Files\\Git\\cmd"
+        - "C:\\Program Files\\010 Editor"
+        - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
+        - "C:\\Program Files\\GTK3-Runtime Win64\\bin"
+        - "C:\\Program Files (x86)\\NVIDIA Corporation\\PhysX\\Common"
+        - "C:\\Program Files\\Common Files\\Avid\\Eucon"
+        - "C:\\Program Files (x86)\\Common Files\\Avid\\Eucon"
+        - "C:\\Program Files\\nodejs\\"
+        - "C:\\Users\\bzeiss\\.local\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WindowsApps"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\Windsurf\\bin"
+        - "C:\\Users\\bzeiss\\.g\\go\\bin"
+        - "C:\\Users\\bzeiss\\go\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\Microsoft VS Code\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Pandoc\\"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\gitkraken\\bin"
+        - "c:\\msys64\\mingw64\\bin"
+        - "C:\\develop\\platform-tools"
+        - "C:\\Program Files (x86)\\Inno Setup 6"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Python\\bin"
+        - "C:\\Program Files\\Sublime Text"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WinGet\\Packages\\bufbuild.buf_Microsoft.Winget.Source_8wekyb3d8bbwe\\buf/bin"
+        - "C:\\Users\\bzeiss\\AppData\\Roaming\\npm"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\SessionPrep"
+      CMAKE_INSTALL_PREFIX: "C:/Program Files (x86)/rps-plugin-scanner"
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:3 (project)"
+    message: |
+      Compiling the CXX compiler identification source file "CMakeCXXCompilerId.cpp" failed.
+      Compiler: c:/msys64/mingw64/bin/g++.exe 
+      Build flags: 
+      Id flags:  
+      
+      The output was:
+      1
+      
+      
+  -
+    kind: "find-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:462 (find_file)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:500 (CMAKE_DETERMINE_COMPILER_ID_WRITE)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:8 (CMAKE_DETERMINE_COMPILER_ID_BUILD)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:3 (project)"
+    mode: "file"
+    variable: "src_in"
+    description: "Path to a file."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "CMakeCXXCompilerId.cpp.in"
+    candidate_directories:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/"
+    found: "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeCXXCompilerId.cpp.in"
+    search_context:
+      ENV{PATH}:
+        - "C:\\Program Files\\ImageMagick-7.1.2-Q16-HDRI"
+        - "C:\\tools\\ruby34\\bin"
+        - "C:\\WINDOWS\\system32"
+        - "C:\\WINDOWS"
+        - "C:\\WINDOWS\\System32\\Wbem"
+        - "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\"
+        - "C:\\WINDOWS\\System32\\OpenSSH\\"
+        - "C:\\Program Files\\Youlean\\Youlean Loudness Meter 2"
+        - "C:\\Program Files\\dotnet\\"
+        - "C:\\Program Files\\Go\\bin"
+        - "C:\\apps"
+        - "C:\\Program Files\\CMake\\bin"
+        - "C:\\ProgramData\\chocolatey\\bin"
+        - "c:\\Program Files (x86)\\Acustica\\Framework\\"
+        - "c:\\Program Files\\Acustica\\Framework\\"
+        - "C:\\Program Files\\WireGuard\\"
+        - "C:\\Program Files\\PowerShell\\7\\"
+        - "C:\\Program Files\\TortoiseGit\\bin"
+        - "C:\\Program Files\\Git\\cmd"
+        - "C:\\Program Files\\010 Editor"
+        - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
+        - "C:\\Program Files\\GTK3-Runtime Win64\\bin"
+        - "C:\\Program Files (x86)\\NVIDIA Corporation\\PhysX\\Common"
+        - "C:\\Program Files\\Common Files\\Avid\\Eucon"
+        - "C:\\Program Files (x86)\\Common Files\\Avid\\Eucon"
+        - "C:\\Program Files\\nodejs\\"
+        - "C:\\Users\\bzeiss\\.local\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WindowsApps"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\Windsurf\\bin"
+        - "C:\\Users\\bzeiss\\.g\\go\\bin"
+        - "C:\\Users\\bzeiss\\go\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\Microsoft VS Code\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Pandoc\\"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\gitkraken\\bin"
+        - "c:\\msys64\\mingw64\\bin"
+        - "C:\\develop\\platform-tools"
+        - "C:\\Program Files (x86)\\Inno Setup 6"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Python\\bin"
+        - "C:\\Program Files\\Sublime Text"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WinGet\\Packages\\bufbuild.buf_Microsoft.Winget.Source_8wekyb3d8bbwe\\buf/bin"
+        - "C:\\Users\\bzeiss\\AppData\\Roaming\\npm"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\SessionPrep"
+      CMAKE_INSTALL_PREFIX: "C:/Program Files (x86)/rps-plugin-scanner"
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:3 (project)"
+    message: |
+      Compiling the CXX compiler identification source file "CMakeCXXCompilerId.cpp" failed.
+      Compiler: c:/msys64/mingw64/bin/g++.exe 
+      Build flags: 
+      Id flags: -c 
+      
+      The output was:
+      1
+      
+      
+  -
+    kind: "find-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:462 (find_file)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:500 (CMAKE_DETERMINE_COMPILER_ID_WRITE)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:8 (CMAKE_DETERMINE_COMPILER_ID_BUILD)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:3 (project)"
+    mode: "file"
+    variable: "src_in"
+    description: "Path to a file."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "CMakeCXXCompilerId.cpp.in"
+    candidate_directories:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/"
+    found: "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeCXXCompilerId.cpp.in"
+    search_context:
+      ENV{PATH}:
+        - "C:\\Program Files\\ImageMagick-7.1.2-Q16-HDRI"
+        - "C:\\tools\\ruby34\\bin"
+        - "C:\\WINDOWS\\system32"
+        - "C:\\WINDOWS"
+        - "C:\\WINDOWS\\System32\\Wbem"
+        - "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\"
+        - "C:\\WINDOWS\\System32\\OpenSSH\\"
+        - "C:\\Program Files\\Youlean\\Youlean Loudness Meter 2"
+        - "C:\\Program Files\\dotnet\\"
+        - "C:\\Program Files\\Go\\bin"
+        - "C:\\apps"
+        - "C:\\Program Files\\CMake\\bin"
+        - "C:\\ProgramData\\chocolatey\\bin"
+        - "c:\\Program Files (x86)\\Acustica\\Framework\\"
+        - "c:\\Program Files\\Acustica\\Framework\\"
+        - "C:\\Program Files\\WireGuard\\"
+        - "C:\\Program Files\\PowerShell\\7\\"
+        - "C:\\Program Files\\TortoiseGit\\bin"
+        - "C:\\Program Files\\Git\\cmd"
+        - "C:\\Program Files\\010 Editor"
+        - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
+        - "C:\\Program Files\\GTK3-Runtime Win64\\bin"
+        - "C:\\Program Files (x86)\\NVIDIA Corporation\\PhysX\\Common"
+        - "C:\\Program Files\\Common Files\\Avid\\Eucon"
+        - "C:\\Program Files (x86)\\Common Files\\Avid\\Eucon"
+        - "C:\\Program Files\\nodejs\\"
+        - "C:\\Users\\bzeiss\\.local\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WindowsApps"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\Windsurf\\bin"
+        - "C:\\Users\\bzeiss\\.g\\go\\bin"
+        - "C:\\Users\\bzeiss\\go\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\Microsoft VS Code\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Pandoc\\"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\gitkraken\\bin"
+        - "c:\\msys64\\mingw64\\bin"
+        - "C:\\develop\\platform-tools"
+        - "C:\\Program Files (x86)\\Inno Setup 6"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Python\\bin"
+        - "C:\\Program Files\\Sublime Text"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WinGet\\Packages\\bufbuild.buf_Microsoft.Winget.Source_8wekyb3d8bbwe\\buf/bin"
+        - "C:\\Users\\bzeiss\\AppData\\Roaming\\npm"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\SessionPrep"
+      CMAKE_INSTALL_PREFIX: "C:/Program Files (x86)/rps-plugin-scanner"
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:3 (project)"
+    message: |
+      Compiling the CXX compiler identification source file "CMakeCXXCompilerId.cpp" failed.
+      Compiler: c:/msys64/mingw64/bin/g++.exe 
+      Build flags: 
+      Id flags: --c++ 
+      
+      The output was:
+      1
+      g++.exe: error: unrecognized command-line option '--c++'
+      
+      
+  -
+    kind: "find-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:462 (find_file)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:500 (CMAKE_DETERMINE_COMPILER_ID_WRITE)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:8 (CMAKE_DETERMINE_COMPILER_ID_BUILD)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:3 (project)"
+    mode: "file"
+    variable: "src_in"
+    description: "Path to a file."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "CMakeCXXCompilerId.cpp.in"
+    candidate_directories:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/"
+    found: "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeCXXCompilerId.cpp.in"
+    search_context:
+      ENV{PATH}:
+        - "C:\\Program Files\\ImageMagick-7.1.2-Q16-HDRI"
+        - "C:\\tools\\ruby34\\bin"
+        - "C:\\WINDOWS\\system32"
+        - "C:\\WINDOWS"
+        - "C:\\WINDOWS\\System32\\Wbem"
+        - "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\"
+        - "C:\\WINDOWS\\System32\\OpenSSH\\"
+        - "C:\\Program Files\\Youlean\\Youlean Loudness Meter 2"
+        - "C:\\Program Files\\dotnet\\"
+        - "C:\\Program Files\\Go\\bin"
+        - "C:\\apps"
+        - "C:\\Program Files\\CMake\\bin"
+        - "C:\\ProgramData\\chocolatey\\bin"
+        - "c:\\Program Files (x86)\\Acustica\\Framework\\"
+        - "c:\\Program Files\\Acustica\\Framework\\"
+        - "C:\\Program Files\\WireGuard\\"
+        - "C:\\Program Files\\PowerShell\\7\\"
+        - "C:\\Program Files\\TortoiseGit\\bin"
+        - "C:\\Program Files\\Git\\cmd"
+        - "C:\\Program Files\\010 Editor"
+        - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
+        - "C:\\Program Files\\GTK3-Runtime Win64\\bin"
+        - "C:\\Program Files (x86)\\NVIDIA Corporation\\PhysX\\Common"
+        - "C:\\Program Files\\Common Files\\Avid\\Eucon"
+        - "C:\\Program Files (x86)\\Common Files\\Avid\\Eucon"
+        - "C:\\Program Files\\nodejs\\"
+        - "C:\\Users\\bzeiss\\.local\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WindowsApps"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\Windsurf\\bin"
+        - "C:\\Users\\bzeiss\\.g\\go\\bin"
+        - "C:\\Users\\bzeiss\\go\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\Microsoft VS Code\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Pandoc\\"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\gitkraken\\bin"
+        - "c:\\msys64\\mingw64\\bin"
+        - "C:\\develop\\platform-tools"
+        - "C:\\Program Files (x86)\\Inno Setup 6"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Python\\bin"
+        - "C:\\Program Files\\Sublime Text"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WinGet\\Packages\\bufbuild.buf_Microsoft.Winget.Source_8wekyb3d8bbwe\\buf/bin"
+        - "C:\\Users\\bzeiss\\AppData\\Roaming\\npm"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\SessionPrep"
+      CMAKE_INSTALL_PREFIX: "C:/Program Files (x86)/rps-plugin-scanner"
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:3 (project)"
+    message: |
+      Compiling the CXX compiler identification source file "CMakeCXXCompilerId.cpp" failed.
+      Compiler: c:/msys64/mingw64/bin/g++.exe 
+      Build flags: 
+      Id flags: --ec++ 
+      
+      The output was:
+      1
+      g++.exe: error: unrecognized command-line option '--ec++'; did you mean '-Weffc++'?
+      
+      
+  -
+    kind: "find-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:462 (find_file)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:500 (CMAKE_DETERMINE_COMPILER_ID_WRITE)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:8 (CMAKE_DETERMINE_COMPILER_ID_BUILD)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:3 (project)"
+    mode: "file"
+    variable: "src_in"
+    description: "Path to a file."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "CMakeCXXCompilerId.cpp.in"
+    candidate_directories:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/"
+    found: "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeCXXCompilerId.cpp.in"
+    search_context:
+      ENV{PATH}:
+        - "C:\\Program Files\\ImageMagick-7.1.2-Q16-HDRI"
+        - "C:\\tools\\ruby34\\bin"
+        - "C:\\WINDOWS\\system32"
+        - "C:\\WINDOWS"
+        - "C:\\WINDOWS\\System32\\Wbem"
+        - "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\"
+        - "C:\\WINDOWS\\System32\\OpenSSH\\"
+        - "C:\\Program Files\\Youlean\\Youlean Loudness Meter 2"
+        - "C:\\Program Files\\dotnet\\"
+        - "C:\\Program Files\\Go\\bin"
+        - "C:\\apps"
+        - "C:\\Program Files\\CMake\\bin"
+        - "C:\\ProgramData\\chocolatey\\bin"
+        - "c:\\Program Files (x86)\\Acustica\\Framework\\"
+        - "c:\\Program Files\\Acustica\\Framework\\"
+        - "C:\\Program Files\\WireGuard\\"
+        - "C:\\Program Files\\PowerShell\\7\\"
+        - "C:\\Program Files\\TortoiseGit\\bin"
+        - "C:\\Program Files\\Git\\cmd"
+        - "C:\\Program Files\\010 Editor"
+        - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
+        - "C:\\Program Files\\GTK3-Runtime Win64\\bin"
+        - "C:\\Program Files (x86)\\NVIDIA Corporation\\PhysX\\Common"
+        - "C:\\Program Files\\Common Files\\Avid\\Eucon"
+        - "C:\\Program Files (x86)\\Common Files\\Avid\\Eucon"
+        - "C:\\Program Files\\nodejs\\"
+        - "C:\\Users\\bzeiss\\.local\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WindowsApps"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\Windsurf\\bin"
+        - "C:\\Users\\bzeiss\\.g\\go\\bin"
+        - "C:\\Users\\bzeiss\\go\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\Microsoft VS Code\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Pandoc\\"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\gitkraken\\bin"
+        - "c:\\msys64\\mingw64\\bin"
+        - "C:\\develop\\platform-tools"
+        - "C:\\Program Files (x86)\\Inno Setup 6"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Python\\bin"
+        - "C:\\Program Files\\Sublime Text"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WinGet\\Packages\\bufbuild.buf_Microsoft.Winget.Source_8wekyb3d8bbwe\\buf/bin"
+        - "C:\\Users\\bzeiss\\AppData\\Roaming\\npm"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\SessionPrep"
+      CMAKE_INSTALL_PREFIX: "C:/Program Files (x86)/rps-plugin-scanner"
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:3 (project)"
+    message: |
+      Compiling the CXX compiler identification source file "CMakeCXXCompilerId.cpp" failed.
+      Compiler: c:/msys64/mingw64/bin/g++.exe 
+      Build flags: 
+      Id flags: --target=arm-arm-none-eabi;-mcpu=cortex-m3 
+      
+      The output was:
+      1
+      g++.exe: warning: '-mcpu=' is deprecated; use '-mtune=' or '-march=' instead
+      g++.exe: error: unrecognized command-line option '--target=arm-arm-none-eabi'
+      
+      
+  -
+    kind: "find-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:462 (find_file)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:500 (CMAKE_DETERMINE_COMPILER_ID_WRITE)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:8 (CMAKE_DETERMINE_COMPILER_ID_BUILD)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:3 (project)"
+    mode: "file"
+    variable: "src_in"
+    description: "Path to a file."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "CMakeCXXCompilerId.cpp.in"
+    candidate_directories:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/"
+    found: "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeCXXCompilerId.cpp.in"
+    search_context:
+      ENV{PATH}:
+        - "C:\\Program Files\\ImageMagick-7.1.2-Q16-HDRI"
+        - "C:\\tools\\ruby34\\bin"
+        - "C:\\WINDOWS\\system32"
+        - "C:\\WINDOWS"
+        - "C:\\WINDOWS\\System32\\Wbem"
+        - "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\"
+        - "C:\\WINDOWS\\System32\\OpenSSH\\"
+        - "C:\\Program Files\\Youlean\\Youlean Loudness Meter 2"
+        - "C:\\Program Files\\dotnet\\"
+        - "C:\\Program Files\\Go\\bin"
+        - "C:\\apps"
+        - "C:\\Program Files\\CMake\\bin"
+        - "C:\\ProgramData\\chocolatey\\bin"
+        - "c:\\Program Files (x86)\\Acustica\\Framework\\"
+        - "c:\\Program Files\\Acustica\\Framework\\"
+        - "C:\\Program Files\\WireGuard\\"
+        - "C:\\Program Files\\PowerShell\\7\\"
+        - "C:\\Program Files\\TortoiseGit\\bin"
+        - "C:\\Program Files\\Git\\cmd"
+        - "C:\\Program Files\\010 Editor"
+        - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
+        - "C:\\Program Files\\GTK3-Runtime Win64\\bin"
+        - "C:\\Program Files (x86)\\NVIDIA Corporation\\PhysX\\Common"
+        - "C:\\Program Files\\Common Files\\Avid\\Eucon"
+        - "C:\\Program Files (x86)\\Common Files\\Avid\\Eucon"
+        - "C:\\Program Files\\nodejs\\"
+        - "C:\\Users\\bzeiss\\.local\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WindowsApps"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\Windsurf\\bin"
+        - "C:\\Users\\bzeiss\\.g\\go\\bin"
+        - "C:\\Users\\bzeiss\\go\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\Microsoft VS Code\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Pandoc\\"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\gitkraken\\bin"
+        - "c:\\msys64\\mingw64\\bin"
+        - "C:\\develop\\platform-tools"
+        - "C:\\Program Files (x86)\\Inno Setup 6"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Python\\bin"
+        - "C:\\Program Files\\Sublime Text"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WinGet\\Packages\\bufbuild.buf_Microsoft.Winget.Source_8wekyb3d8bbwe\\buf/bin"
+        - "C:\\Users\\bzeiss\\AppData\\Roaming\\npm"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\SessionPrep"
+      CMAKE_INSTALL_PREFIX: "C:/Program Files (x86)/rps-plugin-scanner"
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:3 (project)"
+    message: |
+      Compiling the CXX compiler identification source file "CMakeCXXCompilerId.cpp" failed.
+      Compiler: c:/msys64/mingw64/bin/g++.exe 
+      Build flags: 
+      Id flags: -c;-I__does_not_exist__ 
+      
+      The output was:
+      1
+      
+      
+  -
+    kind: "find-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:462 (find_file)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:500 (CMAKE_DETERMINE_COMPILER_ID_WRITE)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:8 (CMAKE_DETERMINE_COMPILER_ID_BUILD)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:3 (project)"
+    mode: "file"
+    variable: "src_in"
+    description: "Path to a file."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "CMakeCXXCompilerId.cpp.in"
+    candidate_directories:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/"
+    found: "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeCXXCompilerId.cpp.in"
+    search_context:
+      ENV{PATH}:
+        - "C:\\Program Files\\ImageMagick-7.1.2-Q16-HDRI"
+        - "C:\\tools\\ruby34\\bin"
+        - "C:\\WINDOWS\\system32"
+        - "C:\\WINDOWS"
+        - "C:\\WINDOWS\\System32\\Wbem"
+        - "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\"
+        - "C:\\WINDOWS\\System32\\OpenSSH\\"
+        - "C:\\Program Files\\Youlean\\Youlean Loudness Meter 2"
+        - "C:\\Program Files\\dotnet\\"
+        - "C:\\Program Files\\Go\\bin"
+        - "C:\\apps"
+        - "C:\\Program Files\\CMake\\bin"
+        - "C:\\ProgramData\\chocolatey\\bin"
+        - "c:\\Program Files (x86)\\Acustica\\Framework\\"
+        - "c:\\Program Files\\Acustica\\Framework\\"
+        - "C:\\Program Files\\WireGuard\\"
+        - "C:\\Program Files\\PowerShell\\7\\"
+        - "C:\\Program Files\\TortoiseGit\\bin"
+        - "C:\\Program Files\\Git\\cmd"
+        - "C:\\Program Files\\010 Editor"
+        - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
+        - "C:\\Program Files\\GTK3-Runtime Win64\\bin"
+        - "C:\\Program Files (x86)\\NVIDIA Corporation\\PhysX\\Common"
+        - "C:\\Program Files\\Common Files\\Avid\\Eucon"
+        - "C:\\Program Files (x86)\\Common Files\\Avid\\Eucon"
+        - "C:\\Program Files\\nodejs\\"
+        - "C:\\Users\\bzeiss\\.local\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WindowsApps"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\Windsurf\\bin"
+        - "C:\\Users\\bzeiss\\.g\\go\\bin"
+        - "C:\\Users\\bzeiss\\go\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\Microsoft VS Code\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Pandoc\\"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\gitkraken\\bin"
+        - "c:\\msys64\\mingw64\\bin"
+        - "C:\\develop\\platform-tools"
+        - "C:\\Program Files (x86)\\Inno Setup 6"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Python\\bin"
+        - "C:\\Program Files\\Sublime Text"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WinGet\\Packages\\bufbuild.buf_Microsoft.Winget.Source_8wekyb3d8bbwe\\buf/bin"
+        - "C:\\Users\\bzeiss\\AppData\\Roaming\\npm"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\SessionPrep"
+      CMAKE_INSTALL_PREFIX: "C:/Program Files (x86)/rps-plugin-scanner"
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:3 (project)"
+    message: |
+      Compiling the CXX compiler identification source file "CMakeCXXCompilerId.cpp" failed.
+      Compiler: c:/msys64/mingw64/bin/g++.exe 
+      Build flags: 
+      Id flags:  
+      
+      The output was:
+      1
+      
+      
+  -
+    kind: "find-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:462 (find_file)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:500 (CMAKE_DETERMINE_COMPILER_ID_WRITE)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:8 (CMAKE_DETERMINE_COMPILER_ID_BUILD)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:3 (project)"
+    mode: "file"
+    variable: "src_in"
+    description: "Path to a file."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "CMakeCXXCompilerId.cpp.in"
+    candidate_directories:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/"
+    found: "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeCXXCompilerId.cpp.in"
+    search_context:
+      ENV{PATH}:
+        - "C:\\Program Files\\ImageMagick-7.1.2-Q16-HDRI"
+        - "C:\\tools\\ruby34\\bin"
+        - "C:\\WINDOWS\\system32"
+        - "C:\\WINDOWS"
+        - "C:\\WINDOWS\\System32\\Wbem"
+        - "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\"
+        - "C:\\WINDOWS\\System32\\OpenSSH\\"
+        - "C:\\Program Files\\Youlean\\Youlean Loudness Meter 2"
+        - "C:\\Program Files\\dotnet\\"
+        - "C:\\Program Files\\Go\\bin"
+        - "C:\\apps"
+        - "C:\\Program Files\\CMake\\bin"
+        - "C:\\ProgramData\\chocolatey\\bin"
+        - "c:\\Program Files (x86)\\Acustica\\Framework\\"
+        - "c:\\Program Files\\Acustica\\Framework\\"
+        - "C:\\Program Files\\WireGuard\\"
+        - "C:\\Program Files\\PowerShell\\7\\"
+        - "C:\\Program Files\\TortoiseGit\\bin"
+        - "C:\\Program Files\\Git\\cmd"
+        - "C:\\Program Files\\010 Editor"
+        - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
+        - "C:\\Program Files\\GTK3-Runtime Win64\\bin"
+        - "C:\\Program Files (x86)\\NVIDIA Corporation\\PhysX\\Common"
+        - "C:\\Program Files\\Common Files\\Avid\\Eucon"
+        - "C:\\Program Files (x86)\\Common Files\\Avid\\Eucon"
+        - "C:\\Program Files\\nodejs\\"
+        - "C:\\Users\\bzeiss\\.local\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WindowsApps"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\Windsurf\\bin"
+        - "C:\\Users\\bzeiss\\.g\\go\\bin"
+        - "C:\\Users\\bzeiss\\go\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\Microsoft VS Code\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Pandoc\\"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\gitkraken\\bin"
+        - "c:\\msys64\\mingw64\\bin"
+        - "C:\\develop\\platform-tools"
+        - "C:\\Program Files (x86)\\Inno Setup 6"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Python\\bin"
+        - "C:\\Program Files\\Sublime Text"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WinGet\\Packages\\bufbuild.buf_Microsoft.Winget.Source_8wekyb3d8bbwe\\buf/bin"
+        - "C:\\Users\\bzeiss\\AppData\\Roaming\\npm"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\SessionPrep"
+      CMAKE_INSTALL_PREFIX: "C:/Program Files (x86)/rps-plugin-scanner"
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:3 (project)"
+    message: |
+      Compiling the CXX compiler identification source file "CMakeCXXCompilerId.cpp" failed.
+      Compiler: c:/msys64/mingw64/bin/g++.exe 
+      Build flags: 
+      Id flags: -c 
+      
+      The output was:
+      1
+      
+      
+  -
+    kind: "find-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:462 (find_file)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:500 (CMAKE_DETERMINE_COMPILER_ID_WRITE)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:8 (CMAKE_DETERMINE_COMPILER_ID_BUILD)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:3 (project)"
+    mode: "file"
+    variable: "src_in"
+    description: "Path to a file."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "CMakeCXXCompilerId.cpp.in"
+    candidate_directories:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/"
+    found: "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeCXXCompilerId.cpp.in"
+    search_context:
+      ENV{PATH}:
+        - "C:\\Program Files\\ImageMagick-7.1.2-Q16-HDRI"
+        - "C:\\tools\\ruby34\\bin"
+        - "C:\\WINDOWS\\system32"
+        - "C:\\WINDOWS"
+        - "C:\\WINDOWS\\System32\\Wbem"
+        - "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\"
+        - "C:\\WINDOWS\\System32\\OpenSSH\\"
+        - "C:\\Program Files\\Youlean\\Youlean Loudness Meter 2"
+        - "C:\\Program Files\\dotnet\\"
+        - "C:\\Program Files\\Go\\bin"
+        - "C:\\apps"
+        - "C:\\Program Files\\CMake\\bin"
+        - "C:\\ProgramData\\chocolatey\\bin"
+        - "c:\\Program Files (x86)\\Acustica\\Framework\\"
+        - "c:\\Program Files\\Acustica\\Framework\\"
+        - "C:\\Program Files\\WireGuard\\"
+        - "C:\\Program Files\\PowerShell\\7\\"
+        - "C:\\Program Files\\TortoiseGit\\bin"
+        - "C:\\Program Files\\Git\\cmd"
+        - "C:\\Program Files\\010 Editor"
+        - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
+        - "C:\\Program Files\\GTK3-Runtime Win64\\bin"
+        - "C:\\Program Files (x86)\\NVIDIA Corporation\\PhysX\\Common"
+        - "C:\\Program Files\\Common Files\\Avid\\Eucon"
+        - "C:\\Program Files (x86)\\Common Files\\Avid\\Eucon"
+        - "C:\\Program Files\\nodejs\\"
+        - "C:\\Users\\bzeiss\\.local\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WindowsApps"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\Windsurf\\bin"
+        - "C:\\Users\\bzeiss\\.g\\go\\bin"
+        - "C:\\Users\\bzeiss\\go\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\Microsoft VS Code\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Pandoc\\"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\gitkraken\\bin"
+        - "c:\\msys64\\mingw64\\bin"
+        - "C:\\develop\\platform-tools"
+        - "C:\\Program Files (x86)\\Inno Setup 6"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Python\\bin"
+        - "C:\\Program Files\\Sublime Text"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WinGet\\Packages\\bufbuild.buf_Microsoft.Winget.Source_8wekyb3d8bbwe\\buf/bin"
+        - "C:\\Users\\bzeiss\\AppData\\Roaming\\npm"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\SessionPrep"
+      CMAKE_INSTALL_PREFIX: "C:/Program Files (x86)/rps-plugin-scanner"
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:3 (project)"
+    message: |
+      Compiling the CXX compiler identification source file "CMakeCXXCompilerId.cpp" failed.
+      Compiler: c:/msys64/mingw64/bin/g++.exe 
+      Build flags: 
+      Id flags: --c++ 
+      
+      The output was:
+      1
+      g++.exe: error: unrecognized command-line option '--c++'
+      
+      
+  -
+    kind: "find-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:462 (find_file)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:500 (CMAKE_DETERMINE_COMPILER_ID_WRITE)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:8 (CMAKE_DETERMINE_COMPILER_ID_BUILD)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:3 (project)"
+    mode: "file"
+    variable: "src_in"
+    description: "Path to a file."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "CMakeCXXCompilerId.cpp.in"
+    candidate_directories:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/"
+    found: "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeCXXCompilerId.cpp.in"
+    search_context:
+      ENV{PATH}:
+        - "C:\\Program Files\\ImageMagick-7.1.2-Q16-HDRI"
+        - "C:\\tools\\ruby34\\bin"
+        - "C:\\WINDOWS\\system32"
+        - "C:\\WINDOWS"
+        - "C:\\WINDOWS\\System32\\Wbem"
+        - "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\"
+        - "C:\\WINDOWS\\System32\\OpenSSH\\"
+        - "C:\\Program Files\\Youlean\\Youlean Loudness Meter 2"
+        - "C:\\Program Files\\dotnet\\"
+        - "C:\\Program Files\\Go\\bin"
+        - "C:\\apps"
+        - "C:\\Program Files\\CMake\\bin"
+        - "C:\\ProgramData\\chocolatey\\bin"
+        - "c:\\Program Files (x86)\\Acustica\\Framework\\"
+        - "c:\\Program Files\\Acustica\\Framework\\"
+        - "C:\\Program Files\\WireGuard\\"
+        - "C:\\Program Files\\PowerShell\\7\\"
+        - "C:\\Program Files\\TortoiseGit\\bin"
+        - "C:\\Program Files\\Git\\cmd"
+        - "C:\\Program Files\\010 Editor"
+        - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
+        - "C:\\Program Files\\GTK3-Runtime Win64\\bin"
+        - "C:\\Program Files (x86)\\NVIDIA Corporation\\PhysX\\Common"
+        - "C:\\Program Files\\Common Files\\Avid\\Eucon"
+        - "C:\\Program Files (x86)\\Common Files\\Avid\\Eucon"
+        - "C:\\Program Files\\nodejs\\"
+        - "C:\\Users\\bzeiss\\.local\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WindowsApps"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\Windsurf\\bin"
+        - "C:\\Users\\bzeiss\\.g\\go\\bin"
+        - "C:\\Users\\bzeiss\\go\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\Microsoft VS Code\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Pandoc\\"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\gitkraken\\bin"
+        - "c:\\msys64\\mingw64\\bin"
+        - "C:\\develop\\platform-tools"
+        - "C:\\Program Files (x86)\\Inno Setup 6"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Python\\bin"
+        - "C:\\Program Files\\Sublime Text"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WinGet\\Packages\\bufbuild.buf_Microsoft.Winget.Source_8wekyb3d8bbwe\\buf/bin"
+        - "C:\\Users\\bzeiss\\AppData\\Roaming\\npm"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\SessionPrep"
+      CMAKE_INSTALL_PREFIX: "C:/Program Files (x86)/rps-plugin-scanner"
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:3 (project)"
+    message: |
+      Compiling the CXX compiler identification source file "CMakeCXXCompilerId.cpp" failed.
+      Compiler: c:/msys64/mingw64/bin/g++.exe 
+      Build flags: 
+      Id flags: --ec++ 
+      
+      The output was:
+      1
+      g++.exe: error: unrecognized command-line option '--ec++'; did you mean '-Weffc++'?
+      
+      
+  -
+    kind: "find-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:462 (find_file)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:500 (CMAKE_DETERMINE_COMPILER_ID_WRITE)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:8 (CMAKE_DETERMINE_COMPILER_ID_BUILD)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:3 (project)"
+    mode: "file"
+    variable: "src_in"
+    description: "Path to a file."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "CMakeCXXCompilerId.cpp.in"
+    candidate_directories:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/"
+    found: "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeCXXCompilerId.cpp.in"
+    search_context:
+      ENV{PATH}:
+        - "C:\\Program Files\\ImageMagick-7.1.2-Q16-HDRI"
+        - "C:\\tools\\ruby34\\bin"
+        - "C:\\WINDOWS\\system32"
+        - "C:\\WINDOWS"
+        - "C:\\WINDOWS\\System32\\Wbem"
+        - "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\"
+        - "C:\\WINDOWS\\System32\\OpenSSH\\"
+        - "C:\\Program Files\\Youlean\\Youlean Loudness Meter 2"
+        - "C:\\Program Files\\dotnet\\"
+        - "C:\\Program Files\\Go\\bin"
+        - "C:\\apps"
+        - "C:\\Program Files\\CMake\\bin"
+        - "C:\\ProgramData\\chocolatey\\bin"
+        - "c:\\Program Files (x86)\\Acustica\\Framework\\"
+        - "c:\\Program Files\\Acustica\\Framework\\"
+        - "C:\\Program Files\\WireGuard\\"
+        - "C:\\Program Files\\PowerShell\\7\\"
+        - "C:\\Program Files\\TortoiseGit\\bin"
+        - "C:\\Program Files\\Git\\cmd"
+        - "C:\\Program Files\\010 Editor"
+        - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
+        - "C:\\Program Files\\GTK3-Runtime Win64\\bin"
+        - "C:\\Program Files (x86)\\NVIDIA Corporation\\PhysX\\Common"
+        - "C:\\Program Files\\Common Files\\Avid\\Eucon"
+        - "C:\\Program Files (x86)\\Common Files\\Avid\\Eucon"
+        - "C:\\Program Files\\nodejs\\"
+        - "C:\\Users\\bzeiss\\.local\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WindowsApps"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\Windsurf\\bin"
+        - "C:\\Users\\bzeiss\\.g\\go\\bin"
+        - "C:\\Users\\bzeiss\\go\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\Microsoft VS Code\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Pandoc\\"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\gitkraken\\bin"
+        - "c:\\msys64\\mingw64\\bin"
+        - "C:\\develop\\platform-tools"
+        - "C:\\Program Files (x86)\\Inno Setup 6"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Python\\bin"
+        - "C:\\Program Files\\Sublime Text"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WinGet\\Packages\\bufbuild.buf_Microsoft.Winget.Source_8wekyb3d8bbwe\\buf/bin"
+        - "C:\\Users\\bzeiss\\AppData\\Roaming\\npm"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\SessionPrep"
+      CMAKE_INSTALL_PREFIX: "C:/Program Files (x86)/rps-plugin-scanner"
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:3 (project)"
+    message: |
+      Compiling the CXX compiler identification source file "CMakeCXXCompilerId.cpp" failed.
+      Compiler: c:/msys64/mingw64/bin/g++.exe 
+      Build flags: 
+      Id flags: --target=arm-arm-none-eabi;-mcpu=cortex-m3 
+      
+      The output was:
+      1
+      g++.exe: warning: '-mcpu=' is deprecated; use '-mtune=' or '-march=' instead
+      g++.exe: error: unrecognized command-line option '--target=arm-arm-none-eabi'
+      
+      
+  -
+    kind: "find-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:462 (find_file)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:500 (CMAKE_DETERMINE_COMPILER_ID_WRITE)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:8 (CMAKE_DETERMINE_COMPILER_ID_BUILD)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:3 (project)"
+    mode: "file"
+    variable: "src_in"
+    description: "Path to a file."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "CMakeCXXCompilerId.cpp.in"
+    candidate_directories:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/"
+    found: "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeCXXCompilerId.cpp.in"
+    search_context:
+      ENV{PATH}:
+        - "C:\\Program Files\\ImageMagick-7.1.2-Q16-HDRI"
+        - "C:\\tools\\ruby34\\bin"
+        - "C:\\WINDOWS\\system32"
+        - "C:\\WINDOWS"
+        - "C:\\WINDOWS\\System32\\Wbem"
+        - "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\"
+        - "C:\\WINDOWS\\System32\\OpenSSH\\"
+        - "C:\\Program Files\\Youlean\\Youlean Loudness Meter 2"
+        - "C:\\Program Files\\dotnet\\"
+        - "C:\\Program Files\\Go\\bin"
+        - "C:\\apps"
+        - "C:\\Program Files\\CMake\\bin"
+        - "C:\\ProgramData\\chocolatey\\bin"
+        - "c:\\Program Files (x86)\\Acustica\\Framework\\"
+        - "c:\\Program Files\\Acustica\\Framework\\"
+        - "C:\\Program Files\\WireGuard\\"
+        - "C:\\Program Files\\PowerShell\\7\\"
+        - "C:\\Program Files\\TortoiseGit\\bin"
+        - "C:\\Program Files\\Git\\cmd"
+        - "C:\\Program Files\\010 Editor"
+        - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
+        - "C:\\Program Files\\GTK3-Runtime Win64\\bin"
+        - "C:\\Program Files (x86)\\NVIDIA Corporation\\PhysX\\Common"
+        - "C:\\Program Files\\Common Files\\Avid\\Eucon"
+        - "C:\\Program Files (x86)\\Common Files\\Avid\\Eucon"
+        - "C:\\Program Files\\nodejs\\"
+        - "C:\\Users\\bzeiss\\.local\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WindowsApps"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\Windsurf\\bin"
+        - "C:\\Users\\bzeiss\\.g\\go\\bin"
+        - "C:\\Users\\bzeiss\\go\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\Microsoft VS Code\\bin"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Pandoc\\"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\gitkraken\\bin"
+        - "c:\\msys64\\mingw64\\bin"
+        - "C:\\develop\\platform-tools"
+        - "C:\\Program Files (x86)\\Inno Setup 6"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Python\\bin"
+        - "C:\\Program Files\\Sublime Text"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WinGet\\Packages\\bufbuild.buf_Microsoft.Winget.Source_8wekyb3d8bbwe\\buf/bin"
+        - "C:\\Users\\bzeiss\\AppData\\Roaming\\npm"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe"
+        - "C:\\Users\\bzeiss\\AppData\\Local\\Programs\\SessionPrep"
+      CMAKE_INSTALL_PREFIX: "C:/Program Files (x86)/rps-plugin-scanner"
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:3 (project)"
+    message: |
+      Compiling the CXX compiler identification source file "CMakeCXXCompilerId.cpp" failed.
+      Compiler: c:/msys64/mingw64/bin/g++.exe 
+      Build flags: 
+      Id flags: -c;-I__does_not_exist__ 
+      
+      The output was:
+      1
+      
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:1303 (message)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:86 (CMAKE_DETERMINE_COMPILER_ID_VENDOR)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:3 (project)"
+    message: |
+      Checking whether the CXX compiler is IAR using "" did not match "IAR .+ Compiler":
+      g++.exe: fatal error: no input files
+      compilation terminated.
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:1303 (message)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerId.cmake:86 (CMAKE_DETERMINE_COMPILER_ID_VENDOR)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:3 (project)"
+    message: |
+      Checking whether the CXX compiler is IAR using "" did not match "IAR .+ Compiler":
+      g++.exe: fatal error: no input files
+      compilation terminated.
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeDetermineCompilerABI.cmake:83 (try_compile)"
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:3 (project)"
+    checks:
+      - "Detecting CXX compiler ABI info"
+    directories:
+      source: "C:/develop/rps/build/CMakeFiles/CMakeScratch/TryCompile-y1ju6w"
+      binary: "C:/develop/rps/build/CMakeFiles/CMakeScratch/TryCompile-y1ju6w"
+    cmakeVariables:
+      CMAKE_CXX_FLAGS: ""
+      CMAKE_CXX_FLAGS_DEBUG: ""
+      CMAKE_CXX_SCAN_FOR_MODULES: "OFF"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "CMAKE_CXX_ABI_COMPILED"
+      cached: true
+      stdout: |
+        Change Dir: 'C:/develop/rps/build/CMakeFiles/CMakeScratch/TryCompile-y1ju6w'
+        
+        Run Build Command(s): c:\\msys64\\mingw64\\bin\\ninja.exe -v cmTC_15607
+        [1/2] c:\\msys64\\mingw64\\bin\\g++.exe    -o CMakeFiles\\cmTC_15607.dir\\CMakeCXXCompilerABI.cpp.obj -c "C:\\Program Files\\CMake\\share\\cmake-4.1\\Modules\\CMakeCXXCompilerABI.cpp"
+        FAILED: [code=1] CMakeFiles/cmTC_15607.dir/CMakeCXXCompilerABI.cpp.obj 
+        c:\\msys64\\mingw64\\bin\\g++.exe    -o CMakeFiles\\cmTC_15607.dir\\CMakeCXXCompilerABI.cpp.obj -c "C:\\Program Files\\CMake\\share\\cmake-4.1\\Modules\\CMakeCXXCompilerABI.cpp"
+        ninja: build stopped: subcommand failed.
+        
+      exitCode: 1
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-4.1/Modules/CMakeTestCXXCompiler.cmake:56 (try_compile)"
+      - "CMakeLists.txt:3 (project)"
+    checks:
+      - "Check for working CXX compiler: c:/msys64/mingw64/bin/g++.exe"
+    directories:
+      source: "C:/develop/rps/build/CMakeFiles/CMakeScratch/TryCompile-1hsex5"
+      binary: "C:/develop/rps/build/CMakeFiles/CMakeScratch/TryCompile-1hsex5"
+    cmakeVariables:
+      CMAKE_CXX_FLAGS: ""
+      CMAKE_CXX_FLAGS_DEBUG: ""
+      CMAKE_CXX_SCAN_FOR_MODULES: "OFF"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "CMAKE_CXX_COMPILER_WORKS"
+      cached: true
+      stdout: |
+        Change Dir: 'C:/develop/rps/build/CMakeFiles/CMakeScratch/TryCompile-1hsex5'
+        
+        Run Build Command(s): c:\\msys64\\mingw64\\bin\\ninja.exe -v cmTC_4408f
+        [1/2] c:\\msys64\\mingw64\\bin\\g++.exe    -o CMakeFiles\\cmTC_4408f.dir\\testCXXCompiler.cxx.obj -c C:\\develop\\rps\\build\\CMakeFiles\\CMakeScratch\\TryCompile-1hsex5\\testCXXCompiler.cxx
+        FAILED: [code=1] CMakeFiles/cmTC_4408f.dir/testCXXCompiler.cxx.obj 
+        c:\\msys64\\mingw64\\bin\\g++.exe    -o CMakeFiles\\cmTC_4408f.dir\\testCXXCompiler.cxx.obj -c C:\\develop\\rps\\build\\CMakeFiles\\CMakeScratch\\TryCompile-1hsex5\\testCXXCompiler.cxx
+        ninja: build stopped: subcommand failed.
+        
+      exitCode: 1
+...

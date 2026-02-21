@@ -1,6 +1,7 @@
 add_executable(rps-pluginscanorchestrator 
     src/main.cpp
     src/ProcessPool.cpp
+    src/db/DatabaseManager.cpp
 )
 
 target_include_directories(rps-pluginscanorchestrator PRIVATE include)

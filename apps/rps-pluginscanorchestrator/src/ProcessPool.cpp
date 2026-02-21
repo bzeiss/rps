@@ -14,7 +14,8 @@ namespace rps::orchestrator {
 
 namespace bp = boost::process::v1;
 
-ProcessPool::ProcessPool(size_t maxWorkers) : m_maxWorkers(maxWorkers) {}
+ProcessPool::ProcessPool(size_t maxWorkers, db::DatabaseManager* db)
+    : m_maxWorkers(maxWorkers), m_db(db) {}
 
 ProcessPool::~ProcessPool() {
     m_stop = true;
@@ -95,21 +96,26 @@ void ProcessPool::processJob(const ScanJob& job) {
                 else if (msg.type == rps::ipc::MessageType::ScanResult) {
                     auto res = std::get<rps::ipc::ScanResult>(msg.payload);
                     std::cout << "[SUCCESS] " << job.pluginPath.filename().string() << " -> " << res.name << " v" << res.version << "\n";
+                    if (m_db) m_db->upsertPluginResult(job.pluginPath, res);
                     done = true;
                 }
                 else if (msg.type == rps::ipc::MessageType::ErrorMessage) {
                     auto err = std::get<rps::ipc::ErrorMessage>(msg.payload);
                     std::cerr << "[ERROR] " << job.pluginPath.filename().string() << ": " << err.error << "\n";
+                    if (m_db) m_db->recordPluginFailure(job.pluginPath, err.error + ": " + err.details);
                     done = true;
                 }
             } else {
                 if (!scannerProc.running()) {
-                    std::cerr << "[CRASH] " << job.pluginPath.filename().string() << " process died (exit code: " 
-                              << scannerProc.exit_code() << ")\n";
+                    std::string errMsg = "Process crashed (exit code: " + std::to_string(scannerProc.exit_code()) + ")";
+                    std::cerr << "[CRASH] " << job.pluginPath.filename().string() << " " << errMsg << "\n";
+                    if (m_db) m_db->recordPluginFailure(job.pluginPath, errMsg);
                     done = true;
                 } 
                 else if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastResponseTime).count() > job.timeoutMs) {
-                    std::cerr << "[TIMEOUT] " << job.pluginPath.filename().string() << " deadlocked/hung. Terminating process.\n";
+                    std::string errMsg = "Process timed out (deadlocked/hung plugin)";
+                    std::cerr << "[TIMEOUT] " << job.pluginPath.filename().string() << " " << errMsg << "\n";
+                    if (m_db) m_db->recordPluginFailure(job.pluginPath, errMsg);
                     scannerProc.terminate();
                     done = true;
                 }

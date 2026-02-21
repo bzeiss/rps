@@ -14,6 +14,7 @@
 #include <rps/core/PluginDiscovery.hpp>
 #include <rps/core/DefaultPaths.hpp>
 #include <rps/orchestrator/ProcessPool.hpp>
+#include <rps/orchestrator/db/DatabaseManager.hpp>
 
 int main(int argc, char* argv[]) {
     namespace po = boost::program_options;
@@ -26,7 +27,8 @@ int main(int argc, char* argv[]) {
         ("scan,s", po::value<std::string>(), "Single file to scan")
         ("scanner-bin,b", po::value<std::string>()->default_value("rps-pluginscanner.exe"), "Path to the scanner binary")
         ("timeout,t", po::value<int>()->default_value(10000), "Timeout in milliseconds for the scanner to respond")
-        ("jobs,j", po::value<size_t>()->default_value(std::thread::hardware_concurrency()), "Number of parallel workers");
+        ("jobs,j", po::value<size_t>()->default_value(std::thread::hardware_concurrency()), "Number of parallel workers")
+        ("db", po::value<std::string>()->default_value("rps-plugins.db"), "Path to the output SQLite database file");
         
     po::variables_map vm;
     try {
@@ -110,7 +112,13 @@ int main(int argc, char* argv[]) {
         jobs.push_back({ p, scannerPath.string(), timeoutMs });
     }
 
-    rps::orchestrator::ProcessPool pool(numWorkers);
+    std::string dbPath = vm["db"].as<std::string>();
+    std::cout << "Output database: " << dbPath << "\n";
+
+    rps::orchestrator::db::DatabaseManager db(dbPath);
+    db.initializeSchema();
+
+    rps::orchestrator::ProcessPool pool(numWorkers, &db);
     pool.runJobs(jobs);
 
     std::cout << "--------------------------------------------------------\n";
