@@ -6,26 +6,25 @@
 
 #include <iostream>
 #include <string>
+#include <vector>
 #include <thread>
-#include <chrono>
 #include <boost/program_options.hpp>
-#include <boost/process/v1.hpp>
-#include <boost/uuid/uuid.hpp>
-#include <boost/uuid/uuid_generators.hpp>
-#include <boost/uuid/uuid_io.hpp>
-#include <rps/ipc/Connection.hpp>
+#include <boost/filesystem.hpp>
+#include <rps/core/PluginDiscovery.hpp>
+#include <rps/orchestrator/ProcessPool.hpp>
 
 int main(int argc, char* argv[]) {
     namespace po = boost::program_options;
-    namespace bp = boost::process::v1;
-
+    namespace fs = boost::filesystem;
     
     po::options_description desc("Orchestrator Options");
     desc.add_options()
         ("help,h", "Produce help message")
-        ("scan,s", po::value<std::string>(), "Path to plugin to scan")
+        ("scan-dir,d", po::value<std::vector<std::string>>()->multitoken(), "Directories to recursively scan for plugins")
+        ("scan,s", po::value<std::string>(), "Single file to scan")
         ("scanner-bin,b", po::value<std::string>()->default_value("rps-pluginscanner.exe"), "Path to the scanner binary")
-        ("timeout,t", po::value<int>()->default_value(10000), "Timeout in milliseconds for the scanner to respond");
+        ("timeout,t", po::value<int>()->default_value(10000), "Timeout in milliseconds for the scanner to respond")
+        ("jobs,j", po::value<size_t>()->default_value(std::thread::hardware_concurrency()), "Number of parallel workers");
         
     po::variables_map vm;
     try {
@@ -41,100 +40,49 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    if (!vm.count("scan")) {
-        std::cerr << "Error: --scan <plugin_path> is required.\n";
+    std::vector<fs::path> pluginsToScan;
+
+    if (vm.count("scan-dir")) {
+        auto dirs = vm["scan-dir"].as<std::vector<std::string>>();
+        auto found = rps::core::PluginDiscovery::findPlugins(dirs);
+        pluginsToScan.insert(pluginsToScan.end(), found.begin(), found.end());
+    }
+
+    if (vm.count("scan")) {
+        fs::path p(vm["scan"].as<std::string>());
+        // If it's a dummy test string like CRASH_ME, allow it through
+        if (p.string() == "CRASH_ME" || p.string() == "HANG_ME" || fs::exists(p)) {
+            pluginsToScan.push_back(p);
+        } else {
+            std::cerr << "Warning: Single scan file does not exist: " << p << "\n";
+        }
+    }
+
+    if (pluginsToScan.empty()) {
+        std::cerr << "No plugins to scan. Provide --scan-dir or --scan.\n";
         return 1;
     }
 
-    std::string pluginPath = vm["scan"].as<std::string>();
     std::string scannerBin = vm["scanner-bin"].as<std::string>();
     int timeoutMs = vm["timeout"].as<int>();
+    size_t numWorkers = vm["jobs"].as<size_t>();
+
+    if (numWorkers == 0) numWorkers = 1;
 
     std::cout << "RPS Plugin Scan Orchestrator starting...\n";
-    std::cout << "Target plugin: " << pluginPath << "\n";
+    std::cout << "Discovered " << pluginsToScan.size() << " plugins.\n";
+    std::cout << "Starting process pool with " << numWorkers << " workers (timeout: " << timeoutMs << "ms)...\n";
+    std::cout << "--------------------------------------------------------\n";
 
-    // 1. Generate unique IPC connection ID
-    auto uuid = boost::uuids::random_generator()();
-    std::string ipcId = "rps_ipc_" + boost::uuids::to_string(uuid);
-
-    std::cout << "Initializing IPC Server: " << ipcId << "\n";
-
-    try {
-        // 2. Create the IPC Server Connection
-        auto connection = rps::ipc::MessageQueueConnection::createServer(ipcId);
-
-        // 3. Spawn the scanner process
-        std::cout << "Spawning scanner process...\n";
-        bp::child scannerProc(scannerBin, "--ipc-id", ipcId, "--plugin-path", pluginPath);
-
-        // 4. Send the Scan Request
-        rps::ipc::Message reqMsg;
-        reqMsg.type = rps::ipc::MessageType::ScanRequest;
-        reqMsg.payload = rps::ipc::ScanRequest{ pluginPath, "unknown", false };
-        
-        std::cout << "Sending ScanRequest...\n";
-        if (!connection->sendMessage(reqMsg)) {
-            std::cerr << "Failed to send ScanRequest to worker.\n";
-            scannerProc.terminate();
-            return 1;
-        }
-
-        // 5. Listen Loop
-        bool done = false;
-        auto startTime = std::chrono::steady_clock::now();
-        auto lastResponseTime = startTime;
-
-        while (!done) {
-            // Wait up to 100ms for a message
-            auto maybeMsg = connection->receiveMessage(100);
-            auto now = std::chrono::steady_clock::now();
-            
-            if (maybeMsg.has_value()) {
-                lastResponseTime = now; // Reset timeout watchdog
-                const auto& msg = maybeMsg.value();
-                if (msg.type == rps::ipc::MessageType::ProgressEvent) {
-                    auto evt = std::get<rps::ipc::ProgressEvent>(msg.payload);
-                    std::cout << "[Scanner Progress] " << evt.progressPercentage << "% - " << evt.status << "\n";
-                } 
-                else if (msg.type == rps::ipc::MessageType::ScanResult) {
-                    auto res = std::get<rps::ipc::ScanResult>(msg.payload);
-                    std::cout << "[Scanner Result] Success!\n";
-                    std::cout << "  Name: " << res.name << "\n";
-                    std::cout << "  Vendor: " << res.vendor << "\n";
-                    std::cout << "  Version: " << res.version << "\n";
-                    std::cout << "  I/O: " << res.numInputs << " in / " << res.numOutputs << " out\n";
-                    done = true;
-                }
-                else if (msg.type == rps::ipc::MessageType::ErrorMessage) {
-                    auto err = std::get<rps::ipc::ErrorMessage>(msg.payload);
-                    std::cerr << "[Scanner Error] " << err.error << " - " << err.details << "\n";
-                    done = true;
-                }
-            } else {
-                // Check if process died
-                if (!scannerProc.running()) {
-                    std::cerr << "[Orchestrator] Scanner process terminated unexpectedly (exit code: " 
-                              << scannerProc.exit_code() << ")\n";
-                    done = true;
-                } 
-                // Check for watchdog timeout
-                else if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastResponseTime).count() > timeoutMs) {
-                    std::cerr << "[Orchestrator] Scanner process timed out (hung plugin?). Terminating it.\n";
-                    scannerProc.terminate();
-                    done = true;
-                }
-            }
-        }
-
-        if (scannerProc.running()) {
-            scannerProc.wait();
-        }
-
-    } catch (const std::exception& e) {
-        std::cerr << "[Orchestrator Fatal Error] " << e.what() << "\n";
-        return 1;
+    std::vector<rps::orchestrator::ScanJob> jobs;
+    for (const auto& p : pluginsToScan) {
+        jobs.push_back({ p, scannerBin, timeoutMs });
     }
 
+    rps::orchestrator::ProcessPool pool(numWorkers);
+    pool.runJobs(jobs);
+
+    std::cout << "--------------------------------------------------------\n";
     std::cout << "Orchestrator shutdown complete.\n";
     return 0;
 }

@@ -1,5 +1,6 @@
 C:/develop/rps/build/CMakeFiles/edit_cache.dir
 C:/develop/rps/build/CMakeFiles/rebuild_cache.dir
+C:/develop/rps/build/libs/rps-core/CMakeFiles/rps-core.dir
 C:/develop/rps/build/libs/rps-core/CMakeFiles/edit_cache.dir
 C:/develop/rps/build/libs/rps-core/CMakeFiles/rebuild_cache.dir
 C:/develop/rps/build/libs/rps-ipc/CMakeFiles/rps-ipc.dir

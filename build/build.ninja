@@ -63,6 +63,40 @@ build rebuild_cache: phony CMakeFiles/rebuild_cache.util
 # C:/develop/rps/CMakeLists.txt
 # =============================================================================
 
+# =============================================================================
+# Object build statements for STATIC_LIBRARY target rps-core
+
+
+#############################################
+# Order-only phony target for rps-core
+
+build cmake_object_order_depends_target_rps-core: phony || .
+
+build libs/rps-core/CMakeFiles/rps-core.dir/src/PluginDiscovery.cpp.obj: CXX_COMPILER__rps-core_unscanned_ C$:/develop/rps/libs/rps-core/src/PluginDiscovery.cpp || cmake_object_order_depends_target_rps-core
+  DEFINES = -DBOOST_FILESYSTEM_NO_LIB -DBOOST_FILESYSTEM_STATIC_LINK=1
+  DEP_FILE = libs\rps-core\CMakeFiles\rps-core.dir\src\PluginDiscovery.cpp.obj.d
+  FLAGS = -std=c++23 -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -IC:/develop/rps/libs/rps-core/include
+  OBJECT_DIR = libs\rps-core\CMakeFiles\rps-core.dir
+  OBJECT_FILE_DIR = libs\rps-core\CMakeFiles\rps-core.dir\src
+  TARGET_SUPPORT_DIR = libs\rps-core\CMakeFiles\rps-core.dir
+
+
+# =============================================================================
+# Link build statements for STATIC_LIBRARY target rps-core
+
+
+#############################################
+# Link the static library libs\rps-core\librps-core.a
+
+build libs/rps-core/librps-core.a: CXX_STATIC_LIBRARY_LINKER__rps-core_ libs/rps-core/CMakeFiles/rps-core.dir/src/PluginDiscovery.cpp.obj
+  OBJECT_DIR = libs\rps-core\CMakeFiles\rps-core.dir
+  POST_BUILD = cd .
+  PRE_LINK = cd .
+  TARGET_FILE = libs\rps-core\librps-core.a
+  TARGET_PDB = rps-core.a.dbg
+  TARGET_SUPPORT_DIR = libs\rps-core\CMakeFiles\rps-core.dir
+
 
 #############################################
 # Utility command for edit_cache
@@ -169,11 +203,20 @@ build libs/rps-ipc/rebuild_cache: phony libs/rps-ipc/CMakeFiles/rebuild_cache.ut
 #############################################
 # Order-only phony target for rps-pluginscanorchestrator
 
-build cmake_object_order_depends_target_rps-pluginscanorchestrator: phony || cmake_object_order_depends_target_rps-ipc
+build cmake_object_order_depends_target_rps-pluginscanorchestrator: phony || cmake_object_order_depends_target_rps-core cmake_object_order_depends_target_rps-ipc
 
 build apps/rps-pluginscanorchestrator/CMakeFiles/rps-pluginscanorchestrator.dir/src/main.cpp.obj: CXX_COMPILER__rps-pluginscanorchestrator_unscanned_ C$:/develop/rps/apps/rps-pluginscanorchestrator/src/main.cpp || cmake_object_order_depends_target_rps-pluginscanorchestrator
   DEFINES = -DBOOST_CONTAINER_NO_LIB -DBOOST_CONTAINER_STATIC_LINK -DBOOST_FILESYSTEM_NO_LIB -DBOOST_FILESYSTEM_STATIC_LINK=1 -DBOOST_JSON_NO_LIB=1 -DBOOST_JSON_STATIC_LINK=1 -DBOOST_PROGRAM_OPTIONS_NO_LIB -DBOOST_PROGRAM_OPTIONS_STATIC_LINK
   DEP_FILE = apps\rps-pluginscanorchestrator\CMakeFiles\rps-pluginscanorchestrator.dir\src\main.cpp.obj.d
+  FLAGS = -std=c++23 -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -IC:/develop/rps/apps/rps-pluginscanorchestrator/include -IC:/develop/rps/libs/rps-core/include -IC:/develop/rps/libs/rps-ipc/include
+  OBJECT_DIR = apps\rps-pluginscanorchestrator\CMakeFiles\rps-pluginscanorchestrator.dir
+  OBJECT_FILE_DIR = apps\rps-pluginscanorchestrator\CMakeFiles\rps-pluginscanorchestrator.dir\src
+  TARGET_SUPPORT_DIR = apps\rps-pluginscanorchestrator\CMakeFiles\rps-pluginscanorchestrator.dir
+
+build apps/rps-pluginscanorchestrator/CMakeFiles/rps-pluginscanorchestrator.dir/src/ProcessPool.cpp.obj: CXX_COMPILER__rps-pluginscanorchestrator_unscanned_ C$:/develop/rps/apps/rps-pluginscanorchestrator/src/ProcessPool.cpp || cmake_object_order_depends_target_rps-pluginscanorchestrator
+  DEFINES = -DBOOST_CONTAINER_NO_LIB -DBOOST_CONTAINER_STATIC_LINK -DBOOST_FILESYSTEM_NO_LIB -DBOOST_FILESYSTEM_STATIC_LINK=1 -DBOOST_JSON_NO_LIB=1 -DBOOST_JSON_STATIC_LINK=1 -DBOOST_PROGRAM_OPTIONS_NO_LIB -DBOOST_PROGRAM_OPTIONS_STATIC_LINK
+  DEP_FILE = apps\rps-pluginscanorchestrator\CMakeFiles\rps-pluginscanorchestrator.dir\src\ProcessPool.cpp.obj.d
   FLAGS = -std=c++23 -Wall -Wextra -Wpedantic -Werror
   INCLUDES = -IC:/develop/rps/apps/rps-pluginscanorchestrator/include -IC:/develop/rps/libs/rps-core/include -IC:/develop/rps/libs/rps-ipc/include
   OBJECT_DIR = apps\rps-pluginscanorchestrator\CMakeFiles\rps-pluginscanorchestrator.dir
@@ -188,8 +231,8 @@ build apps/rps-pluginscanorchestrator/CMakeFiles/rps-pluginscanorchestrator.dir/
 #############################################
 # Link the executable apps\rps-pluginscanorchestrator\rps-pluginscanorchestrator.exe
 
-build apps/rps-pluginscanorchestrator/rps-pluginscanorchestrator.exe: CXX_EXECUTABLE_LINKER__rps-pluginscanorchestrator_ apps/rps-pluginscanorchestrator/CMakeFiles/rps-pluginscanorchestrator.dir/src/main.cpp.obj | libs/rps-ipc/librps-ipc.a C$:/msys64/mingw64/lib/libboost_program_options-mt.a C$:/msys64/mingw64/lib/libboost_json-mt.a C$:/msys64/mingw64/lib/libboost_filesystem-mt.a C$:/msys64/mingw64/lib/libsqlite3.dll.a C$:/msys64/mingw64/lib/libboost_container-mt.a C$:/msys64/mingw64/lib/libboost_atomic-mt.a || libs/rps-ipc/librps-ipc.a
-  LINK_LIBRARIES = libs/rps-ipc/librps-ipc.a  C:/msys64/mingw64/lib/libboost_program_options-mt.a  C:/msys64/mingw64/lib/libboost_json-mt.a  C:/msys64/mingw64/lib/libboost_filesystem-mt.a  C:/msys64/mingw64/lib/libsqlite3.dll.a  -lws2_32  C:/msys64/mingw64/lib/libboost_container-mt.a  C:/msys64/mingw64/lib/libboost_atomic-mt.a  -lsynchronization  -lbcrypt  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
+build apps/rps-pluginscanorchestrator/rps-pluginscanorchestrator.exe: CXX_EXECUTABLE_LINKER__rps-pluginscanorchestrator_ apps/rps-pluginscanorchestrator/CMakeFiles/rps-pluginscanorchestrator.dir/src/main.cpp.obj apps/rps-pluginscanorchestrator/CMakeFiles/rps-pluginscanorchestrator.dir/src/ProcessPool.cpp.obj | libs/rps-core/librps-core.a libs/rps-ipc/librps-ipc.a C$:/msys64/mingw64/lib/libboost_program_options-mt.a C$:/msys64/mingw64/lib/libboost_json-mt.a C$:/msys64/mingw64/lib/libboost_filesystem-mt.a C$:/msys64/mingw64/lib/libsqlite3.dll.a C$:/msys64/mingw64/lib/libboost_atomic-mt.a C$:/msys64/mingw64/lib/libboost_container-mt.a || libs/rps-core/librps-core.a libs/rps-ipc/librps-ipc.a
+  LINK_LIBRARIES = libs/rps-core/librps-core.a  libs/rps-ipc/librps-ipc.a  C:/msys64/mingw64/lib/libboost_program_options-mt.a  C:/msys64/mingw64/lib/libboost_json-mt.a  C:/msys64/mingw64/lib/libboost_filesystem-mt.a  C:/msys64/mingw64/lib/libsqlite3.dll.a  -lws2_32  C:/msys64/mingw64/lib/libboost_atomic-mt.a  -lsynchronization  -lbcrypt  C:/msys64/mingw64/lib/libboost_container-mt.a  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
   OBJECT_DIR = apps\rps-pluginscanorchestrator\CMakeFiles\rps-pluginscanorchestrator.dir
   POST_BUILD = cd .
   PRE_LINK = cd .
@@ -233,7 +276,7 @@ build apps/rps-pluginscanorchestrator/rebuild_cache: phony apps/rps-pluginscanor
 #############################################
 # Order-only phony target for rps-pluginscanner
 
-build cmake_object_order_depends_target_rps-pluginscanner: phony || cmake_object_order_depends_target_rps-ipc
+build cmake_object_order_depends_target_rps-pluginscanner: phony || cmake_object_order_depends_target_rps-core cmake_object_order_depends_target_rps-ipc
 
 build apps/rps-pluginscanner/CMakeFiles/rps-pluginscanner.dir/src/main.cpp.obj: CXX_COMPILER__rps-pluginscanner_unscanned_ C$:/develop/rps/apps/rps-pluginscanner/src/main.cpp || cmake_object_order_depends_target_rps-pluginscanner
   DEFINES = -DBOOST_CONTAINER_NO_LIB -DBOOST_CONTAINER_STATIC_LINK -DBOOST_FILESYSTEM_NO_LIB -DBOOST_FILESYSTEM_STATIC_LINK=1 -DBOOST_JSON_NO_LIB=1 -DBOOST_JSON_STATIC_LINK=1 -DBOOST_PROGRAM_OPTIONS_NO_LIB -DBOOST_PROGRAM_OPTIONS_STATIC_LINK
@@ -252,8 +295,8 @@ build apps/rps-pluginscanner/CMakeFiles/rps-pluginscanner.dir/src/main.cpp.obj: 
 #############################################
 # Link the executable apps\rps-pluginscanner\rps-pluginscanner.exe
 
-build apps/rps-pluginscanner/rps-pluginscanner.exe: CXX_EXECUTABLE_LINKER__rps-pluginscanner_ apps/rps-pluginscanner/CMakeFiles/rps-pluginscanner.dir/src/main.cpp.obj | libs/rps-ipc/librps-ipc.a C$:/msys64/mingw64/lib/libboost_program_options-mt.a C$:/msys64/mingw64/lib/libboost_json-mt.a C$:/msys64/mingw64/lib/libboost_filesystem-mt.a C$:/msys64/mingw64/lib/libboost_container-mt.a C$:/msys64/mingw64/lib/libboost_atomic-mt.a || libs/rps-ipc/librps-ipc.a
-  LINK_LIBRARIES = libs/rps-ipc/librps-ipc.a  C:/msys64/mingw64/lib/libboost_program_options-mt.a  C:/msys64/mingw64/lib/libboost_json-mt.a  C:/msys64/mingw64/lib/libboost_filesystem-mt.a  -lws2_32  C:/msys64/mingw64/lib/libboost_container-mt.a  C:/msys64/mingw64/lib/libboost_atomic-mt.a  -lsynchronization  -lbcrypt  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
+build apps/rps-pluginscanner/rps-pluginscanner.exe: CXX_EXECUTABLE_LINKER__rps-pluginscanner_ apps/rps-pluginscanner/CMakeFiles/rps-pluginscanner.dir/src/main.cpp.obj | libs/rps-core/librps-core.a libs/rps-ipc/librps-ipc.a C$:/msys64/mingw64/lib/libboost_program_options-mt.a C$:/msys64/mingw64/lib/libboost_json-mt.a C$:/msys64/mingw64/lib/libboost_filesystem-mt.a C$:/msys64/mingw64/lib/libboost_atomic-mt.a C$:/msys64/mingw64/lib/libboost_container-mt.a || libs/rps-core/librps-core.a libs/rps-ipc/librps-ipc.a
+  LINK_LIBRARIES = libs/rps-core/librps-core.a  libs/rps-ipc/librps-ipc.a  C:/msys64/mingw64/lib/libboost_program_options-mt.a  C:/msys64/mingw64/lib/libboost_json-mt.a  C:/msys64/mingw64/lib/libboost_filesystem-mt.a  -lws2_32  C:/msys64/mingw64/lib/libboost_atomic-mt.a  -lsynchronization  -lbcrypt  C:/msys64/mingw64/lib/libboost_container-mt.a  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
   OBJECT_DIR = apps\rps-pluginscanner\CMakeFiles\rps-pluginscanner.dir
   POST_BUILD = cd .
   PRE_LINK = cd .
@@ -288,7 +331,11 @@ build apps/rps-pluginscanner/rebuild_cache: phony apps/rps-pluginscanner/CMakeFi
 # =============================================================================
 # Target aliases.
 
+build librps-core.a: phony libs/rps-core/librps-core.a
+
 build librps-ipc.a: phony libs/rps-ipc/librps-ipc.a
+
+build rps-core: phony libs/rps-core/librps-core.a
 
 build rps-ipc: phony libs/rps-ipc/librps-ipc.a
 
@@ -329,7 +376,7 @@ build apps/rps-pluginscanorchestrator/all: phony apps/rps-pluginscanorchestrator
 #############################################
 # Folder: C:/develop/rps/build/libs/rps-core
 
-build libs/rps-core/all: phony
+build libs/rps-core/all: phony libs/rps-core/librps-core.a
 
 # =============================================================================
 

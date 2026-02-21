@@ -1,2 +1,4 @@
-add_library(rps-core INTERFACE)
-target_include_directories(rps-core INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+add_library(rps-core STATIC src/PluginDiscovery.cpp)
+target_include_directories(rps-core PUBLIC include)
+target_link_libraries(rps-core PUBLIC Boost::filesystem)
+
