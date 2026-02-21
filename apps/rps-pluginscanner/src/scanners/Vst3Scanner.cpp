@@ -12,6 +12,8 @@
 #include <stdexcept>
 #include <cstring>
 #include <algorithm>
+#include <vector>
+#include <boost/filesystem.hpp>
 
 // Suppress warnings from third-party Steinberg SDK headers
 #if defined(__GNUC__) || defined(__clang__)
@@ -47,6 +49,53 @@ namespace Steinberg {
 
 namespace rps::scanner {
 
+namespace {
+
+// Resolves a .vst3 path to the actual loadable binary.
+// If given a bundle directory (.vst3/), navigates into Contents/{arch}/ to find the binary.
+// If given a plain file, returns it unchanged.
+boost::filesystem::path resolveBinaryPath(const boost::filesystem::path& vst3Path) {
+    namespace fs = boost::filesystem;
+
+    if (fs::is_regular_file(vst3Path)) {
+        return vst3Path; // Already a loadable file
+    }
+
+    if (!fs::is_directory(vst3Path)) {
+        throw std::runtime_error("VST3 path is neither a file nor a directory: " + vst3Path.string());
+    }
+
+    fs::path contentsPath = vst3Path / "Contents";
+    if (!fs::exists(contentsPath) || !fs::is_directory(contentsPath)) {
+        throw std::runtime_error("VST3 bundle missing 'Contents' directory: " + vst3Path.string());
+    }
+
+    // Architecture subdirectory candidates in priority order
+#if defined(_WIN32)
+    const std::vector<std::string> archDirs = {"x86_64-win", "x86-win"};
+#elif defined(__APPLE__)
+    const std::vector<std::string> archDirs = {"MacOS"};
+#else
+    const std::vector<std::string> archDirs = {"x86_64-linux", "aarch64-linux", "i686-linux"};
+#endif
+
+    for (const auto& arch : archDirs) {
+        fs::path archPath = contentsPath / arch;
+        if (!fs::exists(archPath) || !fs::is_directory(archPath)) continue;
+
+        // Return the first regular file found in the arch directory
+        for (const auto& entry : fs::directory_iterator(archPath)) {
+            if (fs::is_regular_file(entry.path())) {
+                return entry.path();
+            }
+        }
+    }
+
+    throw std::runtime_error("VST3 bundle contains no loadable binary for this platform: " + vst3Path.string());
+}
+
+} // anonymous namespace
+
 bool Vst3Scanner::canHandle(const boost::filesystem::path& pluginPath) const {
     auto ext = pluginPath.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
@@ -54,19 +103,24 @@ bool Vst3Scanner::canHandle(const boost::filesystem::path& pluginPath) const {
 }
 
 rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath, ProgressCallback progressCb) {
-    progressCb(10, "Loading VST3 binary...");
+    progressCb(10, "Resolving VST3 binary...");
+
+    // Resolve bundle directory to actual binary (handles both bundles and single-file .vst3)
+    boost::filesystem::path binaryPath = resolveBinaryPath(pluginPath);
+
+    progressCb(20, "Loading VST3 binary...");
 
 #ifdef _WIN32
-    HMODULE handle = LoadLibraryW(pluginPath.c_str());
+    HMODULE handle = LoadLibraryW(binaryPath.c_str());
     if (!handle) {
-        throw std::runtime_error("Failed to load VST3 DLL: " + pluginPath.string());
+        throw std::runtime_error("Failed to load VST3 DLL: " + binaryPath.string());
     }
 
     auto getFactory = reinterpret_cast<Steinberg::IPluginFactory* (*)()>(
         reinterpret_cast<void*>(GetProcAddress(handle, "GetPluginFactory"))
     );
 #else
-    void* handle = dlopen(pluginPath.c_str(), RTLD_NOW | RTLD_LOCAL);
+    void* handle = dlopen(binaryPath.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!handle) {
         throw std::runtime_error(std::string("Failed to load VST3 library: ") + dlerror());
     }

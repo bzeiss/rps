@@ -12,6 +12,8 @@
 #include <rps/scanner/Vst3Scanner.hpp>
 #include <rps/core/FormatTraits.hpp>
 
+bool g_verbose = false;
+
 namespace rps::scanner {
 std::vector<std::unique_ptr<IPluginFormatScanner>> ScannerFactory::createAllScanners() {
     std::vector<std::unique_ptr<IPluginFormatScanner>> scanners;
@@ -30,7 +32,8 @@ int main(int argc, char* argv[]) {
     desc.add_options()
         ("help,h", "Produce help message")
         ("ipc-id,i", po::value<std::string>(), "IPC connection handle ID")
-        ("plugin-path,p", po::value<std::string>(), "Path to plugin to scan");
+        ("plugin-path,p", po::value<std::string>(), "Path to plugin to scan")
+        ("verbose,v", "Enable verbose/debug output");
         
     po::variables_map vm;
     try {
@@ -50,6 +53,8 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error: --ipc-id is required.\n";
         return 1;
     }
+
+    g_verbose = vm.count("verbose") > 0;
 
     std::string ipcId = vm["ipc-id"].as<std::string>();
     std::string pluginPathStr = vm.count("plugin-path") ? vm["plugin-path"].as<std::string>() : "unknown";

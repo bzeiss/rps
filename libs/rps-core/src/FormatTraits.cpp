@@ -67,23 +67,20 @@ public:
     }
 
     bool isBundleDirectory() const override {
-#if defined(__APPLE__)
-        return true; // Always bundles on Mac
-#elif defined(_WIN32)
-        return false; // Can be bundles on Windows, but the host loads the .vst3 file directly, 
-                      // or the bundle contains a specific architecture folder. For simplicity, we usually scan files.
-                      // Actually, VST3 on Win/Linux CAN be bundles (folder with .vst3 extension containing Contents/x86_64-win/...)
-                      // We'll treat it as a file/bundle hybrid in discovery. For now, false so we recurse inside it to find the actual .vst3 file if needed.
-        return true; // Let's treat them as bundles on Win/Linux too, the scanner will handle finding the binary.
-#else
-        return true; 
-#endif
+        return true; // VST3 is always a bundle (.vst3 dir with Contents/{arch}/) on all platforms.
+                     // Single-file .vst3 plugins (legacy) are files, not dirs - isBundleDirectory only
+                     // matters for directories, so returning true is always safe.
     }
 
     bool isPluginPath(const fs::path& path) const override {
         std::string ext = path.extension().string();
         std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-        return ext == ".vst3";
+        if (ext != ".vst3") return false;
+        // Accept either a bundle directory OR a standalone .vst3 file (legacy single-file plugins)
+        // but NOT a file inside a bundle (those have the same extension but live under Contents/).
+        // The bundle directory is the canonical top-level item; discovery stops recursing into it
+        // because isBundleDirectory() returns true.
+        return fs::is_directory(path) || fs::is_regular_file(path);
     }
 };
 

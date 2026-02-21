@@ -17,6 +17,7 @@ struct ScanJob {
     boost::filesystem::path pluginPath;
     std::string scannerBin;
     int timeoutMs;
+    bool verbose = false;
 };
 
 class ProcessPool {
@@ -36,6 +37,7 @@ private:
     std::vector<std::thread> m_threads;
     std::vector<ScanJob> m_jobQueue;
     std::mutex m_queueMutex;
+    std::mutex m_consoleMutex;
     std::atomic<bool> m_stop{false};
 };
 

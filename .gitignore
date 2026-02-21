@@ -4,3 +4,6 @@ rps-plugins.db
 build/.ninja_log
 build/CMakeFiles/CMakeConfigureLog.yaml
 
+vst3_full_scan.log
+
+patch.json

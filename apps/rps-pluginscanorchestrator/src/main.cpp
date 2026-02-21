@@ -2,6 +2,7 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+#include <windows.h>
 #endif
 
 #include <iostream>
@@ -33,6 +34,7 @@ int main(int argc, char* argv[]) {
         ("formats,f", po::value<std::string>()->default_value("all"), "Comma-separated list of formats to scan (e.g. vst3,clap) or 'all'")
         ("filter", po::value<std::string>(), "Only scan plugins whose filename contains this string")
         ("limit,l", po::value<size_t>()->default_value(0), "Maximum number of plugins to scan (0 = unlimited)")
+        ("verbose,v", "Enable verbose scanner output (plugin debug logs)")
         ("db", po::value<std::string>()->default_value("rps-plugins.db"), "Path to the output SQLite database file");
         
     po::variables_map vm;
@@ -48,6 +50,17 @@ int main(int argc, char* argv[]) {
         std::cout << desc << "\n";
         return 0;
     }
+
+#ifdef _WIN32
+    // Enable ANSI/VT100 escape code processing so plugin output renders correctly
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    HANDLE hErr = GetStdHandle(STD_ERROR_HANDLE);
+    DWORD outMode = 0, errMode = 0;
+    if (hOut != INVALID_HANDLE_VALUE) { GetConsoleMode(hOut, &outMode); SetConsoleMode(hOut, outMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING); }
+    if (hErr != INVALID_HANDLE_VALUE) { GetConsoleMode(hErr, &errMode); SetConsoleMode(hErr, errMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING); }
+#endif
+
+    bool verbose = vm.count("verbose") > 0;
 
     rps::core::FormatRegistry formatRegistry;
     std::string formatListStr = vm["formats"].as<std::string>();
@@ -160,7 +173,7 @@ int main(int argc, char* argv[]) {
 
     std::vector<rps::orchestrator::ScanJob> jobs;
     for (const auto& p : pluginsToScan) {
-        jobs.push_back({ p, scannerPath.string(), timeoutMs });
+        jobs.push_back({ p, scannerPath.string(), timeoutMs, verbose });
     }
 
     std::string dbPath = vm["db"].as<std::string>();

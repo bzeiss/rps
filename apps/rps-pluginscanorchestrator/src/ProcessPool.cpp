@@ -6,9 +6,31 @@
 
 #include <rps/orchestrator/ProcessPool.hpp>
 #include <iostream>
+#include <string>
+#include <thread>
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
+#include <boost/process/v1/pipe.hpp>
+
+namespace {
+
+std::string stripAnsiCodes(const std::string& line) {
+    std::string result;
+    result.reserve(line.size());
+    for (size_t i = 0; i < line.size(); ) {
+        if (line[i] == '\x1b' && i + 1 < line.size() && line[i + 1] == '[') {
+            i += 2;
+            while (i < line.size() && line[i] != 'm' && line[i] != 'K' && line[i] != 'J' && line[i] != 'H') ++i;
+            if (i < line.size()) ++i;
+        } else {
+            result += line[i++];
+        }
+    }
+    return result;
+}
+
+} // anonymous namespace
 
 namespace rps::orchestrator {
 
@@ -61,17 +83,37 @@ void ProcessPool::processJob(const ScanJob& job) {
     auto uuid = boost::uuids::random_generator()();
     std::string ipcId = "rps_ipc_" + boost::uuids::to_string(uuid);
 
-    std::cout << "[Worker Thread] Scanning: " << job.pluginPath.filename().string() << "\n";
+    {
+        std::lock_guard<std::mutex> lock(m_consoleMutex);
+        std::cout << "[Worker Thread] Scanning: " << job.pluginPath.filename().string() << "\n";
+    }
 
     try {
         auto connection = rps::ipc::MessageQueueConnection::createServer(ipcId);
-        bp::child scannerProc(job.scannerBin, "--ipc-id", ipcId, "--plugin-path", job.pluginPath.string());
+
+        std::vector<std::string> scanArgs = {"--ipc-id", ipcId, "--plugin-path", job.pluginPath.string()};
+        if (job.verbose) scanArgs.push_back("--verbose");
+
+        bp::ipstream errStream;
+        bp::child scannerProc(job.scannerBin, bp::args(scanArgs), bp::std_err > errStream);
+
+        const bool printVerbose = job.verbose;
+        std::thread stderrDrainer([&errStream, printVerbose, this]() {
+            std::string line;
+            while (std::getline(errStream, line)) {
+                if (printVerbose) {
+                    std::lock_guard<std::mutex> lock(m_consoleMutex);
+                    std::cerr << stripAnsiCodes(line) << "\n";
+                }
+            }
+        });
 
         rps::ipc::Message reqMsg;
         reqMsg.type = rps::ipc::MessageType::ScanRequest;
         reqMsg.payload = rps::ipc::ScanRequest{ job.pluginPath.string(), "unknown", false };
         
         if (!connection->sendMessage(reqMsg)) {
+            std::lock_guard<std::mutex> lock(m_consoleMutex);
             std::cerr << "[Worker Thread Error] Failed to send ScanRequest to worker.\n";
             scannerProc.terminate();
             return;
@@ -95,26 +137,38 @@ void ProcessPool::processJob(const ScanJob& job) {
                 } 
                 else if (msg.type == rps::ipc::MessageType::ScanResult) {
                     auto res = std::get<rps::ipc::ScanResult>(msg.payload);
-                    std::cout << "[SUCCESS] " << job.pluginPath.filename().string() << " -> " << res.name << " v" << res.version << "\n";
+                    {
+                        std::lock_guard<std::mutex> lock(m_consoleMutex);
+                        std::cout << "[SUCCESS] " << job.pluginPath.filename().string() << " -> " << res.name << " v" << res.version << "\n";
+                    }
                     if (m_db) m_db->upsertPluginResult(job.pluginPath, res);
                     done = true;
                 }
                 else if (msg.type == rps::ipc::MessageType::ErrorMessage) {
                     auto err = std::get<rps::ipc::ErrorMessage>(msg.payload);
-                    std::cerr << "[ERROR] " << job.pluginPath.filename().string() << ": " << err.error << "\n";
+                    {
+                        std::lock_guard<std::mutex> lock(m_consoleMutex);
+                        std::cerr << "[ERROR] " << job.pluginPath.filename().string() << ": " << err.error << "\n";
+                    }
                     if (m_db) m_db->recordPluginFailure(job.pluginPath, err.error + ": " + err.details);
                     done = true;
                 }
             } else {
                 if (!scannerProc.running()) {
                     std::string errMsg = "Process crashed (exit code: " + std::to_string(scannerProc.exit_code()) + ")";
-                    std::cerr << "[CRASH] " << job.pluginPath.filename().string() << " " << errMsg << "\n";
+                    {
+                        std::lock_guard<std::mutex> lock(m_consoleMutex);
+                        std::cerr << "[CRASH] " << job.pluginPath.filename().string() << " " << errMsg << "\n";
+                    }
                     if (m_db) m_db->recordPluginFailure(job.pluginPath, errMsg);
                     done = true;
                 } 
                 else if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastResponseTime).count() > job.timeoutMs) {
                     std::string errMsg = "Process timed out (deadlocked/hung plugin)";
-                    std::cerr << "[TIMEOUT] " << job.pluginPath.filename().string() << " " << errMsg << "\n";
+                    {
+                        std::lock_guard<std::mutex> lock(m_consoleMutex);
+                        std::cerr << "[TIMEOUT] " << job.pluginPath.filename().string() << " " << errMsg << "\n";
+                    }
                     if (m_db) m_db->recordPluginFailure(job.pluginPath, errMsg);
                     scannerProc.terminate();
                     done = true;
@@ -126,7 +180,10 @@ void ProcessPool::processJob(const ScanJob& job) {
             scannerProc.wait();
         }
 
+        stderrDrainer.join();
+
     } catch (const std::exception& e) {
+        std::lock_guard<std::mutex> lock(m_consoleMutex);
         std::cerr << "[Worker Thread Fatal] " << job.pluginPath.filename().string() << ": " << e.what() << "\n";
     }
 }

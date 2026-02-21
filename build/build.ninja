@@ -253,7 +253,6 @@ build apps/rps-pluginscanorchestrator/CMakeFiles/rps-pluginscanorchestrator.dir/
 # Link the executable apps\rps-pluginscanorchestrator\rps-pluginscanorchestrator.exe
 
 build apps/rps-pluginscanorchestrator/rps-pluginscanorchestrator.exe: CXX_EXECUTABLE_LINKER__rps-pluginscanorchestrator_ apps/rps-pluginscanorchestrator/CMakeFiles/rps-pluginscanorchestrator.dir/src/main.cpp.obj apps/rps-pluginscanorchestrator/CMakeFiles/rps-pluginscanorchestrator.dir/src/ProcessPool.cpp.obj apps/rps-pluginscanorchestrator/CMakeFiles/rps-pluginscanorchestrator.dir/src/db/DatabaseManager.cpp.obj | libs/rps-core/librps-core.a libs/rps-ipc/librps-ipc.a C$:/msys64/clang64/lib/libboost_program_options-mt.a C$:/msys64/clang64/lib/libboost_json-mt.a C$:/msys64/clang64/lib/libboost_filesystem-mt.a C$:/msys64/clang64/lib/libsqlite3.dll.a C$:/msys64/clang64/lib/libboost_atomic-mt.a C$:/msys64/clang64/lib/libboost_container-mt.a || libs/rps-core/librps-core.a libs/rps-ipc/librps-ipc.a
-  LINK_FLAGS = -static
   LINK_LIBRARIES = libs/rps-core/librps-core.a  libs/rps-ipc/librps-ipc.a  C:/msys64/clang64/lib/libboost_program_options-mt.a  C:/msys64/clang64/lib/libboost_json-mt.a  C:/msys64/clang64/lib/libboost_filesystem-mt.a  C:/msys64/clang64/lib/libsqlite3.dll.a  -lws2_32  C:/msys64/clang64/lib/libboost_atomic-mt.a  -pthread  -lsynchronization  -lbcrypt  C:/msys64/clang64/lib/libboost_container-mt.a  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
   OBJECT_DIR = apps\rps-pluginscanorchestrator\CMakeFiles\rps-pluginscanorchestrator.dir
   POST_BUILD = cd .
@@ -337,7 +336,6 @@ build apps/rps-pluginscanner/CMakeFiles/rps-pluginscanner.dir/src/scanners/Vst3S
 # Link the executable apps\rps-pluginscanner\rps-pluginscanner.exe
 
 build apps/rps-pluginscanner/rps-pluginscanner.exe: CXX_EXECUTABLE_LINKER__rps-pluginscanner_ apps/rps-pluginscanner/CMakeFiles/rps-pluginscanner.dir/src/main.cpp.obj apps/rps-pluginscanner/CMakeFiles/rps-pluginscanner.dir/src/scanners/ClapScanner.cpp.obj apps/rps-pluginscanner/CMakeFiles/rps-pluginscanner.dir/src/scanners/Vst3Scanner.cpp.obj | libs/rps-core/librps-core.a libs/rps-ipc/librps-ipc.a C$:/msys64/clang64/lib/libboost_program_options-mt.a C$:/msys64/clang64/lib/libboost_json-mt.a C$:/msys64/clang64/lib/libboost_filesystem-mt.a C$:/msys64/clang64/lib/libboost_atomic-mt.a C$:/msys64/clang64/lib/libboost_container-mt.a || libs/rps-core/librps-core.a libs/rps-ipc/librps-ipc.a
-  LINK_FLAGS = -static
   LINK_LIBRARIES = libs/rps-core/librps-core.a  libs/rps-ipc/librps-ipc.a  C:/msys64/clang64/lib/libboost_program_options-mt.a  C:/msys64/clang64/lib/libboost_json-mt.a  C:/msys64/clang64/lib/libboost_filesystem-mt.a  -lws2_32  C:/msys64/clang64/lib/libboost_atomic-mt.a  -pthread  -lsynchronization  -lbcrypt  C:/msys64/clang64/lib/libboost_container-mt.a  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
   OBJECT_DIR = apps\rps-pluginscanner\CMakeFiles\rps-pluginscanner.dir
   POST_BUILD = cd .

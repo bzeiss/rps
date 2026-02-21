@@ -13,6 +13,8 @@
 #include <cstring>
 #include <rps/core/clap/include/clap/clap.h>
 
+extern bool g_verbose;
+
 namespace rps::scanner {
 
 bool ClapScanner::canHandle(const boost::filesystem::path& pluginPath) const {
@@ -22,37 +24,43 @@ bool ClapScanner::canHandle(const boost::filesystem::path& pluginPath) const {
 }
 
 rps::ipc::ScanResult ClapScanner::scan(const boost::filesystem::path& pluginPath, ProgressCallback progressCb) {
+    if (g_verbose) std::cerr << "[DEBUG] ClapScanner::scan called for " << pluginPath.string() << "\n";
     progressCb(10, "Loading CLAP binary...");
 
 #ifdef _WIN32
+    if (g_verbose) std::cerr << "[DEBUG] Calling LoadLibraryW\n";
     HMODULE handle = LoadLibraryW(pluginPath.c_str());
     if (!handle) {
         throw std::runtime_error("Failed to load CLAP DLL: " + pluginPath.string());
     }
     
-    // We must cast FARPROC via void* to avoid MinGW -Wcast-function-type error
-    auto getEntry = reinterpret_cast<const clap_plugin_entry* (*)()>(
-        reinterpret_cast<void*>(GetProcAddress(handle, "clap_entry"))
-    );
+    if (g_verbose) std::cerr << "[DEBUG] Calling GetProcAddress\n";
+    void* procAddress = reinterpret_cast<void*>(GetProcAddress(handle, "clap_entry"));
+    if (g_verbose) std::cerr << "[DEBUG] GetProcAddress returned: " << procAddress << "\n";
+    
+    if (!procAddress) {
+        FreeLibrary(handle);
+        throw std::runtime_error("Library does not export 'clap_entry'. Not a valid CLAP plugin.");
+    }
+
+    const clap_plugin_entry* entry = reinterpret_cast<const clap_plugin_entry*>(procAddress);
+    if (g_verbose) std::cerr << "[DEBUG] entry pointer: " << entry << "\n";
 #else
     void* handle = dlopen(pluginPath.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!handle) {
         throw std::runtime_error(std::string("Failed to load CLAP library: ") + dlerror());
     }
 
-    auto getEntry = reinterpret_cast<const clap_plugin_entry* (*)()>(dlsym(handle, "clap_entry"));
-#endif
+    void* symAddress = dlsym(handle, "clap_entry");
 
-    if (!getEntry) {
-#ifdef _WIN32
-        FreeLibrary(handle);
-#else
+    if (!symAddress) {
         dlclose(handle);
-#endif
         throw std::runtime_error("Library does not export 'clap_entry'. Not a valid CLAP plugin.");
     }
 
-    const clap_plugin_entry* entry = getEntry();
+    const clap_plugin_entry* entry = reinterpret_cast<const clap_plugin_entry*>(symAddress);
+#endif
+
     if (!entry) {
 #ifdef _WIN32
         FreeLibrary(handle);
@@ -63,6 +71,7 @@ rps::ipc::ScanResult ClapScanner::scan(const boost::filesystem::path& pluginPath
     }
 
     progressCb(30, "Initializing CLAP entry point...");
+    if (g_verbose) std::cerr << "[DEBUG] Calling entry->init()\n";
     if (!entry->init(pluginPath.string().c_str())) {
 #ifdef _WIN32
         FreeLibrary(handle);
@@ -72,8 +81,7 @@ rps::ipc::ScanResult ClapScanner::scan(const boost::filesystem::path& pluginPath
         throw std::runtime_error("Failed to initialize CLAP plugin entry.");
     }
 
-    progressCb(50, "Extracting plugin metadata...");
-    
+    if (g_verbose) std::cerr << "[DEBUG] entry->init() successful. Calling get_factory()\n";
     const void* factoryPtr = entry->get_factory(CLAP_PLUGIN_FACTORY_ID);
     if (!factoryPtr) {
         entry->deinit();
