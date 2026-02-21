@@ -1,1 +1,6 @@
 build/
+build/*
+rps-plugins.db
+build/.ninja_log
+build/CMakeFiles/CMakeConfigureLog.yaml
+

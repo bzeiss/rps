@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 #include <thread>
+#include <algorithm>
+#include <cctype>
 #include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/dll/runtime_symbol_info.hpp>
@@ -29,6 +31,8 @@ int main(int argc, char* argv[]) {
         ("timeout,t", po::value<int>()->default_value(10000), "Timeout in milliseconds for the scanner to respond")
         ("jobs,j", po::value<size_t>()->default_value(std::thread::hardware_concurrency()), "Number of parallel workers")
         ("formats,f", po::value<std::string>()->default_value("all"), "Comma-separated list of formats to scan (e.g. vst3,clap) or 'all'")
+        ("filter", po::value<std::string>(), "Only scan plugins whose filename contains this string")
+        ("limit,l", po::value<size_t>()->default_value(0), "Maximum number of plugins to scan (0 = unlimited)")
         ("db", po::value<std::string>()->default_value("rps-plugins.db"), "Path to the output SQLite database file");
         
     po::variables_map vm;
@@ -101,6 +105,33 @@ int main(int argc, char* argv[]) {
     if (pluginsToScan.empty()) {
         std::cerr << "No plugins found to scan. Provide --scan-dir or --scan, or ensure plugins exist in standard OS locations.\n";
         return 1;
+    }
+
+    // Apply filter if provided
+    if (vm.count("filter")) {
+        std::string filterStr = vm["filter"].as<std::string>();
+        std::vector<fs::path> filtered;
+        for (const auto& p : pluginsToScan) {
+            std::string filename = p.filename().string();
+            // Case-insensitive substring match
+            auto it = std::search(
+                filename.begin(), filename.end(),
+                filterStr.begin(), filterStr.end(),
+                [](char ch1, char ch2) { return std::tolower(ch1) == std::tolower(ch2); }
+            );
+            if (it != filename.end()) {
+                filtered.push_back(p);
+            }
+        }
+        pluginsToScan = std::move(filtered);
+        std::cout << "Applied filter '" << filterStr << "': " << pluginsToScan.size() << " plugins match.\n";
+    }
+
+    // Apply limit if provided
+    size_t limit = vm["limit"].as<size_t>();
+    if (limit > 0 && pluginsToScan.size() > limit) {
+        std::cout << "Limiting scan to " << limit << " plugins (out of " << pluginsToScan.size() << ").\n";
+        pluginsToScan.resize(limit);
     }
 
     std::string scannerBin = vm["scanner-bin"].as<std::string>();
