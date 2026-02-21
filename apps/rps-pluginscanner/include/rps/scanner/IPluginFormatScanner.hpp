@@ -15,6 +15,9 @@ class IPluginFormatScanner {
 public:
     virtual ~IPluginFormatScanner() = default;
 
+    // The name of the format this scanner handles (must match FormatTraits name, e.g. "vst3", "clap")
+    virtual std::string getFormatName() const = 0;
+
     // Checks if this scanner can handle the given file based on extension/metadata
     virtual bool canHandle(const boost::filesystem::path& pluginPath) const = 0;
 

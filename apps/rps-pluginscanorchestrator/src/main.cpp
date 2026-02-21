@@ -12,7 +12,7 @@
 #include <boost/filesystem.hpp>
 #include <boost/dll/runtime_symbol_info.hpp>
 #include <rps/core/PluginDiscovery.hpp>
-#include <rps/core/DefaultPaths.hpp>
+#include <rps/core/FormatTraits.hpp>
 #include <rps/orchestrator/ProcessPool.hpp>
 #include <rps/orchestrator/db/DatabaseManager.hpp>
 
@@ -28,6 +28,7 @@ int main(int argc, char* argv[]) {
         ("scanner-bin,b", po::value<std::string>()->default_value("rps-pluginscanner.exe"), "Path to the scanner binary")
         ("timeout,t", po::value<int>()->default_value(10000), "Timeout in milliseconds for the scanner to respond")
         ("jobs,j", po::value<size_t>()->default_value(std::thread::hardware_concurrency()), "Number of parallel workers")
+        ("formats,f", po::value<std::string>()->default_value("all"), "Comma-separated list of formats to scan (e.g. vst3,clap) or 'all'")
         ("db", po::value<std::string>()->default_value("rps-plugins.db"), "Path to the output SQLite database file");
         
     po::variables_map vm;
@@ -44,11 +45,20 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
+    rps::core::FormatRegistry formatRegistry;
+    std::string formatListStr = vm["formats"].as<std::string>();
+    auto formatsToScan = formatRegistry.parseFormats(formatListStr);
+
+    if (formatsToScan.empty()) {
+        std::cerr << "No valid formats specified to scan.\n";
+        return 1;
+    }
+
     std::vector<fs::path> pluginsToScan;
 
     if (vm.count("scan-dir")) {
         auto dirs = vm["scan-dir"].as<std::vector<std::string>>();
-        auto found = rps::core::PluginDiscovery::findPlugins(dirs);
+        auto found = rps::core::PluginDiscovery::findPlugins(dirs, formatsToScan);
         pluginsToScan.insert(pluginsToScan.end(), found.begin(), found.end());
     }
 
@@ -62,18 +72,28 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // If neither --scan-dir nor --scan was provided, fallback to OS default directories
+    // If neither --scan-dir nor --scan was provided, fallback to OS default directories for the requested formats
     if (pluginsToScan.empty() && !vm.count("scan-dir") && !vm.count("scan")) {
-        std::cout << "No paths provided. Using OS default plugin directories...\n";
-        auto defaultDirs = rps::core::DefaultPaths::getPluginDirectories();
+        std::cout << "No paths provided. Using OS default plugin directories for requested formats...\n";
+        
         std::vector<std::string> dirStrings;
-        for (const auto& d : defaultDirs) {
-            std::cout << "  -> " << d.string() << "\n";
-            dirStrings.push_back(d.string());
+        for (const auto* traits : formatsToScan) {
+            auto defaultDirs = traits->getDefaultPaths();
+            for (const auto& d : defaultDirs) {
+                // Only add if not already in list to avoid duplicates
+                auto dStr = d.string();
+                if (std::find(dirStrings.begin(), dirStrings.end(), dStr) == dirStrings.end()) {
+                    dirStrings.push_back(dStr);
+                }
+            }
+        }
+        
+        for (const auto& d : dirStrings) {
+            std::cout << "  -> " << d << "\n";
         }
         
         if (!dirStrings.empty()) {
-            auto found = rps::core::PluginDiscovery::findPlugins(dirStrings);
+            auto found = rps::core::PluginDiscovery::findPlugins(dirStrings, formatsToScan);
             pluginsToScan.insert(pluginsToScan.end(), found.begin(), found.end());
         }
     }

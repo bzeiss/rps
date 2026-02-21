@@ -10,6 +10,7 @@
 #include <rps/scanner/IPluginFormatScanner.hpp>
 #include <rps/scanner/ClapScanner.hpp>
 #include <rps/scanner/Vst3Scanner.hpp>
+#include <rps/core/FormatTraits.hpp>
 
 namespace rps::scanner {
 std::vector<std::unique_ptr<IPluginFormatScanner>> ScannerFactory::createAllScanners() {
@@ -71,10 +72,18 @@ int main(int argc, char* argv[]) {
         auto scanners = rps::scanner::ScannerFactory::createAllScanners();
         rps::scanner::IPluginFormatScanner* activeScanner = nullptr;
 
+        // Ensure we only try to parse the plugin with a scanner that natively handles its format.
+        // E.g. don't try to parse a .vst3 file with a ClapScanner.
+        rps::core::FormatRegistry formatRegistry;
+
         for (auto& s : scanners) {
-            if (s->canHandle(pluginPath)) {
-                activeScanner = s.get();
-                break;
+            auto formatName = s->getFormatName();
+            const auto* traits = formatRegistry.getTraits(formatName);
+            if (traits && traits->isPluginPath(pluginPath)) {
+                if (s->canHandle(pluginPath)) {
+                    activeScanner = s.get();
+                    break;
+                }
             }
         }
 

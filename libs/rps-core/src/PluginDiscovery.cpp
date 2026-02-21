@@ -6,26 +6,27 @@ namespace rps::core {
 
 namespace fs = boost::filesystem;
 
-bool PluginDiscovery::isPluginFile(const fs::path& path) {
-    if (!fs::is_regular_file(path) && !fs::is_directory(path)) {
-        return false;
+bool PluginDiscovery::isPluginFile(const fs::path& path, const std::vector<const IFormatTraits*>& formats) {
+    for (const auto* traits : formats) {
+        if (traits->isPluginPath(path)) {
+            return true;
+        }
     }
-
-    std::string ext = path.extension().string();
-    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-
-    // VST3 are folders on Mac, but often .vst3 files on Windows/Linux
-    // CLAP are .clap files
-    // VST2 are .dll on Windows, .vst on Mac, .so on Linux
-    // AU are .component folders on Mac
-    // AAX are .aaxplugin folders/files
-
-    return ext == ".vst3" || ext == ".clap" || ext == ".vst" || 
-           ext == ".dll" || ext == ".so" || ext == ".component" || 
-           ext == ".aaxplugin";
+    return false;
 }
 
-std::vector<fs::path> PluginDiscovery::findPlugins(const std::vector<std::string>& directories) {
+bool PluginDiscovery::isBundleDirectory(const fs::path& path, const std::vector<const IFormatTraits*>& formats) {
+    for (const auto* traits : formats) {
+        if (traits->isPluginPath(path) && traits->isBundleDirectory()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::vector<fs::path> PluginDiscovery::findPlugins(
+    const std::vector<std::string>& directories,
+    const std::vector<const IFormatTraits*>& formats) {
     std::vector<fs::path> foundPlugins;
 
     for (const auto& dirStr : directories) {
@@ -42,10 +43,10 @@ std::vector<fs::path> PluginDiscovery::findPlugins(const std::vector<std::string
             for (auto it = fs::recursive_directory_iterator(dirPath); it != fs::recursive_directory_iterator(); ++it) {
                 const fs::path& entryPath = it->path();
                 
-                if (isPluginFile(entryPath)) {
+                if (isPluginFile(entryPath, formats)) {
                     foundPlugins.push_back(entryPath);
                     // Do not recurse into the plugin bundle itself
-                    if (fs::is_directory(entryPath)) {
+                    if (isBundleDirectory(entryPath, formats)) {
                         it.disable_recursion_pending();
                     }
                 }
