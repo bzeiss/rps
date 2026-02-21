@@ -191,6 +191,12 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
     result.name = classInfo.name;
     result.vendor = "Unknown VST3 Vendor"; // Need IPluginFactory2/3 for vendor details
     result.version = "1.0.0";
+    
+    // Convert 16-byte FUID to hex string for UID
+    char uidBuf[33];
+    snprintf(uidBuf, sizeof(uidBuf), "%08X%08X%08X%08X", 
+        classInfo.cid[0], classInfo.cid[1], classInfo.cid[2], classInfo.cid[3]);
+    result.uid = uidBuf;
 
     // Attempt to query IPluginFactory2 for vendor string
     Steinberg::IPluginFactory2* factory2 = nullptr;
@@ -199,6 +205,21 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
         if (factory2->getClassInfo2(0, &classInfo2) == Steinberg::kResultOk) {
             result.vendor = classInfo2.vendor;
             result.version = classInfo2.version;
+            result.category = classInfo2.subCategories;
+        }
+        
+        // Attempt to query IPluginFactory3 for URL and Email (often used for description/contact)
+        Steinberg::IPluginFactory3* factory3 = nullptr;
+        if (factory2->queryInterface(Steinberg::IPluginFactory3::iid, reinterpret_cast<void**>(&factory3)) == Steinberg::kResultOk) {
+            Steinberg::PClassInfoW classInfoW;
+            if (factory3->getClassInfoUnicode(0, &classInfoW) == Steinberg::kResultOk) {
+                // Convert UTF-16 to UTF-8 for URL and Contact if needed
+                // For simplicity here, we'll just grab what we can. Usually vendor/version are enough,
+                // but some plugins put info in the classInfoW fields.
+                // Note: VST3 doesn't have a direct "description" field in the factory, 
+                // it's usually in the module info (which requires instantiating the plugin).
+            }
+            factory3->release();
         }
         factory2->release();
     }

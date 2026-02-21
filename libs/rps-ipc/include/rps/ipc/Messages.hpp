@@ -30,6 +30,10 @@ struct ScanResult {
     std::string name;
     std::string vendor;
     std::string version;
+    std::string uid;
+    std::string description;
+    std::string url;
+    std::string category;
     uint32_t numInputs = 0;
     uint32_t numOutputs = 0;
     std::vector<ParameterInfo> parameters;

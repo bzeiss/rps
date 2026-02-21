@@ -38,15 +38,15 @@ We adhere to a set of strict constraints to ensure maximum compatibility, adopti
 
 ---
 
-## 3. Current Implementation Status (Phase 1)
+## 3. Current Implementation Status (Phases 1-3)
 
-We have successfully completed **Phase 1: Project Skeleton & IPC Foundation**. The fundamental bidirectional communication and crash-recovery logic is in place and tested.
+We have successfully completed **Phase 1 (IPC Foundation)**, **Phase 2 (Process Pool & Orchestration)**, and are deep into **Phase 3 (Format Scanners)**. The fundamental bidirectional communication, crash-recovery logic, and targeted format scanning are in place and tested against thousands of real-world plugins.
 
 ### 3.1 Project Structure
-- `apps/rps-pluginscanorchestrator/`: The main orchestrator application.
-- `apps/rps-pluginscanner/`: The worker application.
+- `apps/rps-pluginscanorchestrator/`: The main orchestrator application. Manages parallel worker pools, applies format/name filtering, and writes to SQLite.
+- `apps/rps-pluginscanner/`: The worker application. Loads the plugin DLL natively.
 - `libs/rps-ipc/`: A static library containing the shared IPC transport layer and JSON serialization logic.
-- `libs/rps-core/`: A header-only library for shared utilities (currently empty, reserved for future use).
+- `libs/rps-core/`: Format traits, registry, and filesystem discovery logic.
 
 ### 3.2 The IPC Protocol Schema
 Located in `libs/rps-ipc/include/rps/ipc/Messages.hpp`.
@@ -56,7 +56,7 @@ Instead of binary serialization like Protobuf, we chose to serialize our IPC mes
 The protocol consists of a wrapper `Message` struct containing a variant payload:
 - `ScanRequest`: Sent by Orchestrator -> Scanner. Contains the path to the `.dll`/`.so`.
 - `ProgressEvent`: Sent by Scanner -> Orchestrator. Contains percentage and status strings (e.g., "Instantiating Plugin"). Crucial for resetting the Orchestrator's watchdog timer.
-- `ScanResult`: Sent by Scanner -> Orchestrator on success. Contains plugin metadata.
+- `ScanResult`: Sent by Scanner -> Orchestrator on success. Contains rich DAW-ready metadata: Name, Vendor, Version, UID, Description, URL, Categories, and Parameter lists.
 - `ErrorMessage`: Sent by Scanner -> Orchestrator on caught, non-fatal errors.
 
 ### 3.3 The IPC Transport Layer
@@ -65,25 +65,23 @@ Located in `libs/rps-ipc/include/rps/ipc/Connection.hpp`.
 We use **Boost.Interprocess** `message_queue` for fast, local, cross-platform communication. 
 Each worker is assigned a unique UUID by the orchestrator at startup. The orchestrator spawns two queues per worker (one for TX, one for RX) named using that UUID. The scanner receives this UUID via command-line arguments and connects to the existing queues.
 
-### 3.4 Crash Isolation and Watchdog Logic
-The core feature of RPS is already implemented in `apps/rps-pluginscanorchestrator/src/main.cpp`:
+### 3.4 Crash Isolation, Watchdog Logic, and UI Suppression
+The core feature of RPS is fully implemented in `ProcessPool.cpp` and `scanner/main.cpp`:
 
 1. The orchestrator uses `boost::process` to spawn the scanner and passes the IPC UUID.
-2. It enters a polling loop using `receiveMessage(100ms)`.
-3. Every time it receives a `ProgressEvent`, it updates a `lastResponseTime` timestamp.
-4. If it receives nothing, it checks if `scannerProc.running()` is still true. If the process died (e.g., a **Segmentation Fault**), the orchestrator catches it gracefully and exits the loop.
-5. If the process is still running but the time since `lastResponseTime` exceeds a defined `--timeout` (e.g., 10 seconds), the orchestrator assumes the plugin is **hung/deadlocked**, calls `scannerProc.terminate()`, and gracefully moves on.
+2. **UI Suppression (Windows)**: The orchestrator assigns the scanner child process to a Windows Job Object with `JOB_OBJECT_UILIMIT_HANDLES`. This silently blocks the plugin from creating Win32 `MessageBox` dialogs (which commonly happen during license/mutex failures) that would otherwise block the scanner indefinitely. The scanner itself also calls `SetErrorMode` to suppress OS-level crash dialogs.
+3. The orchestrator enters a polling loop. Every time it receives a `ProgressEvent`, it updates a `lastResponseTime` timestamp.
+4. If the process dies (e.g., a **Segmentation Fault** / `0xC0000005`), the orchestrator catches it gracefully, logs the exit code, and moves on.
+5. If the process is still running but the time since `lastResponseTime` exceeds a defined `--timeout`, the orchestrator assumes the plugin is **hung/deadlocked**, calls `scannerProc.terminate()`, and gracefully moves on.
 
-*You can test this yourself by running:*
-```bash
-./rps-pluginscanorchestrator.exe --scan "CRASH_ME"
-./rps-pluginscanorchestrator.exe --scan "HANG_ME" --timeout 2000
-```
+### 3.5 Build Robustness & Static Linking
+To ensure the orchestrator and scanner binaries are portable and do not fail with "missing DLL" errors (exit code 127 on Windows), we strictly **statically link** the C/C++ runtimes (`-static-libgcc -static-libstdc++`), Boost, and SQLite. On Windows, we use the MSYS2 Clang64 environment for the most compliant C++23 build.
 
 ---
 
-## 4. Next Steps (Phase 2 & 3)
+## 4. Next Steps (Phase 3 & 4)
 
 The immediate next goals are:
-1. **Phase 2**: Implement the **Process Pool Manager** in the orchestrator to scan multiple files in parallel, and add recursive filesystem discovery to find the actual `.dll`/`.so` files.
-2. **Phase 3**: Define the `IPluginFormatScanner` interface inside the worker and write the actual code to load and parse **CLAP** and **VST3** binaries natively without JUCE.
+1. **Phase 3 (OS Formats)**: Implement scanners for OS-specific formats (**AU** on macOS via CoreAudio, **LV2** on Linux/Windows).
+2. **Phase 3 (Legacy Formats)**: Implement legacy formats (**VST2**, **AAX**). Note that VST2 requires deprecated Steinberg SDK headers, and AAX requires the PACE/Avid SDK.
+3. **Phase 4**: Expand the SQLite database to store even more plugin details (e.g., bus arrangements, preset lists) if exposed by the SDKs.

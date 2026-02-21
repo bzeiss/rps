@@ -99,18 +99,27 @@ Orchestrator Options:
   -b [ --scanner-bin ] arg              Path to the scanner binary (default: rps-pluginscanner.exe)
   -t [ --timeout ] arg (=10000)         Timeout in milliseconds for the scanner to respond
   -j [ --jobs ] arg                     Number of parallel workers (default: system CPU core count)
+  -f [ --formats ] arg (=all)           Comma-separated list of formats to scan (e.g. vst3,clap) or 'all'
+     --filter arg                       Only scan plugins whose filename contains this string
+  -l [ --limit ] arg (=0)               Maximum number of plugins to scan (0 = unlimited)
+  -v [ --verbose ]                      Enable verbose scanner output (plugin debug logs)
      --db arg (=rps-plugins.db)         Path to the output SQLite database file
 ```
 
 ### Examples
 
-**1. Scan the default OS plugin directories**
+**1. Scan the default OS plugin directories for all formats**
 If you run the orchestrator without any path arguments, it will automatically search the standard VST3, CLAP, VST2, AU, and AAX folders for your specific OS.
 ```bash
 ./rps-pluginscanorchestrator
 ```
 
-**2. Scan a specific directory**
+**2. Scan only VST3 and CLAP formats**
+```bash
+./rps-pluginscanorchestrator --formats vst3,clap
+```
+
+**3. Scan a specific directory**
 ```bash
 # Windows
 rps-pluginscanorchestrator.exe --scan-dir "C:\Program Files\Common Files\VST3"
@@ -119,17 +128,22 @@ rps-pluginscanorchestrator.exe --scan-dir "C:\Program Files\Common Files\VST3"
 ./rps-pluginscanorchestrator --scan-dir "/Library/Audio/Plug-Ins/VST3"
 ```
 
-**3. Scan multiple directories with a specific number of workers**
+**4. Filter plugins by name and limit the count (useful for debugging)**
+```bash
+rps-pluginscanorchestrator.exe --formats vst3 --filter "FabFilter" --limit 10
+```
+
+**5. Scan multiple directories with a specific number of workers**
 ```bash
 rps-pluginscanorchestrator.exe --scan-dir "C:\Folder1" "D:\Folder2" --jobs 4
 ```
 
-**4. Scan a single plugin**
+**6. Scan a single plugin with verbose debug output**
 ```bash
-rps-pluginscanorchestrator.exe --scan "C:\VstPlugins\Massive.dll"
+rps-pluginscanorchestrator.exe --scan "C:\VstPlugins\Massive.dll" --verbose
 ```
 
-**5. Scan with a longer timeout (for slow iLok-protected plugins)**
+**7. Scan with a longer timeout (for slow iLok-protected plugins)**
 ```bash
 rps-pluginscanorchestrator.exe --timeout 30000
 ```

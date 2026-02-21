@@ -13,8 +13,6 @@
 #include <cstring>
 #include <rps/core/clap/include/clap/clap.h>
 
-extern bool g_verbose;
-
 namespace rps::scanner {
 
 bool ClapScanner::canHandle(const boost::filesystem::path& pluginPath) const {
@@ -24,19 +22,15 @@ bool ClapScanner::canHandle(const boost::filesystem::path& pluginPath) const {
 }
 
 rps::ipc::ScanResult ClapScanner::scan(const boost::filesystem::path& pluginPath, ProgressCallback progressCb) {
-    if (g_verbose) std::cerr << "[DEBUG] ClapScanner::scan called for " << pluginPath.string() << "\n";
     progressCb(10, "Loading CLAP binary...");
 
 #ifdef _WIN32
-    if (g_verbose) std::cerr << "[DEBUG] Calling LoadLibraryW\n";
     HMODULE handle = LoadLibraryW(pluginPath.c_str());
     if (!handle) {
         throw std::runtime_error("Failed to load CLAP DLL: " + pluginPath.string());
     }
     
-    if (g_verbose) std::cerr << "[DEBUG] Calling GetProcAddress\n";
     void* procAddress = reinterpret_cast<void*>(GetProcAddress(handle, "clap_entry"));
-    if (g_verbose) std::cerr << "[DEBUG] GetProcAddress returned: " << procAddress << "\n";
     
     if (!procAddress) {
         FreeLibrary(handle);
@@ -44,7 +38,6 @@ rps::ipc::ScanResult ClapScanner::scan(const boost::filesystem::path& pluginPath
     }
 
     const clap_plugin_entry* entry = reinterpret_cast<const clap_plugin_entry*>(procAddress);
-    if (g_verbose) std::cerr << "[DEBUG] entry pointer: " << entry << "\n";
 #else
     void* handle = dlopen(pluginPath.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!handle) {
@@ -71,7 +64,6 @@ rps::ipc::ScanResult ClapScanner::scan(const boost::filesystem::path& pluginPath
     }
 
     progressCb(30, "Initializing CLAP entry point...");
-    if (g_verbose) std::cerr << "[DEBUG] Calling entry->init()\n";
     if (!entry->init(pluginPath.string().c_str())) {
 #ifdef _WIN32
         FreeLibrary(handle);
@@ -81,7 +73,6 @@ rps::ipc::ScanResult ClapScanner::scan(const boost::filesystem::path& pluginPath
         throw std::runtime_error("Failed to initialize CLAP plugin entry.");
     }
 
-    if (g_verbose) std::cerr << "[DEBUG] entry->init() successful. Calling get_factory()\n";
     const void* factoryPtr = entry->get_factory(CLAP_PLUGIN_FACTORY_ID);
     if (!factoryPtr) {
         entry->deinit();
@@ -122,6 +113,19 @@ rps::ipc::ScanResult ClapScanner::scan(const boost::filesystem::path& pluginPath
     result.name = desc->name ? desc->name : "Unknown CLAP";
     result.vendor = desc->vendor ? desc->vendor : "Unknown Vendor";
     result.version = desc->version ? desc->version : "1.0.0";
+    result.uid = desc->id ? desc->id : "";
+    result.description = desc->description ? desc->description : "";
+    result.url = desc->url ? desc->url : "";
+    
+    // Parse features into a single comma-separated category string
+    if (desc->features) {
+        std::string categories;
+        for (int i = 0; desc->features[i] != nullptr; ++i) {
+            if (i > 0) categories += ", ";
+            categories += desc->features[i];
+        }
+        result.category = categories;
+    }
     
     progressCb(80, "Extracting features...");
     result.numInputs = 2;   // Faked without full host instantiation
