@@ -17,6 +17,73 @@ RPS solves this by using a **multi-process architecture**:
 4. **Language**: Strictly Modern C++23.
 5. **Dependencies**: Restricted to STL, Boost, SQLite, and Plugin SDKs.
 
+## Building
+
+### Prerequisites
+
+| Dependency | Minimum Version | Notes |
+|---|---|---|
+| CMake | 3.25 | Build system |
+| C++ Compiler | C++23 capable | GCC 13+, Clang 16+, MSVC 2022 17.5+ |
+| Boost | 1.81 | `json`, `process`, `interprocess`, `filesystem`, `program_options` |
+| SQLite3 | 3.x | For the plugin database |
+
+### Windows (MSYS2 / MinGW-w64)
+
+Install dependencies via MSYS2:
+```bash
+pacman -S mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja \
+          mingw-w64-x86_64-boost mingw-w64-x86_64-sqlite3
+```
+
+Configure and build:
+```bash
+cmake -G "Ninja" -B build
+cmake --build build
+```
+
+### Windows (MSVC / Visual Studio 2022)
+
+Install Boost and SQLite3 via [vcpkg](https://vcpkg.io) or manually, then:
+```bash
+cmake -G "Visual Studio 17 2022" -A x64 -B build
+cmake --build build --config Release
+```
+
+### macOS
+
+Install dependencies via Homebrew:
+```bash
+brew install cmake boost sqlite
+```
+
+Configure and build:
+```bash
+cmake -G "Ninja" -B build
+cmake --build build
+```
+
+### Linux
+
+Install dependencies via your package manager, e.g. on Ubuntu/Debian:
+```bash
+sudo apt install cmake ninja-build libboost-all-dev libsqlite3-dev
+```
+
+Configure and build:
+```bash
+cmake -G "Ninja" -B build
+cmake --build build
+```
+
+### Build Output
+
+After a successful build, you will find two binaries in the `build/` directory:
+- `build/apps/rps-pluginscanorchestrator/rps-pluginscanorchestrator` (or `.exe`)
+- `build/apps/rps-pluginscanner/rps-pluginscanner` (or `.exe`)
+
+Both binaries must reside in the **same directory** for the orchestrator to auto-locate the scanner worker.
+
 ## Usage
 
 You only need to interact with the **Orchestrator**. The orchestrator will automatically spawn the worker scanner processes as needed.
@@ -43,17 +110,26 @@ If you run the orchestrator without any path arguments, it will automatically se
 
 **2. Scan a specific directory**
 ```bash
-./rps-pluginscanorchestrator --scan-dir "C:\My\Custom\VstPlugins"
+# Windows
+rps-pluginscanorchestrator.exe --scan-dir "C:\Program Files\Common Files\VST3"
+
+# macOS / Linux
+./rps-pluginscanorchestrator --scan-dir "/Library/Audio/Plug-Ins/VST3"
 ```
 
 **3. Scan multiple directories with a specific number of workers**
 ```bash
-./rps-pluginscanorchestrator --scan-dir "C:\Folder1" "D:\Folder2" --jobs 4
+rps-pluginscanorchestrator.exe --scan-dir "C:\Folder1" "D:\Folder2" --jobs 4
 ```
 
 **4. Scan a single plugin**
 ```bash
-./rps-pluginscanorchestrator --scan "C:\VstPlugins\Massive.dll"
+rps-pluginscanorchestrator.exe --scan "C:\VstPlugins\Massive.dll"
+```
+
+**5. Scan with a longer timeout (for slow iLok-protected plugins)**
+```bash
+rps-pluginscanorchestrator.exe --timeout 30000
 ```
 
 ### Default Plugin Paths
