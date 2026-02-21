@@ -10,7 +10,9 @@
 #include <thread>
 #include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
+#include <boost/dll/runtime_symbol_info.hpp>
 #include <rps/core/PluginDiscovery.hpp>
+#include <rps/core/DefaultPaths.hpp>
 #include <rps/orchestrator/ProcessPool.hpp>
 
 int main(int argc, char* argv[]) {
@@ -58,12 +60,40 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // If neither --scan-dir nor --scan was provided, fallback to OS default directories
+    if (pluginsToScan.empty() && !vm.count("scan-dir") && !vm.count("scan")) {
+        std::cout << "No paths provided. Using OS default plugin directories...\n";
+        auto defaultDirs = rps::core::DefaultPaths::getPluginDirectories();
+        std::vector<std::string> dirStrings;
+        for (const auto& d : defaultDirs) {
+            std::cout << "  -> " << d.string() << "\n";
+            dirStrings.push_back(d.string());
+        }
+        
+        if (!dirStrings.empty()) {
+            auto found = rps::core::PluginDiscovery::findPlugins(dirStrings);
+            pluginsToScan.insert(pluginsToScan.end(), found.begin(), found.end());
+        }
+    }
+
     if (pluginsToScan.empty()) {
-        std::cerr << "No plugins to scan. Provide --scan-dir or --scan.\n";
+        std::cerr << "No plugins found to scan. Provide --scan-dir or --scan, or ensure plugins exist in standard OS locations.\n";
         return 1;
     }
 
     std::string scannerBin = vm["scanner-bin"].as<std::string>();
+    
+    // Resolve scanner binary path relative to the orchestrator executable if it's just a filename
+    fs::path scannerPath(scannerBin);
+    if (!scannerPath.is_absolute()) {
+        fs::path exePath = boost::dll::program_location();
+        scannerPath = exePath.parent_path() / scannerPath;
+        if (!fs::exists(scannerPath)) {
+            // Fallback for CMake build directory structure if running from root
+            scannerPath = exePath.parent_path().parent_path() / "rps-pluginscanner" / scannerPath.filename();
+        }
+    }
+    
     int timeoutMs = vm["timeout"].as<int>();
     size_t numWorkers = vm["jobs"].as<size_t>();
 
@@ -71,12 +101,13 @@ int main(int argc, char* argv[]) {
 
     std::cout << "RPS Plugin Scan Orchestrator starting...\n";
     std::cout << "Discovered " << pluginsToScan.size() << " plugins.\n";
+    std::cout << "Using scanner binary: " << scannerPath.string() << "\n";
     std::cout << "Starting process pool with " << numWorkers << " workers (timeout: " << timeoutMs << "ms)...\n";
     std::cout << "--------------------------------------------------------\n";
 
     std::vector<rps::orchestrator::ScanJob> jobs;
     for (const auto& p : pluginsToScan) {
-        jobs.push_back({ p, scannerBin, timeoutMs });
+        jobs.push_back({ p, scannerPath.string(), timeoutMs });
     }
 
     rps::orchestrator::ProcessPool pool(numWorkers);

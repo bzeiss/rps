@@ -81,6 +81,15 @@ build libs/rps-core/CMakeFiles/rps-core.dir/src/PluginDiscovery.cpp.obj: CXX_COM
   OBJECT_FILE_DIR = libs\rps-core\CMakeFiles\rps-core.dir\src
   TARGET_SUPPORT_DIR = libs\rps-core\CMakeFiles\rps-core.dir
 
+build libs/rps-core/CMakeFiles/rps-core.dir/src/DefaultPaths.cpp.obj: CXX_COMPILER__rps-core_unscanned_ C$:/develop/rps/libs/rps-core/src/DefaultPaths.cpp || cmake_object_order_depends_target_rps-core
+  DEFINES = -DBOOST_FILESYSTEM_NO_LIB -DBOOST_FILESYSTEM_STATIC_LINK=1
+  DEP_FILE = libs\rps-core\CMakeFiles\rps-core.dir\src\DefaultPaths.cpp.obj.d
+  FLAGS = -std=c++23 -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -IC:/develop/rps/libs/rps-core/include
+  OBJECT_DIR = libs\rps-core\CMakeFiles\rps-core.dir
+  OBJECT_FILE_DIR = libs\rps-core\CMakeFiles\rps-core.dir\src
+  TARGET_SUPPORT_DIR = libs\rps-core\CMakeFiles\rps-core.dir
+
 
 # =============================================================================
 # Link build statements for STATIC_LIBRARY target rps-core
@@ -89,7 +98,7 @@ build libs/rps-core/CMakeFiles/rps-core.dir/src/PluginDiscovery.cpp.obj: CXX_COM
 #############################################
 # Link the static library libs\rps-core\librps-core.a
 
-build libs/rps-core/librps-core.a: CXX_STATIC_LIBRARY_LINKER__rps-core_ libs/rps-core/CMakeFiles/rps-core.dir/src/PluginDiscovery.cpp.obj
+build libs/rps-core/librps-core.a: CXX_STATIC_LIBRARY_LINKER__rps-core_ libs/rps-core/CMakeFiles/rps-core.dir/src/PluginDiscovery.cpp.obj libs/rps-core/CMakeFiles/rps-core.dir/src/DefaultPaths.cpp.obj
   OBJECT_DIR = libs\rps-core\CMakeFiles\rps-core.dir
   POST_BUILD = cd .
   PRE_LINK = cd .
