@@ -1,6 +1,7 @@
 add_executable(rps-pluginscanorchestrator 
     src/main.cpp
     src/ProcessPool.cpp
+    src/ConsoleScanObserver.cpp
     src/db/DatabaseManager.cpp
 )
 

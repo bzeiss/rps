@@ -17,6 +17,7 @@
 #include <rps/core/PluginDiscovery.hpp>
 #include <rps/core/FormatTraits.hpp>
 #include <rps/orchestrator/ProcessPool.hpp>
+#include <rps/orchestrator/ConsoleScanObserver.hpp>
 #include <rps/orchestrator/db/DatabaseManager.hpp>
 
 int main(int argc, char* argv[]) {
@@ -35,6 +36,7 @@ int main(int argc, char* argv[]) {
         ("filter", po::value<std::string>(), "Only scan plugins whose filename contains this string")
         ("limit,l", po::value<size_t>()->default_value(0), "Maximum number of plugins to scan (0 = unlimited)")
         ("verbose,v", "Enable verbose scanner output (plugin debug logs)")
+        ("retries,r", po::value<size_t>()->default_value(3), "Number of retries for failed plugins (0 = no retries)")
         ("db", po::value<std::string>()->default_value("rps-plugins.db"), "Path to the output SQLite database file");
         
     po::variables_map vm;
@@ -162,6 +164,7 @@ int main(int argc, char* argv[]) {
     
     int timeoutMs = vm["timeout"].as<int>();
     size_t numWorkers = vm["jobs"].as<size_t>();
+    size_t maxRetries = vm["retries"].as<size_t>();
 
     if (numWorkers == 0) numWorkers = 1;
 
@@ -169,18 +172,20 @@ int main(int argc, char* argv[]) {
     std::cout << "Discovered " << pluginsToScan.size() << " plugins.\n";
     std::cout << "Using scanner binary: " << scannerPath.string() << "\n";
 
+    size_t totalPlugins = pluginsToScan.size();
     std::vector<rps::orchestrator::ScanJob> jobs;
-    for (const auto& p : pluginsToScan) {
-        jobs.push_back({ p, scannerPath.string(), timeoutMs, verbose });
+    for (size_t i = 0; i < pluginsToScan.size(); ++i) {
+        jobs.push_back({ pluginsToScan[i], scannerPath.string(), timeoutMs, verbose, i, totalPlugins, maxRetries, 0 });
     }
 
     rps::orchestrator::db::DatabaseManager db(vm["db"].as<std::string>());
     db.initializeSchema();
 
-    rps::orchestrator::ProcessPool pool(numWorkers, &db);
+    rps::orchestrator::ConsoleScanObserver observer(verbose);
+    rps::orchestrator::ProcessPool pool(numWorkers, &db, &observer);
     
     auto startTime = std::chrono::steady_clock::now();
-    std::cout << "Starting process pool with " << numWorkers << " workers (timeout: " << timeoutMs << "ms)...\n";
+    std::cout << "Starting process pool with " << numWorkers << " workers (timeout: " << timeoutMs << "ms, retries: " << maxRetries << ")...\n";
     std::cout << "--------------------------------------------------------\n";
     std::cout << "Output database: " << vm["db"].as<std::string>() << "\n";
 
@@ -190,13 +195,7 @@ int main(int argc, char* argv[]) {
     auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
 
     auto s = pool.stats();
-    std::cout << "--------------------------------------------------------\n";
-    std::cout << "Scan complete: " << s.total() << " plugins | "
-              << s.success << " success, "
-              << s.fail << " failed, "
-              << s.crash << " crashed, "
-              << s.timeout << " timed out\n";
-    std::cout << "Total scan time: " << rps::orchestrator::ProcessPool::formatDuration(elapsedMs) << "\n";
+    observer.onScanCompleted(s.success, s.fail, s.crash, s.timeout, elapsedMs, pool.failures());
     return 0;
 }
 
