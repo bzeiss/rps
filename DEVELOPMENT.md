@@ -72,13 +72,19 @@ At runtime, VST2 is **excluded from `--formats all`** via the `isExplicitOnly()`
 
 ---
 
-## 3. Current Implementation Status (Phases 1-4)
+## 3. Current Implementation Status (Phases 1-5)
 
-We have successfully completed **Phase 1 (IPC Foundation)**, **Phase 2 (Process Pool & Orchestration)**, **Phase 3 (Format Scanners)**, and **Phase 4 (Incremental Scanning & Database Optimization)**. The fundamental bidirectional communication, crash-recovery logic, targeted format scanning, and incremental caching are in place and tested against thousands of real-world plugins.
+We have successfully completed **Phase 1 (IPC Foundation)**, **Phase 2 (Process Pool & Orchestration)**, **Phase 3 (Format Scanners)**, **Phase 4 (Incremental Scanning & Database Optimization)**, and **Phase 5 (AAX Scanner & Robustness)**. The fundamental bidirectional communication, crash-recovery logic, targeted format scanning, incremental caching, and AAX support are in place and tested against thousands of real-world plugins.
 
 ### 3.1 Project Structure
 - `apps/rps-pluginscanorchestrator/`: The main orchestrator application. Manages parallel worker pools, applies format/name filtering, and writes to SQLite.
+  - `src/db/DatabaseManager.cpp`: SQLite database layer — schema, upserts, incremental cache, skipped/blocked management.
+  - `src/ProcessPool.cpp`: Worker process lifecycle, IPC message loop, retry logic, watchdog.
 - `apps/rps-pluginscanner/`: The worker application. Loads the plugin DLL natively.
+  - `src/scanners/Vst3Scanner.cpp`: VST3 scanning via native COM/module loading.
+  - `src/scanners/ClapScanner.cpp`: CLAP scanning via the CLAP C API.
+  - `src/scanners/Vst2Scanner.cpp`: VST2 scanning (compile-time opt-in).
+  - `src/scanners/AaxScanner.cpp`: AAX scanning via Pro Tools cache file parsing.
 - `libs/rps-ipc/`: A static library containing the shared IPC transport layer and JSON serialization logic.
 - `libs/rps-core/`: Format traits, registry, and filesystem discovery logic.
 
@@ -90,8 +96,8 @@ Instead of binary serialization like Protobuf, we chose to serialize our IPC mes
 The protocol consists of a wrapper `Message` struct containing a variant payload:
 - `ScanRequest`: Sent by Orchestrator -> Scanner. Contains the path to the `.dll`/`.so`.
 - `ProgressEvent`: Sent by Scanner -> Orchestrator. Contains percentage and status strings (e.g., "Instantiating Plugin"). Crucial for resetting the Orchestrator's watchdog timer.
-- `ScanResult`: Sent by Scanner -> Orchestrator on success. Contains rich DAW-ready metadata: Name, Vendor, Version, UID, Description, URL, Categories, and Parameter lists.
-- `ErrorMessage`: Sent by Scanner -> Orchestrator on caught, non-fatal errors.
+- `ScanResult`: Sent by Scanner -> Orchestrator on success. Contains rich DAW-ready metadata: Name, Vendor, Version, UID, Description, URL, Categories, Parameter lists, and an `extraData` map for format-specific metadata (e.g., AAX variant triad IDs).
+- `ErrorMessage`: Sent by Scanner -> Orchestrator on caught, non-fatal errors. Errors prefixed with `SKIP:` are treated as non-scannable plugins (stored in `plugins_skipped`).
 
 ### 3.3 The IPC Transport Layer
 Located in `libs/rps-ipc/include/rps/ipc/Connection.hpp`.
@@ -122,21 +128,56 @@ The database uses **WAL (Write-Ahead Logging)** journal mode, enabled at schema 
 ### 3.7 Incremental Scanning
 RPS supports two scan modes via the `--mode` CLI flag:
 
-- **`incremental`** (default): Loads a cache of previously scanned plugins from the database. For each discovered plugin file, it compares the file's modification time (`last_write_time`) against the cached value. If the mtime matches, it further compares a CRC32 hash (via `boost/crc.hpp`). Only plugins that are new or changed are dispatched for scanning. Plugins that no longer exist on disk are automatically pruned from the database.
+- **`incremental`** (default): Loads caches from three tables (`plugins`, `plugins_skipped`, `plugins_blocked`) filtered by the requested formats. For each discovered plugin file, it compares the file's modification time (`last_write_time`) against the cached value. Only plugins that are new or changed are dispatched for scanning. Plugins that no longer exist on disk are automatically pruned from all tables.
 
-- **`full`**: Clears database entries for the requested format(s) only, then rescans everything. A `--mode full --formats vst2` will clear only VST2 entries, leaving CLAP/VST3 data intact.
+- **`full`**: Clears database entries for the requested format(s) only across all tables, then rescans everything. A `--mode full --formats vst2` will clear only VST2 entries, leaving CLAP/VST3 data intact.
 
-The `format` column in the `plugins` table (set to `"vst2"`, `"vst3"`, or `"clap"` by each scanner) enables this per-format isolation. File metadata (`file_mtime`, `file_hash`) is computed by the orchestrator before dispatching each scan job and stored alongside the scan results.
+All cache loading and stale-entry removal is **format-aware**: scanning `--formats vst3` will never touch AAX or CLAP data in the database. The `format` column in each table enables this isolation.
 
-### 3.8 Build Robustness & Static Linking
+### 3.8 Skipped & Blocked Plugin Persistence
+
+Plugins that cannot be scanned (e.g., empty VST3 bundles, no loadable binary for the current platform) return a `SKIP:` prefixed error from the scanner. These are stored in the `plugins_skipped` table with their `file_mtime`. On subsequent incremental scans, they are recognized and not dispatched to a worker process — avoiding unnecessary process spawns.
+
+Plugins that exhaust all retry attempts (default: 3) or time out are stored in the `plugins_blocked` table. These are also skipped on subsequent incremental scans. If the plugin file is updated (mtime changes), it is automatically unblocked and re-scanned.
+
+Both tables are cleared when running `--mode full` for the relevant formats.
+
+### 3.9 AAX Scanner
+
+AAX plugins are iLok-protected and cannot be loaded directly. Instead, `AaxScanner` parses Pro Tools' plugin cache files (`*.plugincache.txt`), which are generated by Pro Tools itself during its own plugin scan.
+
+Cache file search paths:
+- **Windows**: `C:\Users\Public\Pro Tools\AAXPlugInCache`, `%APPDATA%\Avid\Pro Tools`
+- **macOS**: `/Users/Shared/Pro Tools/AAXPluginCache`, `~/Library/Preferences/Avid/Pro Tools`
+
+The cache files use a tab-indented text format containing multiple plugin variants per file (different I/O configs, Native vs DSP, etc.). The scanner:
+1. Parses all variants into `AaxPluginVariant` structs.
+2. Picks the "best" variant for the main `ScanResult` (Native/PlugInType=3 preferred, stereo preferred).
+3. Packs **all** variant data into `ScanResult.extraData` as key-value pairs (e.g., `aax_v0_manufacturer_id`, `aax_v0_product_id_num`, etc.).
+4. The orchestrator unpacks `extraData` into the `aax_plugins` table (1:N relationship with `plugins`).
+
+FourCC codes containing non-ASCII bytes (invalid UTF-8) are sanitized to hex representation (e.g., `0xD2C0AAA5`) to keep JSON serialization safe. The numeric IDs are stored separately and are what PTSL (Pro Tools Scripting) needs.
+
+### 3.10 Database Tables
+
+| Table | Purpose |
+|---|---|
+| `plugins` | Main plugin data: one row per successfully scanned or failed plugin |
+| `parameters` | Plugin parameters (1:N with `plugins`) |
+| `aax_plugins` | AAX variant-specific triad IDs and stem formats (1:N with `plugins`) |
+| `plugins_skipped` | Non-scannable plugins (empty bundles, no binary) — checked during incremental scan |
+| `plugins_blocked` | Plugins that exhausted retries or timed out — checked during incremental scan |
+
+All mutating database operations are wrapped in explicit `BEGIN TRANSACTION / COMMIT` blocks for both atomicity and performance.
+
+### 3.11 Build Robustness & Static Linking
 To ensure the orchestrator and scanner binaries are portable and do not fail with "missing DLL" errors (exit code 127 on Windows), we strictly **statically link** the C/C++ runtimes (`-static-libgcc -static-libstdc++`), Boost, and SQLite. On Windows, we use the MSYS2 Clang64 environment for the most compliant C++23 build.
 
 ---
 
-## 4. Next Steps (Phase 5+)
+## 4. Next Steps (Phase 6+)
 
 The immediate next goals are:
 1. **OS-Specific Formats**: Implement scanners for **AU** (macOS via CoreAudio) and **LV2** (Linux/Windows).
-2. **AAX**: Requires the PACE/Avid SDK for proper scanning.
+2. **Vendor SQLite**: Bundle the SQLite amalgamation to remove the system dependency.
 3. **Extended Metadata**: Store additional plugin details (e.g., bus arrangements, preset lists) if exposed by the SDKs.
-4. **Vendor SQLite**: Bundle the SQLite amalgamation to remove the system dependency.

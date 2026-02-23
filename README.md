@@ -305,13 +305,21 @@ When `RPS_ENABLE_VST2` is OFF (the default), no VST2 SDK code is compiled or lin
 
 RPS supports two scan modes via `--mode`:
 
-- **`incremental`** (default): Only scans plugins that are new or have changed since the last scan. Change detection uses a two-stage check: file modification time first, then CRC32 hash if the timestamp matches. Plugins that no longer exist on disk are automatically removed from the database. This mode makes repeated scans near-instant.
+- **`incremental`** (default): Only scans plugins that are new or have changed since the last scan. Change detection uses file modification time (`mtime`) comparison. Plugins that no longer exist on disk are automatically pruned. Previously **skipped** plugins (e.g., empty bundles) and **blocked** plugins (exhausted all retries) are also remembered and not re-scanned unless their file changes. This makes repeated scans near-instant.
 
-- **`full`**: Clears all database entries **for the requested format(s)** and rescans everything. A `--mode full --formats vst2` will only clear VST2 entries, leaving CLAP and VST3 results intact.
+- **`full`**: Clears all database entries **for the requested format(s)** and rescans everything. A `--mode full --formats vst2` will only clear VST2 entries, leaving CLAP and VST3 results intact. This also clears the skipped and blocked lists for the requested formats.
 
 ## Database Schema
 
-Scan results are stored in a SQLite database (default: `rps-plugins.db`) with WAL journal mode for performance. The `plugins` table stores one row per plugin with columns: `format`, `path`, `name`, `uid`, `vendor`, `version`, `description`, `url`, `category`, `num_inputs`, `num_outputs`, `status`, `error_message`, `scan_time_ms`, `file_mtime`, `file_hash`, `last_scanned`. Parameters are in a separate `parameters` table linked by `plugin_id`.
+Scan results are stored in a SQLite database (default: `rps-plugins.db`) with WAL journal mode for performance.
+
+| Table | Purpose |
+|---|---|
+| `plugins` | One row per successfully scanned plugin: `format`, `path`, `name`, `uid`, `vendor`, `version`, `description`, `url`, `category`, `num_inputs`, `num_outputs`, `status`, `error_message`, `scan_time_ms`, `file_mtime`, `file_hash`, `last_scanned` |
+| `parameters` | Plugin parameters linked by `plugin_id`: `param_index`, `name`, `default_value` |
+| `aax_plugins` | AAX-specific variant data (1:N with `plugins`): manufacturer/product/plugin IDs (FourCC + numeric), effect ID, plugin type, stem formats (input/output/sidechain) |
+| `plugins_skipped` | Plugins that are not scannable (e.g., empty bundles, no loadable binary): `path`, `format`, `reason`, `file_mtime` |
+| `plugins_blocked` | Plugins that exhausted all retries or timed out: `path`, `format`, `reason`, `file_mtime` |
 
 ## Documentation
 

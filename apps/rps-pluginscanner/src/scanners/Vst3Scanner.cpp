@@ -440,66 +440,75 @@ bool tryLoadModuleInfo(
         if (fi.contains("URL")) factoryUrl = fi["URL"].as_string().c_str();
     }
 
-    // Find the first scannable processor class
+    // Enumerate all classes from moduleinfo.json
     if (!root.contains("Classes") || !root["Classes"].is_array()) return false;
 
     auto& classes = root["Classes"].as_array();
 
-    if (verbose) {
-        for (size_t i = 0; i < classes.size(); ++i) {
-            auto& cls = classes[i].as_object();
-            std::string name = cls.contains("Name") ? cls["Name"].as_string().c_str() : "?";
-            std::string cat = cls.contains("Category") ? cls["Category"].as_string().c_str() : "?";
+    std::string moduleVersion;
+    if (root.contains("Version"))
+        moduleVersion = root["Version"].as_string().c_str();
+
+    // Iterate ALL processor classes, pack into extraData, first becomes main result
+    const boost::json::object* foundClass = nullptr;
+    int processorCount = 0;
+
+    for (size_t i = 0; i < classes.size(); ++i) {
+        auto& obj = classes[i].as_object();
+        std::string name = obj.contains("Name") ? obj["Name"].as_string().c_str() : "";
+        std::string cat = obj.contains("Category") ? obj["Category"].as_string().c_str() : "";
+
+        if (verbose) {
             std::cerr << "[vst3] " << pluginPath.filename().string()
                       << ":   class[" << i << "] name=\"" << name
                       << "\" category=\"" << cat << "\" (from moduleinfo.json)" << std::endl;
         }
-    }
 
-    const boost::json::object* foundClass = nullptr;
-    for (auto& cls : classes) {
-        auto& obj = cls.as_object();
-        if (!obj.contains("Category")) continue;
-        std::string cat = obj["Category"].as_string().c_str();
-        if (cat == kVstAudioEffectClass || cat == "Audio Mix Processor") {
-            foundClass = &obj;
-            break;
+        bool isProcessor = (cat == kVstAudioEffectClass || cat == "Audio Mix Processor");
+        if (!isProcessor) continue;
+
+        std::string uid = obj.contains("CID") ? obj["CID"].as_string().c_str() : "";
+        std::string classVendor = (obj.contains("Vendor") && !obj["Vendor"].as_string().empty())
+            ? std::string(obj["Vendor"].as_string().c_str()) : factoryVendor;
+        std::string classVersion = obj.contains("Version")
+            ? std::string(obj["Version"].as_string().c_str()) : moduleVersion;
+
+        std::string classCategory;
+        if (obj.contains("Sub Categories") && obj["Sub Categories"].is_array()) {
+            auto& subs = obj["Sub Categories"].as_array();
+            for (size_t j = 0; j < subs.size(); ++j) {
+                if (j > 0) classCategory += "|";
+                classCategory += subs[j].as_string().c_str();
+            }
         }
+
+        // Pack into extraData
+        std::string prefix = "vst3_c" + std::to_string(processorCount) + "_";
+        result.extraData[prefix + "name"] = name;
+        result.extraData[prefix + "uid"] = uid;
+        result.extraData[prefix + "category"] = classCategory;
+        result.extraData[prefix + "vendor"] = classVendor;
+        result.extraData[prefix + "version"] = classVersion;
+
+        // First processor class becomes the main result
+        if (!foundClass) {
+            foundClass = &obj;
+            result.name = name;
+            result.uid = uid;
+            result.vendor = classVendor.empty() ? factoryVendor : classVendor;
+            result.version = classVersion.empty() ? (moduleVersion.empty() ? "1.0.0" : moduleVersion) : classVersion;
+            result.url = factoryUrl;
+            result.category = classCategory;
+        }
+
+        processorCount++;
     }
 
     if (!foundClass) return false;
 
+    result.extraData["vst3_class_count"] = std::to_string(processorCount);
+
     progressCb(50, "Extracting metadata from moduleinfo.json...");
-
-    result.name = foundClass->contains("Name") ? (*foundClass).at("Name").as_string().c_str() : "";
-    result.uid = foundClass->contains("CID") ? (*foundClass).at("CID").as_string().c_str() : "";
-
-    // Version: per-class first, fall back to module-level
-    if (foundClass->contains("Version"))
-        result.version = (*foundClass).at("Version").as_string().c_str();
-    else if (root.contains("Version"))
-        result.version = root["Version"].as_string().c_str();
-    else
-        result.version = "1.0.0";
-
-    // Vendor: per-class first, fall back to factory
-    if (foundClass->contains("Vendor") && !(*foundClass).at("Vendor").as_string().empty())
-        result.vendor = (*foundClass).at("Vendor").as_string().c_str();
-    else
-        result.vendor = factoryVendor;
-
-    result.url = factoryUrl;
-
-    // Sub Categories → category string (join with "|")
-    if (foundClass->contains("Sub Categories") && (*foundClass).at("Sub Categories").is_array()) {
-        auto& subs = (*foundClass).at("Sub Categories").as_array();
-        std::string joined;
-        for (size_t i = 0; i < subs.size(); ++i) {
-            if (i > 0) joined += "|";
-            joined += subs[i].as_string().c_str();
-        }
-        result.category = joined;
-    }
 
     result.format = "vst3";
     result.scanMethod = "moduleinfo.json";
@@ -701,18 +710,6 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
     int32_t numClasses = factory->countClasses();
     logStage("Factory reports " + std::to_string(numClasses) + " class(es).");
 
-    // Log all classes in verbose mode for diagnostics
-    if (g_verbose) {
-        Steinberg::PClassInfo ci;
-        for (int32_t i = 0; i < numClasses; ++i) {
-            if (factory->getClassInfo(i, &ci) == Steinberg::kResultOk) {
-                std::cerr << "[vst3] " << pluginPath.filename().string()
-                          << ":   class[" << i << "] name=\"" << ci.name
-                          << "\" category=\"" << ci.category << "\"" << std::endl;
-            }
-        }
-    }
-
     if (numClasses == 0) {
         factory->release();
 #ifdef _WIN32
@@ -723,19 +720,101 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
         throw std::runtime_error("SKIP: VST3 factory contains no classes.");
     }
 
-    // Find the first scannable processor class.
-    // Accept standard audio effects ("Audio Module Class") and mix processors ("Audio Mix Processor").
-    // Skip controller-only classes ("Component Controller Class", "Plugin Compatibility Class", "Private").
+    // Extract factory-level info (vendor, URL) as baseline
+    logStage("Calling getFactoryInfo()...");
+    Steinberg::PFactoryInfo factoryInfo;
+    std::string factoryVendor, factoryUrl;
+    if (factory->getFactoryInfo(&factoryInfo) == Steinberg::kResultOk) {
+        factoryVendor = factoryInfo.vendor;
+        factoryUrl = factoryInfo.url;
+        logStage("Factory info: vendor=\"" + factoryVendor + "\" url=\"" + factoryUrl + "\"");
+    }
+
+    // Query IPluginFactory2 for per-class details (vendor/version/subCategories)
+    logStage("Querying IPluginFactory2...");
+    Steinberg::IPluginFactory2* factory2 = nullptr;
+    bool hasFactory2 = (factory->queryInterface(Steinberg::IPluginFactory2::iid,
+        reinterpret_cast<void**>(&factory2)) == Steinberg::kResultOk && factory2);
+    if (hasFactory2) {
+        logStage("IPluginFactory2 supported.");
+    } else {
+        logStage("IPluginFactory2 not supported (older plugin).");
+    }
+
+    // Enumerate ALL processor classes and pack into extraData.
+    // The first processor class becomes the "main" result.
     Steinberg::PClassInfo classInfo;
     int32_t foundClassIndex = -1;
+    int processorCount = 0;
+
+    rps::ipc::ScanResult result;
+    result.version = "1.0.0";
+    result.vendor = factoryVendor.empty() ? "Unknown VST3 Vendor" : factoryVendor;
+    result.url = factoryUrl;
+
     for (int32_t i = 0; i < numClasses; ++i) {
-        if (factory->getClassInfo(i, &classInfo) == Steinberg::kResultOk) {
-            if (std::strcmp(classInfo.category, kVstAudioEffectClass) == 0 ||
-                std::strcmp(classInfo.category, "Audio Mix Processor") == 0) {
-                foundClassIndex = i;
-                break;
+        if (factory->getClassInfo(i, &classInfo) != Steinberg::kResultOk) continue;
+
+        bool isProcessor = (std::strcmp(classInfo.category, kVstAudioEffectClass) == 0 ||
+                            std::strcmp(classInfo.category, "Audio Mix Processor") == 0);
+
+        if (g_verbose) {
+            std::cerr << "[vst3] " << pluginPath.filename().string()
+                      << ":   class[" << i << "] name=\"" << classInfo.name
+                      << "\" category=\"" << classInfo.category << "\"" << std::endl;
+        }
+
+        if (!isProcessor) continue;
+
+        // Convert 16-byte FUID to hex string
+        char uidBuf[33];
+        snprintf(uidBuf, sizeof(uidBuf), "%08X%08X%08X%08X",
+            classInfo.cid[0], classInfo.cid[1], classInfo.cid[2], classInfo.cid[3]);
+
+        std::string classVendor = factoryVendor;
+        std::string classVersion;
+        std::string classCategory;
+
+        if (hasFactory2) {
+            Steinberg::PClassInfo2 ci2;
+            if (factory2->getClassInfo2(i, &ci2) == Steinberg::kResultOk) {
+                if (ci2.vendor[0] != '\0') classVendor = ci2.vendor;
+                if (ci2.version[0] != '\0') classVersion = ci2.version;
+                classCategory = ci2.subCategories;
             }
         }
+
+        // Pack into extraData
+        std::string prefix = "vst3_c" + std::to_string(processorCount) + "_";
+        result.extraData[prefix + "name"] = classInfo.name;
+        result.extraData[prefix + "uid"] = uidBuf;
+        result.extraData[prefix + "category"] = classCategory;
+        result.extraData[prefix + "vendor"] = classVendor;
+        result.extraData[prefix + "version"] = classVersion;
+
+        // First processor class becomes the main result
+        if (foundClassIndex < 0) {
+            foundClassIndex = i;
+            result.name = classInfo.name;
+            result.uid = uidBuf;
+            if (!classVendor.empty()) result.vendor = classVendor;
+            if (!classVersion.empty()) result.version = classVersion;
+            result.category = classCategory;
+            logStage("Found scannable class at index " + std::to_string(i) + ": \"" + classInfo.name + "\"");
+            logStage("UID: " + result.uid);
+            if (hasFactory2) {
+                logStage("ClassInfo2: vendor=\"" + result.vendor + "\" version=\"" + result.version + "\" subCategories=\"" + result.category + "\"");
+            }
+        }
+
+        processorCount++;
+    }
+
+    result.extraData["vst3_class_count"] = std::to_string(processorCount);
+    logStage("Total processor classes: " + std::to_string(processorCount));
+
+    if (hasFactory2) {
+        factory2->release();
     }
 
     if (foundClassIndex < 0) {
@@ -746,52 +825,6 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
         dlclose(handle);
 #endif
         throw std::runtime_error("SKIP: VST3 factory contains no scannable processor classes.");
-    }
-
-    logStage("Found scannable class at index " + std::to_string(foundClassIndex) + ": \"" + classInfo.name + "\"");
-
-    rps::ipc::ScanResult result;
-    result.name = classInfo.name;
-    result.version = "1.0.0";
-    
-    // Convert 16-byte FUID to hex string for UID
-    char uidBuf[33];
-    snprintf(uidBuf, sizeof(uidBuf), "%08X%08X%08X%08X", 
-        classInfo.cid[0], classInfo.cid[1], classInfo.cid[2], classInfo.cid[3]);
-    result.uid = uidBuf;
-    logStage("UID: " + result.uid);
-
-    // Extract factory-level info (vendor, URL, email) as baseline
-    logStage("Calling getFactoryInfo()...");
-    Steinberg::PFactoryInfo factoryInfo;
-    if (factory->getFactoryInfo(&factoryInfo) == Steinberg::kResultOk) {
-        result.vendor = factoryInfo.vendor;
-        result.url = factoryInfo.url;
-        logStage("Factory info: vendor=\"" + result.vendor + "\" url=\"" + result.url + "\"");
-    } else {
-        result.vendor = "Unknown VST3 Vendor";
-        logStage("getFactoryInfo() failed.");
-    }
-
-    // Attempt to query IPluginFactory2 for per-class details (may override vendor/version)
-    logStage("Querying IPluginFactory2...");
-    Steinberg::IPluginFactory2* factory2 = nullptr;
-    if (factory->queryInterface(Steinberg::IPluginFactory2::iid, reinterpret_cast<void**>(&factory2)) == Steinberg::kResultOk) {
-        logStage("IPluginFactory2 supported. Calling getClassInfo2()...");
-        Steinberg::PClassInfo2 classInfo2;
-        if (factory2->getClassInfo2(foundClassIndex, &classInfo2) == Steinberg::kResultOk) {
-            if (classInfo2.vendor[0] != '\0') result.vendor = classInfo2.vendor;
-            if (classInfo2.version[0] != '\0') result.version = classInfo2.version;
-            result.category = classInfo2.subCategories;
-            logStage("ClassInfo2: vendor=\"" + result.vendor + "\" version=\"" + result.version + "\" subCategories=\"" + result.category + "\"");
-        } else {
-            logStage("getClassInfo2() failed.");
-        }
-        logStage("Releasing IPluginFactory2...");
-        factory2->release();
-        logStage("IPluginFactory2 released.");
-    } else {
-        logStage("IPluginFactory2 not supported (older plugin).");
     }
 
     result.format = "vst3";

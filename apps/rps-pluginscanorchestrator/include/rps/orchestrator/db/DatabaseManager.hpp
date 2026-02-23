@@ -34,6 +34,10 @@ public:
     // Called automatically by upsertPluginResult when format is "aax".
     void upsertAaxPluginVariants(int64_t pluginId, const rps::ipc::ScanResult& result);
 
+    // Insert VST3 class entries from extraData into vst3_classes table.
+    // Called automatically by upsertPluginResult when format is "vst3".
+    void upsertVst3Classes(int64_t pluginId, const rps::ipc::ScanResult& result);
+
     // Record a skipped plugin (not scannable, e.g. empty bundle)
     void recordPluginSkip(const boost::filesystem::path& pluginPath, const std::string& format,
                           const std::string& reason, const std::string& fileMtime = "");

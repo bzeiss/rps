@@ -110,9 +110,24 @@ void DatabaseManager::initializeSchema() {
         );
     )";
 
+    const std::string createTableVst3Classes = R"(
+        CREATE TABLE IF NOT EXISTS vst3_classes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            plugin_id INTEGER NOT NULL,
+            class_index INTEGER NOT NULL,
+            name TEXT,
+            uid TEXT,
+            category TEXT,
+            vendor TEXT,
+            version TEXT,
+            FOREIGN KEY (plugin_id) REFERENCES plugins(id) ON DELETE CASCADE
+        );
+    )";
+
     executeQuery(createTablePlugins);
     executeQuery(createTableParameters);
     executeQuery(createTableAaxPlugins);
+    executeQuery(createTableVst3Classes);
     executeQuery(createTablePluginsSkipped);
     executeQuery(createTablePluginsBlocked);
 
@@ -244,6 +259,11 @@ void DatabaseManager::upsertPluginResult(const boost::filesystem::path& pluginPa
         upsertAaxPluginVariants(pluginId, result);
     }
 
+    // If this is a VST3 plugin, store class entries in vst3_classes table
+    if (result.format == "vst3" && !result.extraData.empty()) {
+        upsertVst3Classes(pluginId, result);
+    }
+
     executeQuery("COMMIT;");
 }
 
@@ -309,6 +329,58 @@ void DatabaseManager::upsertAaxPluginVariants(int64_t pluginId, const rps::ipc::
         sqlite3_bind_int64(stmt, 11, getInt("stem_format_input"));
         sqlite3_bind_int64(stmt, 12, getInt("stem_format_output"));
         sqlite3_bind_int64(stmt, 13, getInt("stem_format_sidechain"));
+
+        sqlite3_step(stmt);
+        sqlite3_reset(stmt);
+    }
+    sqlite3_finalize(stmt);
+}
+
+void DatabaseManager::upsertVst3Classes(int64_t pluginId, const rps::ipc::ScanResult& result) {
+    // Delete old VST3 classes for this plugin
+    sqlite3_stmt* stmt = nullptr;
+    const std::string deleteOldSql = "DELETE FROM vst3_classes WHERE plugin_id = ?";
+    if (sqlite3_prepare_v2(m_db, deleteOldSql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_int64(stmt, 1, pluginId);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+
+    auto it = result.extraData.find("vst3_class_count");
+    if (it == result.extraData.end()) return;
+    int classCount = std::stoi(it->second);
+
+    const std::string insertSql = R"(
+        INSERT INTO vst3_classes (plugin_id, class_index, name, uid, category, vendor, version)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    )";
+
+    if (sqlite3_prepare_v2(m_db, insertSql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "Failed to prepare VST3 class insert.\n";
+        return;
+    }
+
+    for (int i = 0; i < classCount; ++i) {
+        std::string prefix = "vst3_c" + std::to_string(i) + "_";
+        auto getStr = [&](const std::string& key) -> std::string {
+            auto found = result.extraData.find(prefix + key);
+            return (found != result.extraData.end()) ? found->second : "";
+        };
+
+        sqlite3_bind_int64(stmt, 1, pluginId);
+        sqlite3_bind_int(stmt, 2, i);
+
+        std::string name = getStr("name");
+        std::string uid = getStr("uid");
+        std::string category = getStr("category");
+        std::string vendor = getStr("vendor");
+        std::string version = getStr("version");
+
+        sqlite3_bind_text(stmt, 3, name.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 4, uid.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 5, category.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 6, vendor.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 7, version.c_str(), -1, SQLITE_TRANSIENT);
 
         sqlite3_step(stmt);
         sqlite3_reset(stmt);
@@ -522,6 +594,7 @@ void DatabaseManager::clearPluginsByFormats(const std::vector<std::string>& form
     executeQuery("BEGIN TRANSACTION;");
     // Delete child rows for matching plugins first (FK)
     executeQuery("DELETE FROM aax_plugins WHERE plugin_id IN (SELECT id FROM plugins WHERE format IN (" + inClause + "));");
+    executeQuery("DELETE FROM vst3_classes WHERE plugin_id IN (SELECT id FROM plugins WHERE format IN (" + inClause + "));");
     executeQuery("DELETE FROM parameters WHERE plugin_id IN (SELECT id FROM plugins WHERE format IN (" + inClause + "));");
     executeQuery("DELETE FROM plugins WHERE format IN (" + inClause + ");");
     executeQuery("DELETE FROM plugins_skipped WHERE format IN (" + inClause + ");");
@@ -581,7 +654,9 @@ size_t DatabaseManager::removeStaleEntries(const std::set<std::string>& validPat
     sqlite3_stmt* stmtDelPlugin = nullptr;
     sqlite3_stmt* stmtDelSkip = nullptr;
     sqlite3_stmt* stmtDelBlock = nullptr;
+    sqlite3_stmt* stmtDelVst3 = nullptr;
     sqlite3_prepare_v2(m_db, "DELETE FROM aax_plugins WHERE plugin_id IN (SELECT id FROM plugins WHERE path = ?)", -1, &stmtDelAax, nullptr);
+    sqlite3_prepare_v2(m_db, "DELETE FROM vst3_classes WHERE plugin_id IN (SELECT id FROM plugins WHERE path = ?)", -1, &stmtDelVst3, nullptr);
     sqlite3_prepare_v2(m_db, "DELETE FROM parameters WHERE plugin_id IN (SELECT id FROM plugins WHERE path = ?)", -1, &stmtDelParams, nullptr);
     sqlite3_prepare_v2(m_db, "DELETE FROM plugins WHERE path = ?", -1, &stmtDelPlugin, nullptr);
     sqlite3_prepare_v2(m_db, "DELETE FROM plugins_skipped WHERE path = ?", -1, &stmtDelSkip, nullptr);
@@ -599,6 +674,7 @@ size_t DatabaseManager::removeStaleEntries(const std::set<std::string>& validPat
     for (const auto& p : dbPaths) {
         if (validPaths.find(p) == validPaths.end()) {
             deleteByPath(stmtDelAax, p);
+            deleteByPath(stmtDelVst3, p);
             deleteByPath(stmtDelParams, p);
             deleteByPath(stmtDelPlugin, p);
             removed++;
@@ -619,6 +695,7 @@ size_t DatabaseManager::removeStaleEntries(const std::set<std::string>& validPat
     executeQuery("COMMIT;");
 
     if (stmtDelAax) sqlite3_finalize(stmtDelAax);
+    if (stmtDelVst3) sqlite3_finalize(stmtDelVst3);
     if (stmtDelParams) sqlite3_finalize(stmtDelParams);
     if (stmtDelPlugin) sqlite3_finalize(stmtDelPlugin);
     if (stmtDelSkip) sqlite3_finalize(stmtDelSkip);

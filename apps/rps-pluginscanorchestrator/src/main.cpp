@@ -193,7 +193,12 @@ int main(int argc, char* argv[]) {
         formatNames.push_back(traits->getName());
     }
 
-    if (scanMode == "full") {
+    // Single plugin scan (-s): skip all incremental/full DB logic — just scan it.
+    bool singleScan = vm.count("scan") > 0;
+
+    if (singleScan) {
+        // No DB clearing, no stale pruning, no cache comparison — always scan.
+    } else if (scanMode == "full") {
         std::string fmtList;
         for (size_t i = 0; i < formatNames.size(); ++i) {
             if (i > 0) fmtList += ", ";
