@@ -68,8 +68,29 @@ void DatabaseManager::initializeSchema() {
         );
     )";
 
+    const std::string createTableAaxPlugins = R"(
+        CREATE TABLE IF NOT EXISTS aax_plugins (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            plugin_id INTEGER NOT NULL,
+            plugin_index INTEGER NOT NULL,
+            manufacturer_id TEXT,
+            manufacturer_id_num INTEGER,
+            product_id TEXT,
+            product_id_num INTEGER,
+            aax_plugin_id TEXT,
+            aax_plugin_id_num INTEGER,
+            effect_id TEXT,
+            plugin_type INTEGER,
+            stem_format_input INTEGER,
+            stem_format_output INTEGER,
+            stem_format_sidechain INTEGER,
+            FOREIGN KEY (plugin_id) REFERENCES plugins(id) ON DELETE CASCADE
+        );
+    )";
+
     executeQuery(createTablePlugins);
     executeQuery(createTableParameters);
+    executeQuery(createTableAaxPlugins);
 
     // Enable WAL mode for better concurrent write performance.
     // WAL allows readers and writers to operate simultaneously.
@@ -194,7 +215,81 @@ void DatabaseManager::upsertPluginResult(const boost::filesystem::path& pluginPa
         sqlite3_finalize(stmt);
     }
 
+    // If this is an AAX plugin, store variant data in aax_plugins table
+    if (result.format == "aax" && !result.extraData.empty()) {
+        upsertAaxPluginVariants(pluginId, result);
+    }
+
     executeQuery("COMMIT;");
+}
+
+void DatabaseManager::upsertAaxPluginVariants(int64_t pluginId, const rps::ipc::ScanResult& result) {
+    // Delete old AAX variants for this plugin
+    sqlite3_stmt* stmt = nullptr;
+    const std::string deleteOldSql = "DELETE FROM aax_plugins WHERE plugin_id = ?";
+    if (sqlite3_prepare_v2(m_db, deleteOldSql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_int64(stmt, 1, pluginId);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+
+    // Parse variant count from extraData
+    auto it = result.extraData.find("aax_variant_count");
+    if (it == result.extraData.end()) return;
+    int variantCount = std::stoi(it->second);
+
+    const std::string insertSql = R"(
+        INSERT INTO aax_plugins (plugin_id, plugin_index, manufacturer_id, manufacturer_id_num,
+            product_id, product_id_num, aax_plugin_id, aax_plugin_id_num,
+            effect_id, plugin_type, stem_format_input, stem_format_output, stem_format_sidechain)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    )";
+
+    if (sqlite3_prepare_v2(m_db, insertSql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "Failed to prepare AAX variant insert.\n";
+        return;
+    }
+
+    for (int i = 0; i < variantCount; ++i) {
+        std::string prefix = "aax_v" + std::to_string(i) + "_";
+        auto getStr = [&](const std::string& key) -> std::string {
+            auto found = result.extraData.find(prefix + key);
+            return (found != result.extraData.end()) ? found->second : "";
+        };
+        auto getInt = [&](const std::string& key) -> int64_t {
+            auto found = result.extraData.find(prefix + key);
+            if (found != result.extraData.end() && !found->second.empty()) {
+                try { return std::stoll(found->second); } catch (...) {}
+            }
+            return 0;
+        };
+
+        sqlite3_bind_int64(stmt, 1, pluginId);
+        sqlite3_bind_int(stmt, 2, i + 1);
+
+        std::string mfgId = getStr("manufacturer_id");
+        sqlite3_bind_text(stmt, 3, mfgId.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(stmt, 4, getInt("manufacturer_id_num"));
+
+        std::string prodId = getStr("product_id");
+        sqlite3_bind_text(stmt, 5, prodId.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(stmt, 6, getInt("product_id_num"));
+
+        std::string plgId = getStr("plugin_id");
+        sqlite3_bind_text(stmt, 7, plgId.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(stmt, 8, getInt("plugin_id_num"));
+
+        std::string effectId = getStr("effect_id");
+        sqlite3_bind_text(stmt, 9, effectId.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(stmt, 10, getInt("plugin_type"));
+        sqlite3_bind_int64(stmt, 11, getInt("stem_format_input"));
+        sqlite3_bind_int64(stmt, 12, getInt("stem_format_output"));
+        sqlite3_bind_int64(stmt, 13, getInt("stem_format_sidechain"));
+
+        sqlite3_step(stmt);
+        sqlite3_reset(stmt);
+    }
+    sqlite3_finalize(stmt);
 }
 
 void DatabaseManager::recordPluginFailure(const boost::filesystem::path& pluginPath, const std::string& errorMsg,
@@ -268,7 +363,8 @@ void DatabaseManager::clearPluginsByFormats(const std::vector<std::string>& form
         inClause += "'" + formats[i] + "'";
     }
 
-    // Delete parameters for matching plugins first (FK)
+    // Delete child rows for matching plugins first (FK)
+    executeQuery("DELETE FROM aax_plugins WHERE plugin_id IN (SELECT id FROM plugins WHERE format IN (" + inClause + "));");
     executeQuery("DELETE FROM parameters WHERE plugin_id IN (SELECT id FROM plugins WHERE format IN (" + inClause + "));");
     executeQuery("DELETE FROM plugins WHERE format IN (" + inClause + ");");
 }
@@ -291,6 +387,12 @@ size_t DatabaseManager::removeStaleEntries(const std::set<std::string>& validPat
     for (const auto& p : dbPaths) {
         if (validPaths.find(p) == validPaths.end()) {
             // Path no longer on disk — remove
+            const std::string delAax = "DELETE FROM aax_plugins WHERE plugin_id IN (SELECT id FROM plugins WHERE path = ?)";
+            if (sqlite3_prepare_v2(m_db, delAax.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
+                sqlite3_bind_text(stmt, 1, p.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_step(stmt);
+                sqlite3_finalize(stmt);
+            }
             const std::string delParams = "DELETE FROM parameters WHERE plugin_id IN (SELECT id FROM plugins WHERE path = ?)";
             if (sqlite3_prepare_v2(m_db, delParams.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
                 sqlite3_bind_text(stmt, 1, p.c_str(), -1, SQLITE_TRANSIENT);

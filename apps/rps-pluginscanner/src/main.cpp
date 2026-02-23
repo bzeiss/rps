@@ -18,6 +18,7 @@
 #include <rps/scanner/IPluginFormatScanner.hpp>
 #include <rps/scanner/ClapScanner.hpp>
 #include <rps/scanner/Vst3Scanner.hpp>
+#include <rps/scanner/AaxScanner.hpp>
 #ifdef RPS_VST2_ENABLED
 #include <rps/scanner/Vst2Scanner.hpp>
 #endif
@@ -30,6 +31,7 @@ std::vector<std::unique_ptr<IPluginFormatScanner>> ScannerFactory::createAllScan
     std::vector<std::unique_ptr<IPluginFormatScanner>> scanners;
     scanners.push_back(std::make_unique<ClapScanner>());
     scanners.push_back(std::make_unique<Vst3Scanner>());
+    scanners.push_back(std::make_unique<AaxScanner>());
 #ifdef RPS_VST2_ENABLED
     scanners.push_back(std::make_unique<Vst2Scanner>());
 #endif

@@ -30,6 +30,10 @@ public:
     void recordPluginFailure(const boost::filesystem::path& pluginPath, const std::string& errorMsg,
                              int64_t scanTimeMs, const std::string& fileMtime = "", const std::string& fileHash = "");
 
+    // Insert AAX plugin variants from extraData into aax_plugins table.
+    // Called automatically by upsertPluginResult when format is "aax".
+    void upsertAaxPluginVariants(int64_t pluginId, const rps::ipc::ScanResult& result);
+
     // --- Incremental scan support ---
 
     struct PluginCacheEntry {

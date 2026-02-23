@@ -50,7 +50,13 @@ void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const ScanR
         {"scanMethod", res.scanMethod},
         {"numInputs", res.numInputs},
         {"numOutputs", res.numOutputs},
-        {"parameters", boost::json::value_from(res.parameters)}
+        {"parameters", boost::json::value_from(res.parameters)},
+        {"extraData", [&]() {
+            boost::json::object obj;
+            for (const auto& [k, v] : res.extraData)
+                obj[k] = v;
+            return obj;
+        }()}
     };
 }
 
@@ -72,6 +78,12 @@ ScanResult tag_invoke(boost::json::value_to_tag<ScanResult>, const boost::json::
     res.numInputs = obj.at("numInputs").to_number<uint32_t>();
     res.numOutputs = obj.at("numOutputs").to_number<uint32_t>();
     res.parameters = boost::json::value_to<std::vector<ParameterInfo>>(obj.at("parameters"));
+    if (obj.contains("extraData") && obj.at("extraData").is_object()) {
+        for (const auto& [k, v] : obj.at("extraData").as_object()) {
+            if (v.is_string())
+                res.extraData[std::string(k)] = std::string(v.as_string());
+        }
+    }
     return res;
 }
 

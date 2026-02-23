@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <map>
 #include <variant>
 #include <boost/json.hpp>
 
@@ -39,6 +40,7 @@ struct ScanResult {
     uint32_t numInputs = 0;
     uint32_t numOutputs = 0;
     std::vector<ParameterInfo> parameters;
+    std::map<std::string, std::string> extraData; // Format-specific metadata (e.g. AAX IDs)
 };
 
 struct ProgressEvent {

@@ -2,6 +2,7 @@ set(SCANNER_SOURCES
     src/main.cpp
     src/scanners/ClapScanner.cpp
     src/scanners/Vst3Scanner.cpp
+    src/scanners/AaxScanner.cpp
 )
 
 if(RPS_ENABLE_VST2)
