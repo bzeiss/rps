@@ -29,12 +29,28 @@ We adhere to a set of strict constraints to ensure maximum compatibility, adopti
 
 - **Language**: Strictly **Modern C++23**. (C++ is the undisputed standard in audio programming).
 - **Build System**: **CMake** (v3.25+).
+- **Compilers**: The project must build cleanly with **Clang**, **GCC**, and **MSVC**.
 - **Allowed Dependencies**:
   - The C++ Standard Template Library (STL).
-  - **Boost** (specifically `Boost.Process`, `Boost.Interprocess`, `Boost.JSON`, `Boost.Program_options`, `Boost.Filesystem`).
+  - **Boost 1.90** (specifically `Boost.Process`, `Boost.Interprocess`, `Boost.JSON`, `Boost.Program_options`, `Boost.Filesystem`).
   - **SQLite3** (for the final output database).
   - Plugin SDK Headers (VST3, CLAP, LV2, AU, AAX).
 - No other third-party frameworks (e.g., JUCE, gRPC, Protobuf, nlohmann/json) are permitted.
+
+### 2.1 Dependency Management
+
+To avoid platform-specific packaging issues (missing static libs on Linux, DLL mismatches on Windows, version conflicts), **Boost is built from source** as part of the CMake build. The developer must provide a Boost 1.90 source tree (cloned separately) and point CMake at it via `BOOST_SOURCE_DIR`.
+
+The CMake variable `BOOST_SOURCE_DIR` controls where Boost source is located:
+- **Default fallback**: `${CMAKE_SOURCE_DIR}/third_party/boost`
+- **Override via CMake flag**: `cmake -DBOOST_SOURCE_DIR=/path/to/boost -B build`
+- **Override via environment variable**: `export BOOST_SOURCE_DIR=/path/to/boost && cmake -B build`
+
+The `-D` flag takes priority over the environment variable. If neither is set, CMake falls back to `third_party/boost`.
+
+Only the required Boost libraries are compiled (via `BOOST_INCLUDE_LIBRARIES`), keeping build times reasonable.
+
+On **Windows** (non-MSVC), the C/C++ runtimes are statically linked (`-static -static-libgcc -static-libstdc++`) to produce standalone executables with no DLL dependencies beyond the Windows system libraries.
 
 ---
 

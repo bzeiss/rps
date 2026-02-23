@@ -25,57 +25,142 @@ RPS solves this by using a **multi-process architecture**:
 |---|---|---|
 | CMake | 3.25 | Build system |
 | C++ Compiler | C++23 capable | Clang 16+ (recommended), GCC 13+, MSVC 2022 17.5+ |
-| Boost | 1.81 | `json`, `process`, `interprocess`, `filesystem`, `program_options` |
+| Ninja | 1.11+ | Recommended build backend (optional, can use Make or VS) |
 | SQLite3 | 3.x | For the plugin database |
+| Git | 2.x | For cloning submodules |
 
-### Windows (MSYS2 / Clang) — Recommended
+**Boost 1.90** is built from source — no system Boost installation is needed. You must provide a path to a Boost source tree (see Step 1).
 
-Use the MSYS2 `clang64` environment for the best C++23 support on Windows. Open the **MSYS2 CLANG64** shell and install dependencies:
+### Step 1: Clone and Set Up Dependencies
+
 ```bash
-pacman -S mingw-w64-clang-x86_64-cmake mingw-w64-clang-x86_64-ninja \
-          mingw-w64-clang-x86_64-clang mingw-w64-clang-x86_64-boost \
-          mingw-w64-clang-x86_64-sqlite3
+git clone <your-repo-url>
+cd rps
+git submodule update --init --recursive
 ```
 
-Configure and build:
+The submodule init will download the plugin SDK headers (CLAP, VST3).
+
+#### Boost Source Tree
+
+RPS requires the **Boost 1.90 source tree** cloned from GitHub. The official boost.org tarball does **not** include CMake support and will not work.
+
 ```bash
-cmake -G "Ninja" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -B build
+git clone https://github.com/boostorg/boost.git /path/to/boost
+cd /path/to/boost
+git checkout boost-1.90.0
+git submodule update --init --recursive
+```
+
+This will take several minutes (~180 sub-repos). Once done, the directory will contain a `CMakeLists.txt` at the top level.
+
+Then tell CMake where it is using either method:
+
+```bash
+# Via CMake flag:
+cmake -G Ninja -DBOOST_SOURCE_DIR=/path/to/boost -B build
+cmake --build build
+
+# Via environment variable:
+export BOOST_SOURCE_DIR=/path/to/boost
+cmake -G Ninja -B build
 cmake --build build
 ```
 
-### Windows (MSVC / Visual Studio 2022)
+The `-D` flag takes priority over the environment variable. If neither is set, CMake looks for `third_party/boost` as a fallback.
 
-Install Boost and SQLite3 via [vcpkg](https://vcpkg.io) or manually, then:
+### Step 2: Configure and Build
+
+#### Windows (MSYS2 / Clang) — Recommended
+
+Open the **MSYS2 CLANG64** shell and install build tools:
 ```bash
+pacman -S mingw-w64-clang-x86_64-cmake mingw-w64-clang-x86_64-ninja \
+          mingw-w64-clang-x86_64-clang mingw-w64-clang-x86_64-sqlite3
+```
+
+Configure and build (see [Boost Source Tree](#boost-source-tree) for how to obtain Boost):
+```bash
+# Option 1: Pass Boost path via CMake flag
+cmake -G Ninja -DBOOST_SOURCE_DIR=/c/develop/boost -B build
+cmake --build build
+
+# Option 2: Set as environment variable
+export BOOST_SOURCE_DIR=/c/develop/boost
+cmake -G Ninja -B build
+cmake --build build
+```
+
+#### Windows (MSVC / Visual Studio 2022)
+
+Install SQLite3 via [vcpkg](https://vcpkg.io) or manually, then:
+```bash
+# Option 1: Pass Boost path via CMake flag
+cmake -G "Visual Studio 17 2022" -A x64 -DBOOST_SOURCE_DIR=C:/develop/boost -B build
+cmake --build build --config Release
+
+# Option 2: Set as environment variable
+set BOOST_SOURCE_DIR=C:\develop\boost
 cmake -G "Visual Studio 17 2022" -A x64 -B build
 cmake --build build --config Release
 ```
 
-### macOS
+#### macOS
 
-Install dependencies via Homebrew:
+Install build tools via Homebrew:
 ```bash
-brew install cmake boost sqlite
+brew install cmake ninja sqlite
 ```
 
 Configure and build:
 ```bash
-cmake -G "Ninja" -B build
+# Option 1: Pass Boost path via CMake flag
+cmake -G Ninja -DBOOST_SOURCE_DIR=/usr/local/src/boost -B build
+cmake --build build
+
+# Option 2: Set as environment variable
+export BOOST_SOURCE_DIR=/usr/local/src/boost
+cmake -G Ninja -B build
 cmake --build build
 ```
 
-### Linux
+#### Linux (Fedora)
 
-Install dependencies via your package manager, e.g. on Ubuntu/Debian:
 ```bash
-sudo apt install cmake ninja-build libboost-all-dev libsqlite3-dev
+sudo dnf install cmake ninja-build gcc-c++ clang sqlite-devel git
 ```
 
 Configure and build:
 ```bash
-cmake -G "Ninja" -B build
+# Option 1: Pass Boost path via CMake flag
+cmake -G Ninja -DBOOST_SOURCE_DIR=/home/user/boost -B build
+cmake --build build
+
+# Option 2: Set as environment variable
+export BOOST_SOURCE_DIR=/home/user/boost
+cmake -G Ninja -B build
 cmake --build build
 ```
+
+#### Linux (Ubuntu / Debian)
+
+```bash
+sudo apt install cmake ninja-build g++ clang libsqlite3-dev git
+```
+
+Configure and build:
+```bash
+# Option 1: Pass Boost path via CMake flag
+cmake -G Ninja -DBOOST_SOURCE_DIR=/home/user/boost -B build
+cmake --build build
+
+# Option 2: Set as environment variable
+export BOOST_SOURCE_DIR=/home/user/boost
+cmake -G Ninja -B build
+cmake --build build
+```
+
+> **Note:** Boost is no longer needed as a system package on any platform. It is built from source as part of the CMake configure step.
 
 ### Build Output
 

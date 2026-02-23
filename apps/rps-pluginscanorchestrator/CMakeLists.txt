@@ -10,6 +10,7 @@ target_link_libraries(rps-pluginscanorchestrator
     PRIVATE
         rps-core
         rps-ipc
+        rps_warnings
         Boost::program_options
         Boost::json
         Boost::filesystem

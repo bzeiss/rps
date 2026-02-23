@@ -13,11 +13,12 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Enable modern warnings
+# Strict warnings — applied only to our own targets, not third-party code
+add_library(rps_warnings INTERFACE)
 if(MSVC)
-    add_compile_options(/W4 /WX /permissive-)
+    target_compile_options(rps_warnings INTERFACE /W4 /WX /permissive-)
 else()
-    add_compile_options(-Wall -Wextra -Wpedantic -Werror)
+    target_compile_options(rps_warnings INTERFACE -Wall -Wextra -Wpedantic -Werror)
 endif()
 
 # Force static linking
@@ -26,12 +27,27 @@ if(WIN32 AND NOT MSVC)
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
 endif()
 
-set(Boost_USE_STATIC_LIBS ON)
-set(Boost_USE_STATIC_RUNTIME ON)
-
-# Find Boost
-# Required components: json, process, interprocess (header only mostly, but let's be safe), program_options, filesystem
-find_package(Boost 1.81 REQUIRED COMPONENTS json program_options filesystem)
+# Boost: build from local source tree via add_subdirectory
+# Override with: cmake -DBOOST_SOURCE_DIR=/path/to/boost
+#            or: export BOOST_SOURCE_DIR=/path/to/boost && cmake -B build
+if(DEFINED ENV{BOOST_SOURCE_DIR} AND NOT DEFINED BOOST_SOURCE_DIR)
+    set(BOOST_SOURCE_DIR "$ENV{BOOST_SOURCE_DIR}" CACHE PATH "Path to Boost source tree (requires Boost 1.90+)")
+else()
+    set(BOOST_SOURCE_DIR "${CMAKE_SOURCE_DIR}/third_party/boost" CACHE PATH "Path to Boost source tree (requires Boost 1.90+)")
+endif()
+if(NOT EXISTS "${BOOST_SOURCE_DIR}/CMakeLists.txt")
+    message(FATAL_ERROR
+        "Boost CMake source tree not found at: ${BOOST_SOURCE_DIR}\n"
+        "Note: The official boost.org tarball does NOT include CMake support.\n"
+        "You must clone Boost from GitHub:\n"
+        "  git clone https://github.com/boostorg/boost.git /path/to/boost\n"
+        "  cd /path/to/boost && git checkout boost-1.90.0\n"
+        "  git submodule update --init --recursive\n"
+        "Then pass: cmake -DBOOST_SOURCE_DIR=/path/to/boost\n"
+    )
+endif()
+set(BOOST_INCLUDE_LIBRARIES json program_options filesystem process interprocess uuid)
+add_subdirectory(${BOOST_SOURCE_DIR} ${CMAKE_BINARY_DIR}/_deps/boost EXCLUDE_FROM_ALL)
 
 # Find SQLite3
 # Force finding the static library
