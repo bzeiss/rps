@@ -42,7 +42,8 @@ public:
         size_t fail = 0;
         size_t crash = 0;
         size_t timeout = 0;
-        size_t total() const { return success + fail + crash + timeout; }
+        size_t skipped = 0;
+        size_t total() const { return success + fail + crash + timeout + skipped; }
     };
     ScanStats stats() const;
     std::vector<std::pair<std::string, std::string>> failures() const;
@@ -62,6 +63,7 @@ private:
     std::atomic<size_t> m_fail{0};
     std::atomic<size_t> m_crash{0};
     std::atomic<size_t> m_timeout{0};
+    std::atomic<size_t> m_skipped{0};
 
     struct WorkerInfo {
         std::string pluginPath;

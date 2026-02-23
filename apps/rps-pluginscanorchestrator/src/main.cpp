@@ -195,7 +195,7 @@ int main(int argc, char* argv[]) {
     auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
 
     auto s = pool.stats();
-    observer.onScanCompleted(s.success, s.fail, s.crash, s.timeout, elapsedMs, pool.failures());
+    observer.onScanCompleted(s.success, s.fail, s.crash, s.timeout, s.skipped, elapsedMs, pool.failures());
     return 0;
 }
 

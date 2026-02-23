@@ -12,7 +12,8 @@ enum class ScanOutcome {
     Success,
     Fail,
     Crash,
-    Timeout
+    Timeout,
+    Skipped
 };
 
 class ScanObserver {
@@ -49,7 +50,7 @@ public:
     virtual void onMonitorReport(const std::vector<std::pair<size_t, std::pair<std::string, int64_t>>>& activeWorkers) = 0;
 
     virtual void onScanCompleted(size_t success, size_t fail, size_t crash, size_t timeout,
-                                  int64_t totalMs,
+                                  size_t skipped, int64_t totalMs,
                                   const std::vector<std::pair<std::string, std::string>>& failures) = 0;
 };
 

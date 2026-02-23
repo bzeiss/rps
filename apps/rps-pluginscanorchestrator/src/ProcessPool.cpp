@@ -59,7 +59,7 @@ ProcessPool::ProcessPool(size_t maxWorkers, db::DatabaseManager* db, ScanObserve
     : m_maxWorkers(maxWorkers), m_db(db), m_observer(observer) {}
 
 ProcessPool::ScanStats ProcessPool::stats() const {
-    return { m_success.load(), m_fail.load(), m_crash.load(), m_timeout.load() };
+    return { m_success.load(), m_fail.load(), m_crash.load(), m_timeout.load(), m_skipped.load() };
 }
 
 std::vector<std::pair<std::string, std::string>> ProcessPool::failures() const {
@@ -337,7 +337,14 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                     auto err = std::get<rps::ipc::ErrorMessage>(msg.payload);
                     auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count();
                     std::string errMsg = err.error + ": " + err.details;
-                    if (!enqueueRetry(job, errMsg, workerId)) {
+                    // Detect SKIP: prefix — plugin is not scannable (e.g. empty bundle)
+                    bool isSkip = err.details.rfind("SKIP:", 0) == 0;
+                    if (isSkip) {
+                        if (m_observer) {
+                            m_observer->onPluginCompleted(workerId, pluginFullPath, ScanOutcome::Skipped, elapsedMs, nullptr, &errMsg);
+                        }
+                        ++m_skipped;
+                    } else if (!enqueueRetry(job, errMsg, workerId)) {
                         if (m_observer) {
                             m_observer->onPluginCompleted(workerId, pluginFullPath, ScanOutcome::Fail, elapsedMs, nullptr, &errMsg);
                             std::lock_guard<std::mutex> slock(stderrMutex);

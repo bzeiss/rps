@@ -78,6 +78,12 @@ void ConsoleScanObserver::onPluginCompleted(size_t workerId, const std::string& 
                       << " (" << dur << ")\n";
             break;
         }
+        case ScanOutcome::Skipped: {
+            std::cout << "[Worker #" << workerId << " SKIP] " << name
+                      << " " << (errorMessage ? *errorMessage : "Skipped")
+                      << "\n";
+            break;
+        }
     }
 }
 
@@ -125,16 +131,17 @@ void ConsoleScanObserver::onMonitorReport(
 }
 
 void ConsoleScanObserver::onScanCompleted(size_t success, size_t fail, size_t crash, size_t timeout,
-                                           int64_t totalMs,
+                                           size_t skipped, int64_t totalMs,
                                            const std::vector<std::pair<std::string, std::string>>& failures) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    auto total = success + fail + crash + timeout;
+    auto total = success + fail + crash + timeout + skipped;
     std::cout << "--------------------------------------------------------\n";
     std::cout << "Scan complete: " << total << " plugins | "
               << success << " success, "
               << fail << " failed, "
               << crash << " crashed, "
-              << timeout << " timed out\n";
+              << timeout << " timed out, "
+              << skipped << " skipped\n";
     std::cout << "Total scan time: " << ProcessPool::formatDuration(totalMs) << "\n";
 
     if (!failures.empty()) {

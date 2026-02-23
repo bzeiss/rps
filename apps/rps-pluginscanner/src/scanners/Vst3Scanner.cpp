@@ -112,7 +112,7 @@ boost::filesystem::path resolveBinaryPath(const boost::filesystem::path& vst3Pat
         }
     }
 
-    throw std::runtime_error("VST3 bundle contains no loadable binary for this platform: " + vst3Path.string());
+    throw std::runtime_error("SKIP: VST3 bundle contains no loadable binary for this platform: " + vst3Path.string());
 }
 
 // ---------------------------------------------------------------------------
@@ -499,7 +499,7 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
 #else
         dlclose(handle);
 #endif
-        throw std::runtime_error("VST3 factory contains no classes.");
+        throw std::runtime_error("SKIP: VST3 factory contains no classes.");
     }
 
     // Find the first scannable processor class.
@@ -524,7 +524,7 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
 #else
         dlclose(handle);
 #endif
-        throw std::runtime_error("VST3 factory contains no scannable processor classes.");
+        throw std::runtime_error("SKIP: VST3 factory contains no scannable processor classes.");
     }
 
     rps::ipc::ScanResult result;

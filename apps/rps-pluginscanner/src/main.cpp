@@ -156,12 +156,21 @@ int main(int argc, char* argv[]) {
         // 5. Execute Scan
         logStage("Starting scan with " + activeScanner->getFormatName() + " scanner...");
         if (activeScanner) {
-            auto result = activeScanner->scan(pluginPath, progressCb);
-            
-            rps::ipc::Message resMsg;
-            resMsg.type = rps::ipc::MessageType::ScanResult;
-            resMsg.payload = result;
-            connection->sendMessage(resMsg);
+            try {
+                auto result = activeScanner->scan(pluginPath, progressCb);
+                
+                rps::ipc::Message resMsg;
+                resMsg.type = rps::ipc::MessageType::ScanResult;
+                resMsg.payload = result;
+                connection->sendMessage(resMsg);
+            } catch (const std::exception& scanErr) {
+                std::string what = scanErr.what();
+                std::cerr << "Scanner Fatal Error: " << what << "\n";
+                rps::ipc::Message errMsg;
+                errMsg.type = rps::ipc::MessageType::ErrorMessage;
+                errMsg.payload = rps::ipc::ErrorMessage{"Scan Error", what};
+                connection->sendMessage(errMsg);
+            }
         }
 
         // Give IPC time to flush

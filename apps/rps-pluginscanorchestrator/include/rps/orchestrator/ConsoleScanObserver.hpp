@@ -39,7 +39,7 @@ public:
     void onMonitorReport(const std::vector<std::pair<size_t, std::pair<std::string, int64_t>>>& activeWorkers) override;
 
     void onScanCompleted(size_t success, size_t fail, size_t crash, size_t timeout,
-                          int64_t totalMs,
+                          size_t skipped, int64_t totalMs,
                           const std::vector<std::pair<std::string, std::string>>& failures) override;
 
 private:
