@@ -9,11 +9,14 @@
 
 #include <rps/scanner/Vst3Scanner.hpp>
 #include <iostream>
+#include <fstream>
 #include <stdexcept>
 #include <cstring>
 #include <algorithm>
+#include <functional>
 #include <vector>
 #include <boost/filesystem.hpp>
+#include <boost/json.hpp>
 
 // Suppress warnings from third-party Steinberg SDK headers
 #if defined(__GNUC__) || defined(__clang__)
@@ -112,6 +115,254 @@ boost::filesystem::path resolveBinaryPath(const boost::filesystem::path& vst3Pat
     throw std::runtime_error("VST3 bundle contains no loadable binary for this platform: " + vst3Path.string());
 }
 
+// ---------------------------------------------------------------------------
+// PE / ELF architecture check — detect arch mismatch before LoadLibrary/dlopen
+// ---------------------------------------------------------------------------
+#ifdef _WIN32
+std::string getMachineTypeName(uint16_t machine) {
+    switch (machine) {
+        case 0x014C: return "x86";
+        case 0x8664: return "x86_64";
+        case 0xAA64: return "ARM64";
+        default: {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "unknown (0x%04X)", machine);
+            return buf;
+        }
+    }
+}
+
+void checkBinaryArchitecture(const boost::filesystem::path& binaryPath) {
+    std::ifstream f(binaryPath.string(), std::ios::binary);
+    if (!f) return; // If we can't open, let LoadLibrary produce the real error
+
+    // Read DOS header — first 2 bytes should be "MZ"
+    char dosHeader[64];
+    f.read(dosHeader, sizeof(dosHeader));
+    if (!f || dosHeader[0] != 'M' || dosHeader[1] != 'Z') return;
+
+    // e_lfanew is at offset 0x3C (4 bytes, little-endian)
+    uint32_t peOffset = *reinterpret_cast<uint32_t*>(&dosHeader[0x3C]);
+    f.seekg(peOffset);
+
+    // PE signature: "PE\0\0"
+    char peSig[4];
+    f.read(peSig, 4);
+    if (!f || peSig[0] != 'P' || peSig[1] != 'E' || peSig[2] != 0 || peSig[3] != 0) return;
+
+    // IMAGE_FILE_HEADER.Machine (2 bytes)
+    uint16_t machine = 0;
+    f.read(reinterpret_cast<char*>(&machine), 2);
+    if (!f) return;
+
+    // Determine what this process is
+#if defined(_M_ARM64) || defined(__aarch64__)
+    constexpr uint16_t expectedMachine = 0xAA64; // ARM64
+    constexpr const char* expectedArch = "ARM64";
+#elif defined(_M_X64) || defined(__x86_64__)
+    constexpr uint16_t expectedMachine = 0x8664; // x86_64
+    constexpr const char* expectedArch = "x86_64";
+#elif defined(_M_IX86) || defined(__i386__)
+    constexpr uint16_t expectedMachine = 0x014C; // x86
+    constexpr const char* expectedArch = "x86";
+#else
+    return; // Unknown host arch, skip check
+#endif
+
+    if (machine != expectedMachine) {
+        throw std::runtime_error(
+            "Architecture mismatch: binary is " + getMachineTypeName(machine)
+            + " but scanner is " + expectedArch
+            + ": " + binaryPath.string());
+    }
+}
+#else
+void checkBinaryArchitecture(const boost::filesystem::path& binaryPath) {
+    std::ifstream f(binaryPath.string(), std::ios::binary);
+    if (!f) return;
+
+    // ELF magic: 0x7F 'E' 'L' 'F'
+    char elfHeader[20];
+    f.read(elfHeader, sizeof(elfHeader));
+    if (!f || elfHeader[0] != 0x7F || elfHeader[1] != 'E' || elfHeader[2] != 'L' || elfHeader[3] != 'F')
+        return;
+
+    // e_machine at offset 18 (2 bytes, little-endian for x86/ARM)
+    uint16_t eMachine = *reinterpret_cast<uint16_t*>(&elfHeader[18]);
+
+    std::string binaryArch;
+    if (eMachine == 0x3E)       binaryArch = "x86_64";
+    else if (eMachine == 0xB7)  binaryArch = "aarch64";
+    else if (eMachine == 0x03)  binaryArch = "x86";
+    else return; // Unknown, let dlopen handle it
+
+#if defined(__x86_64__)
+    const char* hostArch = "x86_64";
+#elif defined(__aarch64__)
+    const char* hostArch = "aarch64";
+#elif defined(__i386__)
+    const char* hostArch = "x86";
+#else
+    return;
+#endif
+
+    if (binaryArch != hostArch) {
+        throw std::runtime_error(
+            "Architecture mismatch: binary is " + binaryArch
+            + " but scanner is " + hostArch
+            + ": " + binaryPath.string());
+    }
+}
+#endif
+
+// ---------------------------------------------------------------------------
+// moduleinfo.json fast path — extract metadata without loading the DLL
+// ---------------------------------------------------------------------------
+// Returns true if moduleinfo.json was found and parsed successfully.
+bool tryLoadModuleInfo(
+    const boost::filesystem::path& pluginPath,
+    rps::ipc::ScanResult& result,
+    bool verbose,
+    std::function<void(int, const std::string&)> progressCb)
+{
+    namespace fs = boost::filesystem;
+
+    if (!fs::is_directory(pluginPath)) return false;
+
+    // SDK 3.7.8+: Contents/Resources/moduleinfo.json
+    // SDK 3.7.5-3.7.7: Contents/moduleinfo.json
+    fs::path jsonPath = pluginPath / "Contents" / "Resources" / "moduleinfo.json";
+    if (!fs::exists(jsonPath)) {
+        jsonPath = pluginPath / "Contents" / "moduleinfo.json";
+        if (!fs::exists(jsonPath)) return false;
+    }
+
+    if (verbose) {
+        std::cerr << "[vst3] " << pluginPath.filename().string()
+                  << ": Found moduleinfo.json: " << jsonPath.string() << std::endl;
+    }
+
+    // Read the file
+    std::ifstream ifs(jsonPath.string());
+    if (!ifs) return false;
+
+    std::string content((std::istreambuf_iterator<char>(ifs)),
+                         std::istreambuf_iterator<char>());
+
+    // moduleinfo.json uses JSON5 (allows trailing commas, comments).
+    // Boost.JSON is strict, so strip trailing commas before '}' and ']'.
+    {
+        std::string cleaned;
+        cleaned.reserve(content.size());
+        bool inString = false;
+        for (size_t i = 0; i < content.size(); ++i) {
+            char c = content[i];
+            if (c == '"' && (i == 0 || content[i - 1] != '\\')) inString = !inString;
+            if (!inString && c == ',') {
+                // Look ahead past whitespace for '}' or ']'
+                size_t j = i + 1;
+                while (j < content.size() && (content[j] == ' ' || content[j] == '\t' ||
+                       content[j] == '\n' || content[j] == '\r')) ++j;
+                if (j < content.size() && (content[j] == '}' || content[j] == ']'))
+                    continue; // Skip this trailing comma
+            }
+            cleaned += c;
+        }
+        content = std::move(cleaned);
+    }
+
+    // Parse JSON
+    boost::system::error_code ec;
+    auto jv = boost::json::parse(content, ec);
+    if (ec) {
+        if (verbose) {
+            std::cerr << "[vst3] " << pluginPath.filename().string()
+                      << ": moduleinfo.json parse error: " << ec.message() << std::endl;
+        }
+        return false;
+    }
+
+    auto& root = jv.as_object();
+
+    // Extract Factory Info (vendor, URL)
+    std::string factoryVendor, factoryUrl;
+    if (root.contains("Factory Info")) {
+        auto& fi = root["Factory Info"].as_object();
+        if (fi.contains("Vendor")) factoryVendor = fi["Vendor"].as_string().c_str();
+        if (fi.contains("URL")) factoryUrl = fi["URL"].as_string().c_str();
+    }
+
+    // Find the first scannable processor class
+    if (!root.contains("Classes") || !root["Classes"].is_array()) return false;
+
+    auto& classes = root["Classes"].as_array();
+
+    if (verbose) {
+        for (size_t i = 0; i < classes.size(); ++i) {
+            auto& cls = classes[i].as_object();
+            std::string name = cls.contains("Name") ? cls["Name"].as_string().c_str() : "?";
+            std::string cat = cls.contains("Category") ? cls["Category"].as_string().c_str() : "?";
+            std::cerr << "[vst3] " << pluginPath.filename().string()
+                      << ":   class[" << i << "] name=\"" << name
+                      << "\" category=\"" << cat << "\" (from moduleinfo.json)" << std::endl;
+        }
+    }
+
+    const boost::json::object* foundClass = nullptr;
+    for (auto& cls : classes) {
+        auto& obj = cls.as_object();
+        if (!obj.contains("Category")) continue;
+        std::string cat = obj["Category"].as_string().c_str();
+        if (cat == kVstAudioEffectClass || cat == "Audio Mix Processor") {
+            foundClass = &obj;
+            break;
+        }
+    }
+
+    if (!foundClass) return false;
+
+    progressCb(50, "Extracting metadata from moduleinfo.json...");
+
+    result.name = foundClass->contains("Name") ? (*foundClass).at("Name").as_string().c_str() : "";
+    result.uid = foundClass->contains("CID") ? (*foundClass).at("CID").as_string().c_str() : "";
+
+    // Version: per-class first, fall back to module-level
+    if (foundClass->contains("Version"))
+        result.version = (*foundClass).at("Version").as_string().c_str();
+    else if (root.contains("Version"))
+        result.version = root["Version"].as_string().c_str();
+    else
+        result.version = "1.0.0";
+
+    // Vendor: per-class first, fall back to factory
+    if (foundClass->contains("Vendor") && !(*foundClass).at("Vendor").as_string().empty())
+        result.vendor = (*foundClass).at("Vendor").as_string().c_str();
+    else
+        result.vendor = factoryVendor;
+
+    result.url = factoryUrl;
+
+    // Sub Categories → category string (join with "|")
+    if (foundClass->contains("Sub Categories") && (*foundClass).at("Sub Categories").is_array()) {
+        auto& subs = (*foundClass).at("Sub Categories").as_array();
+        std::string joined;
+        for (size_t i = 0; i < subs.size(); ++i) {
+            if (i > 0) joined += "|";
+            joined += subs[i].as_string().c_str();
+        }
+        result.category = joined;
+    }
+
+    result.scanMethod = "moduleinfo.json";
+
+    // I/O counts not available from moduleinfo.json
+    result.numInputs = 0;
+    result.numOutputs = 0;
+
+    progressCb(100, "Done (from moduleinfo.json).");
+    return true;
+}
+
 } // anonymous namespace
 
 bool Vst3Scanner::canHandle(const boost::filesystem::path& pluginPath) const {
@@ -127,12 +378,27 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
         }
     };
 
+    // Fast path: try moduleinfo.json first (no DLL loading needed)
+    {
+        rps::ipc::ScanResult jsonResult;
+        if (tryLoadModuleInfo(pluginPath, jsonResult, g_verbose, progressCb)) {
+            logStage("Metadata extracted from moduleinfo.json — skipping DLL load.");
+            return jsonResult;
+        }
+        logStage("No moduleinfo.json — falling back to DLL load.");
+    }
+
     progressCb(10, "Resolving VST3 binary...");
     logStage("Resolving binary path...");
 
     // Resolve bundle directory to actual binary (handles both bundles and single-file .vst3)
     boost::filesystem::path binaryPath = resolveBinaryPath(pluginPath);
     logStage("Resolved to: " + binaryPath.string());
+
+    // Architecture check — detect x86/x64/ARM64 mismatch before loading
+    logStage("Checking binary architecture...");
+    checkBinaryArchitecture(binaryPath);
+    logStage("Architecture OK.");
 
     progressCb(20, "Loading VST3 binary...");
     logStage("Calling LoadLibrary...");
@@ -236,31 +502,33 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
         throw std::runtime_error("VST3 factory contains no classes.");
     }
 
-    // Find the first Audio Module class
+    // Find the first scannable processor class.
+    // Accept standard audio effects ("Audio Module Class") and mix processors ("Audio Mix Processor").
+    // Skip controller-only classes ("Component Controller Class", "Plugin Compatibility Class", "Private").
     Steinberg::PClassInfo classInfo;
-    bool foundAudioModule = false;
+    int32_t foundClassIndex = -1;
     for (int32_t i = 0; i < numClasses; ++i) {
         if (factory->getClassInfo(i, &classInfo) == Steinberg::kResultOk) {
-            if (std::strcmp(classInfo.category, kVstAudioEffectClass) == 0) {
-                foundAudioModule = true;
+            if (std::strcmp(classInfo.category, kVstAudioEffectClass) == 0 ||
+                std::strcmp(classInfo.category, "Audio Mix Processor") == 0) {
+                foundClassIndex = i;
                 break;
             }
         }
     }
 
-    if (!foundAudioModule) {
+    if (foundClassIndex < 0) {
         factory->release();
 #ifdef _WIN32
         FreeLibrary(handle);
 #else
         dlclose(handle);
 #endif
-        throw std::runtime_error("VST3 factory contains no audio effects.");
+        throw std::runtime_error("VST3 factory contains no scannable processor classes.");
     }
 
     rps::ipc::ScanResult result;
     result.name = classInfo.name;
-    result.vendor = "Unknown VST3 Vendor"; // Need IPluginFactory2/3 for vendor details
     result.version = "1.0.0";
     
     // Convert 16-byte FUID to hex string for UID
@@ -269,36 +537,34 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
         classInfo.cid[0], classInfo.cid[1], classInfo.cid[2], classInfo.cid[3]);
     result.uid = uidBuf;
 
-    // Attempt to query IPluginFactory2 for vendor string
+    // Extract factory-level info (vendor, URL, email) as baseline
+    Steinberg::PFactoryInfo factoryInfo;
+    if (factory->getFactoryInfo(&factoryInfo) == Steinberg::kResultOk) {
+        result.vendor = factoryInfo.vendor;
+        result.url = factoryInfo.url;
+    } else {
+        result.vendor = "Unknown VST3 Vendor";
+    }
+
+    // Attempt to query IPluginFactory2 for per-class details (may override vendor/version)
     Steinberg::IPluginFactory2* factory2 = nullptr;
     if (factory->queryInterface(Steinberg::IPluginFactory2::iid, reinterpret_cast<void**>(&factory2)) == Steinberg::kResultOk) {
         Steinberg::PClassInfo2 classInfo2;
-        if (factory2->getClassInfo2(0, &classInfo2) == Steinberg::kResultOk) {
-            result.vendor = classInfo2.vendor;
-            result.version = classInfo2.version;
+        if (factory2->getClassInfo2(foundClassIndex, &classInfo2) == Steinberg::kResultOk) {
+            if (classInfo2.vendor[0] != '\0') result.vendor = classInfo2.vendor;
+            if (classInfo2.version[0] != '\0') result.version = classInfo2.version;
             result.category = classInfo2.subCategories;
-        }
-        
-        // Attempt to query IPluginFactory3 for URL and Email (often used for description/contact)
-        Steinberg::IPluginFactory3* factory3 = nullptr;
-        if (factory2->queryInterface(Steinberg::IPluginFactory3::iid, reinterpret_cast<void**>(&factory3)) == Steinberg::kResultOk) {
-            Steinberg::PClassInfoW classInfoW;
-            if (factory3->getClassInfoUnicode(0, &classInfoW) == Steinberg::kResultOk) {
-                // Convert UTF-16 to UTF-8 for URL and Contact if needed
-                // For simplicity here, we'll just grab what we can. Usually vendor/version are enough,
-                // but some plugins put info in the classInfoW fields.
-                // Note: VST3 doesn't have a direct "description" field in the factory, 
-                // it's usually in the module info (which requires instantiating the plugin).
-            }
-            factory3->release();
         }
         factory2->release();
     }
 
+    result.scanMethod = "factory";
+
     progressCb(80, "Extracting features...");
-    result.numInputs = 2;   // Faked without full host instantiation
-    result.numOutputs = 2;  // Faked without full host instantiation
-    result.parameters.push_back({0, "VST3 Param 1 (Mock)", 0.5});
+    // I/O counts and parameters require full host instantiation (IComponent::initialize,
+    // getBusInfo, IEditController). Not available from factory metadata alone.
+    result.numInputs = 0;
+    result.numOutputs = 0;
 
     progressCb(90, "Releasing factory...");
     factory->release();

@@ -30,6 +30,15 @@ public:
 
     static std::string formatDuration(int64_t ms);
 
+    struct ScanStats {
+        size_t success = 0;
+        size_t fail = 0;
+        size_t crash = 0;
+        size_t timeout = 0;
+        size_t total() const { return success + fail + crash + timeout; }
+    };
+    ScanStats stats() const;
+
 private:
     void workerThreadLoop(size_t workerId);
     void processJob(const ScanJob& job, size_t workerId);
@@ -41,6 +50,10 @@ private:
     std::mutex m_queueMutex;
     std::mutex m_consoleMutex;
     std::atomic<bool> m_stop{false};
+    std::atomic<size_t> m_success{0};
+    std::atomic<size_t> m_fail{0};
+    std::atomic<size_t> m_crash{0};
+    std::atomic<size_t> m_timeout{0};
 };
 
 } // namespace rps::orchestrator

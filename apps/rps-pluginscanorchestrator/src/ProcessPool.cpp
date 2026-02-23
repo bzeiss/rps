@@ -58,6 +58,10 @@ namespace bp = boost::process::v1;
 ProcessPool::ProcessPool(size_t maxWorkers, db::DatabaseManager* db)
     : m_maxWorkers(maxWorkers), m_db(db) {}
 
+ProcessPool::ScanStats ProcessPool::stats() const {
+    return { m_success.load(), m_fail.load(), m_crash.load(), m_timeout.load() };
+}
+
 ProcessPool::~ProcessPool() {
     m_stop = true;
     for (auto& t : m_threads) {
@@ -118,9 +122,10 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
     std::string ipcId = "rps_ipc_" + boost::uuids::to_string(uuid);
 
     std::string pluginName = job.pluginPath.filename().string();
+    std::string pluginFullPath = job.pluginPath.string();
     {
         std::lock_guard<std::mutex> lock(m_consoleMutex);
-        std::cout << "[Worker #" << workerId << "] Scanning: " << pluginName << "\n";
+        std::cout << "[Worker #" << workerId << "] Scanning: " << pluginFullPath << "\n";
     }
 
     try {
@@ -187,12 +192,25 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
         }
 
         bool done = false;
+        bool slowWarned = false;
+        constexpr int64_t slowThresholdMs = 30000; // 30 seconds
         auto startTime = std::chrono::steady_clock::now();
         auto lastResponseTime = startTime;
 
         while (!done && !m_stop) {
             auto maybeMsg = connection->receiveMessage(100); // 100ms polling
             auto now = std::chrono::steady_clock::now();
+
+            // Warn once if scan is taking unusually long
+            if (!slowWarned) {
+                auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count();
+                if (elapsedMs > slowThresholdMs) {
+                    slowWarned = true;
+                    std::lock_guard<std::mutex> lock(m_consoleMutex);
+                    std::cerr << "[Worker #" << workerId << " SLOW] " << pluginName
+                              << " still scanning after " << formatDuration(elapsedMs) << "...\n";
+                }
+            }
             
             if (maybeMsg.has_value()) {
                 lastResponseTime = now; 
@@ -210,8 +228,23 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                         std::cout << "[Worker #" << workerId << " SUCCESS] " << pluginName
                                   << " -> " << res.name << " v" << res.version 
                                   << " (" << formatDuration(elapsedMs) << ")\n";
+                        if (printVerbose) {
+                            std::cout << "  Method:   " << (res.scanMethod.empty() ? "unknown" : res.scanMethod) << "\n";
+                            std::cout << "  Vendor:   " << (res.vendor.empty() ? "(none)" : res.vendor) << "\n";
+                            std::cout << "  UID:      " << (res.uid.empty() ? "(none)" : res.uid) << "\n";
+                            std::cout << "  Category: " << (res.category.empty() ? "(none)" : res.category) << "\n";
+                            std::cout << "  URL:      " << (res.url.empty() ? "(none)" : res.url) << "\n";
+                            std::cout << "  Desc:     " << (res.description.empty() ? "(none)" : res.description) << "\n";
+                            std::cout << "  I/O:      " << (res.numInputs || res.numOutputs
+                                ? std::to_string(res.numInputs) + " in / " + std::to_string(res.numOutputs) + " out"
+                                : "skipped (requires instantiation)") << "\n";
+                            std::cout << "  Params:   " << (res.parameters.empty()
+                                ? "skipped (requires instantiation)"
+                                : std::to_string(res.parameters.size()) + " parameter(s)") << "\n";
+                        }
                     }
                     if (m_db) m_db->upsertPluginResult(job.pluginPath, res, elapsedMs);
+                    ++m_success;
                     done = true;
                 }
                 else if (msg.type == rps::ipc::MessageType::ErrorMessage) {
@@ -230,6 +263,7 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                         }
                     }
                     if (m_db) m_db->recordPluginFailure(job.pluginPath, err.error + ": " + err.details, elapsedMs);
+                    ++m_fail;
                     done = true;
                 }
             } else {
@@ -258,6 +292,7 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                         }
                     }
                     if (m_db) m_db->recordPluginFailure(job.pluginPath, errMsg, elapsedMs);
+                    if (isHardCrash) ++m_crash; else ++m_fail;
                     done = true;
                 } 
                 else if (job.timeoutMs > 0 && std::chrono::duration_cast<std::chrono::milliseconds>(now - lastResponseTime).count() > job.timeoutMs) {
@@ -276,6 +311,7 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                         }
                     }
                     if (m_db) m_db->recordPluginFailure(job.pluginPath, errMsg, elapsedMs);
+                    ++m_timeout;
                     scannerProc.terminate();
                     done = true;
                 }

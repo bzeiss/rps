@@ -34,6 +34,7 @@ struct ScanResult {
     std::string description;
     std::string url;
     std::string category;
+    std::string scanMethod;  // "moduleinfo.json" or "factory" — how metadata was obtained
     uint32_t numInputs = 0;
     uint32_t numOutputs = 0;
     std::vector<ParameterInfo> parameters;

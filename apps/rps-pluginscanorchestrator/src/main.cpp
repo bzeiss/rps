@@ -29,7 +29,7 @@ int main(int argc, char* argv[]) {
         ("scan-dir,d", po::value<std::vector<std::string>>()->multitoken(), "Directories to recursively scan for plugins")
         ("scan,s", po::value<std::string>(), "Single file to scan")
         ("scanner-bin,b", po::value<std::string>()->default_value("rps-pluginscanner.exe"), "Path to the scanner binary")
-        ("timeout,t", po::value<int>()->default_value(10000), "Timeout in ms per plugin (0 = no timeout)")
+        ("timeout,t", po::value<int>()->default_value(300000), "Timeout in ms per plugin (0 = no timeout, default: 5 min)")
         ("jobs,j", po::value<size_t>()->default_value(std::thread::hardware_concurrency()), "Number of parallel workers")
         ("formats,f", po::value<std::string>()->default_value("all"), "Comma-separated list of formats to scan (e.g. vst3,clap) or 'all'")
         ("filter", po::value<std::string>(), "Only scan plugins whose filename contains this string")
@@ -189,8 +189,14 @@ int main(int argc, char* argv[]) {
     auto endTime = std::chrono::steady_clock::now();
     auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
 
+    auto s = pool.stats();
     std::cout << "--------------------------------------------------------\n";
-    std::cout << "Orchestrator shutdown complete. Total scan time: " << rps::orchestrator::ProcessPool::formatDuration(elapsedMs) << "\n";
+    std::cout << "Scan complete: " << s.total() << " plugins | "
+              << s.success << " success, "
+              << s.fail << " failed, "
+              << s.crash << " crashed, "
+              << s.timeout << " timed out\n";
+    std::cout << "Total scan time: " << rps::orchestrator::ProcessPool::formatDuration(elapsedMs) << "\n";
     return 0;
 }
 
