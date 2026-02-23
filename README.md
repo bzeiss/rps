@@ -172,10 +172,11 @@ cmake --build build
 
 ### Build Output
 
-After a successful build, you will find three binaries in the `build/` directory:
+After a successful build, you will find four binaries in the `build/` directory:
 - `build/apps/rps-pluginscanorchestrator/rps-pluginscanorchestrator` (or `.exe`) — standalone CLI
 - `build/apps/rps-pluginscanner/rps-pluginscanner` (or `.exe`) — scanner worker
 - `build/apps/rps-server/rps-server` (or `.exe`) — gRPC server
+- `build/examples/cpp/rps-example-client` (or `.exe`) — C++ gRPC example client
 
 The orchestrator and server both auto-locate `rps-pluginscanner` relative to their own path.
 
@@ -404,6 +405,31 @@ python -m rps_client --server localhost:50051 status
 ```
 
 See `examples/python/README.md` for full documentation.
+
+## C++ Example Client
+
+A C++ gRPC client with an ANSI terminal TUI is built alongside the project as `rps-example-client`.
+
+### Usage
+
+```bash
+# Scan with TUI (auto-spawns server)
+./rps-example-client scan --formats vst3,clap --limit 50
+
+# Full scan of all formats
+./rps-example-client scan --mode full
+
+# Connect to an already-running server
+./rps-example-client --server localhost:50051 scan --formats vst3
+
+# Query server status
+./rps-example-client --server localhost:50051 status
+
+# Shut down server
+./rps-example-client --server localhost:50051 shutdown
+```
+
+The binary auto-locates `rps-server` relative to its own build directory. Use `--server-bin` to override.
 
 ## Documentation
 

@@ -84,3 +84,6 @@ add_subdirectory(libs/rps-engine)
 add_subdirectory(apps/rps-pluginscanorchestrator)
 add_subdirectory(apps/rps-pluginscanner)
 add_subdirectory(apps/rps-server)
+
+# Example clients
+add_subdirectory(examples/cpp)

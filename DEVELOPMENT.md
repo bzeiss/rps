@@ -115,7 +115,7 @@ We have successfully completed **Phase 1 (IPC Foundation)**, **Phase 2 (Process 
 
 #### Example Clients
 - `examples/python/`: Python TUI client using `rich` for per-worker progress bars. Spawns/kills `rps-server` as a subprocess.
-- `examples/cpp/`: (planned) C++ example client.
+- `examples/cpp/`: C++ gRPC client with ANSI terminal TUI. Same features as the Python client: auto-spawns server, per-worker progress bars, streaming results.
 
 ### 3.2 The IPC Protocol Schema
 Located in `libs/rps-ipc/include/rps/ipc/Messages.hpp`.

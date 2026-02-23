@@ -21,3 +21,4 @@ __pycache__/
 examples/python/.venv/
 examples/python/rps_client/proto/rps_pb2*.py
 examples/python/rps-server.log
+rps-server.log
