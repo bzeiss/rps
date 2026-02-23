@@ -10,16 +10,23 @@ The audio plugin ecosystem is heavily reliant on dynamically loaded libraries (`
 
 RPS solves this problem by using a strict **multi-process architecture**:
 
-1. **`rps-pluginscanorchestrator`** (The Coordinator)
-   - Discovers plugin files on the filesystem.
-   - Manages a pool of child worker processes.
-   - Implements a watchdog timer. If a worker stops responding or crashes, the orchestrator detects the failure, logs it, and continues scanning the rest of the plugins.
-   - Aggregates the final scan results into a central SQLite database.
+1. **`rps-engine`** (The Core Library)
+   - A reusable static library (`libs/rps-engine/`) containing all scan orchestration logic: plugin discovery, process pool management, watchdog timers, retry logic, incremental caching, and SQLite persistence.
+   - Exposes `ScanEngine::runScan(ScanConfig, ScanObserver*)` — a single entry point for any consumer.
 
-2. **`rps-pluginscanner`** (The Worker)
-   - A disposable, isolated process. 
-   - It connects to the orchestrator via IPC (Inter-Process Communication), receives a `ScanRequest`, and loads a single target plugin into its own memory space.
-   - It extracts the necessary metadata (name, parameters, inputs/outputs) and reports it back to the orchestrator via `ProgressEvent` and `ScanResult` messages.
+2. **`rps-server`** (The gRPC Server)
+   - A long-lived daemon that exposes `rps-engine` via a gRPC streaming API.
+   - Implements `GrpcScanObserver` to serialize scan events into protobuf messages streamed to clients.
+   - Logs to console and file via `spdlog`.
+   - Can be driven from any language (Python, C++, etc.).
+
+3. **`rps-pluginscanorchestrator`** (Standalone CLI)
+   - A thin CLI wrapper (~100 lines) around `rps-engine`. No server needed.
+
+4. **`rps-pluginscanner`** (The Worker)
+   - A disposable, isolated process.
+   - It connects to the engine via IPC (Inter-Process Communication), receives a `ScanRequest`, and loads a single target plugin into its own memory space.
+   - It extracts the necessary metadata (name, parameters, inputs/outputs) and reports it back via `ProgressEvent` and `ScanResult` messages.
 
 ---
 
@@ -32,10 +39,12 @@ We adhere to a set of strict constraints to ensure maximum compatibility, adopti
 - **Compilers**: The project must build cleanly with **Clang**, **GCC**, and **MSVC**.
 - **Allowed Dependencies**:
   - The C++ Standard Template Library (STL).
-  - **Boost 1.90** (specifically `Boost.Process`, `Boost.Interprocess`, `Boost.JSON`, `Boost.Program_options`, `Boost.Filesystem`).
+  - **Boost 1.90** (specifically `Boost.Process`, `Boost.Interprocess`, `Boost.JSON`, `Boost.Program_options`, `Boost.Filesystem`, `Boost.UUID`).
   - **SQLite3** (for the final output database).
+  - **gRPC / Protobuf** (for the `rps-server` API layer).
+  - **spdlog** (structured logging for `rps-server`).
   - Plugin SDK Headers (VST3, CLAP, LV2, AU, AAX, and optionally VST2.4).
-- No other third-party frameworks (e.g., JUCE, gRPC, Protobuf, nlohmann/json) are permitted.
+  - No other third-party frameworks (e.g., JUCE, nlohmann/json) are permitted in the core engine.
 
 ### 2.1 Dependency Management
 
@@ -72,21 +81,41 @@ At runtime, VST2 is **excluded from `--formats all`** via the `isExplicitOnly()`
 
 ---
 
-## 3. Current Implementation Status (Phases 1-5)
+## 3. Current Implementation Status (Phases 1-6)
 
-We have successfully completed **Phase 1 (IPC Foundation)**, **Phase 2 (Process Pool & Orchestration)**, **Phase 3 (Format Scanners)**, **Phase 4 (Incremental Scanning & Database Optimization)**, and **Phase 5 (AAX Scanner & Robustness)**. The fundamental bidirectional communication, crash-recovery logic, targeted format scanning, incremental caching, and AAX support are in place and tested against thousands of real-world plugins.
+We have successfully completed **Phase 1 (IPC Foundation)**, **Phase 2 (Process Pool & Orchestration)**, **Phase 3 (Format Scanners)**, **Phase 4 (Incremental Scanning & Database Optimization)**, **Phase 5 (AAX Scanner & Robustness)**, and **Phase 6 (gRPC Server & Python TUI Client)**. The full stack — from IPC to gRPC streaming to a rich Python TUI — is working end-to-end and tested against thousands of real-world plugins.
 
 ### 3.1 Project Structure
-- `apps/rps-pluginscanorchestrator/`: The main orchestrator application. Manages parallel worker pools, applies format/name filtering, and writes to SQLite.
-  - `src/db/DatabaseManager.cpp`: SQLite database layer — schema, upserts, incremental cache, skipped/blocked management.
-  - `src/ProcessPool.cpp`: Worker process lifecycle, IPC message loop, retry logic, watchdog.
+
+#### Libraries
+- `libs/rps-core/`: Format traits, registry, and filesystem discovery logic.
+- `libs/rps-ipc/`: Shared IPC transport layer and JSON serialization logic (orchestrator ↔ scanner).
+- `libs/rps-engine/`: **The reusable scan engine library** (namespace `rps::engine`). Contains all orchestration logic extracted from the original CLI app:
+  - `ScanEngine.hpp/.cpp`: Top-level `ScanEngine` class with `runScan(ScanConfig, ScanObserver*)`. Thread-safe (one scan at a time).
+  - `ScanConfig`: Struct encapsulating all scan parameters (formats, mode, jobs, timeout, etc.).
+  - `ProcessPool.hpp/.cpp`: Worker process lifecycle, IPC message loop, retry logic, watchdog.
+  - `ScanObserver.hpp`: Abstract observer interface for scan progress events.
+  - `ConsoleScanObserver.hpp/.cpp`: Console-based observer for CLI use.
+  - `db/DatabaseManager.hpp/.cpp`: SQLite database layer — schema, upserts, incremental cache, skipped/blocked management.
+
+#### Applications
+- `apps/rps-pluginscanorchestrator/`: Standalone CLI wrapper. A thin `main.cpp` (~100 lines) that parses CLI args into `ScanConfig` and calls `ScanEngine::runScan()`.
 - `apps/rps-pluginscanner/`: The worker application. Loads the plugin DLL natively.
   - `src/scanners/Vst3Scanner.cpp`: VST3 scanning via native COM/module loading.
   - `src/scanners/ClapScanner.cpp`: CLAP scanning via the CLAP C API.
   - `src/scanners/Vst2Scanner.cpp`: VST2 scanning (compile-time opt-in).
   - `src/scanners/AaxScanner.cpp`: AAX scanning via Pro Tools cache file parsing.
-- `libs/rps-ipc/`: A static library containing the shared IPC transport layer and JSON serialization logic.
-- `libs/rps-core/`: Format traits, registry, and filesystem discovery logic.
+- `apps/rps-server/`: **gRPC server** exposing the scan engine to any language.
+  - `src/RpsServiceImpl.cpp`: Implements the `RpsService` gRPC service (StartScan, StopScan, GetStatus, Shutdown).
+  - `src/GrpcScanObserver.cpp`: Implements `ScanObserver`, serializes events into protobuf `ScanEvent` messages and writes them to a `grpc::ServerWriter`.
+  - Uses `spdlog` for dual-sink logging (stdout + file).
+
+#### Proto
+- `proto/rps.proto`: gRPC service and message definitions. `ScanEvent` is a `oneof` union mirroring all `ScanObserver` callbacks 1:1.
+
+#### Example Clients
+- `examples/python/`: Python TUI client using `rich` for per-worker progress bars. Spawns/kills `rps-server` as a subprocess.
+- `examples/cpp/`: (planned) C++ example client.
 
 ### 3.2 The IPC Protocol Schema
 Located in `libs/rps-ipc/include/rps/ipc/Messages.hpp`.
@@ -165,6 +194,7 @@ FourCC codes containing non-ASCII bytes (invalid UTF-8) are sanitized to hex rep
 | `plugins` | Main plugin data: one row per successfully scanned or failed plugin |
 | `parameters` | Plugin parameters (1:N with `plugins`) |
 | `aax_plugins` | AAX variant-specific triad IDs and stem formats (1:N with `plugins`) |
+| `vst3_classes` | VST3 multi-class entries per plugin (1:N with `plugins`): `class_index`, `name`, `uid`, `category`, `vendor`, `version` |
 | `plugins_skipped` | Non-scannable plugins (empty bundles, no binary) — checked during incremental scan |
 | `plugins_blocked` | Plugins that exhausted retries or timed out — checked during incremental scan |
 
@@ -175,9 +205,54 @@ To ensure the orchestrator and scanner binaries are portable and do not fail wit
 
 ---
 
-## 4. Next Steps (Phase 6+)
+### 3.12 gRPC Server Architecture
+
+The `rps-server` application exposes the `rps::engine::ScanEngine` via a gRPC service defined in `proto/rps.proto`. The key insight is that the existing `ScanObserver` abstract interface is a natural event bus — `GrpcScanObserver` implements it and serializes each callback into a protobuf `ScanEvent` message written to the gRPC response stream.
+
+Architecture:
+```
+Client (Python/C++/etc.)  ──gRPC──▶  RpsServiceImpl  ──▶  ScanEngine  ──▶  ProcessPool  ──IPC──▶  rps-pluginscanner
+         ◀── stream ScanEvent ──          GrpcScanObserver
+```
+
+- **One scan at a time**: `ScanEngine::m_scanning` atomic flag. Returns `ALREADY_EXISTS` gRPC status if busy.
+- **Logging**: `spdlog` with two sinks (stdout + file). Current verbose `std::cerr` output → `spdlog::debug()`. Normal → `spdlog::info()`. Errors → `spdlog::error()`.
+- **Shutdown**: `Shutdown` RPC triggers `grpc::Server::Shutdown()` asynchronously (after returning the response). Signal handlers (SIGINT/SIGTERM) also trigger graceful shutdown.
+- **Lifecycle**: Designed to be spawned and killed by a parent application. The Python example client demonstrates this pattern.
+
+### 3.13 Build System: gRPC/Protobuf on MSYS2
+
+The MSYS2 gRPC package has a known issue where `protobuf-targets.cmake` references missing UPB targets. To work around this, `apps/rps-server/CMakeLists.txt` uses **pkg-config** (`pkg_check_modules`) instead of `find_package(gRPC CONFIG)` for finding gRPC and protobuf. Proto codegen uses `protoc` and `grpc_cpp_plugin` found via `find_program()`.
+
+Required MSYS2 packages:
+```bash
+pacman -S mingw-w64-clang-x86_64-grpc mingw-w64-clang-x86_64-spdlog
+```
+
+---
+
+### 3.14 Python TUI Client
+
+The example Python client (`examples/python/`) demonstrates the full gRPC workflow:
+
+1. **`ServerManager`**: Spawns `rps-server` as a subprocess, waits for it to accept connections, auto-adds MSYS2 DLL directories to subprocess PATH on Windows. Gracefully shuts down via the `Shutdown` RPC on exit.
+2. **`RpsClient`**: Thin gRPC stub wrapper for `StartScan`, `StopScan`, `GetStatus`, `Shutdown`.
+3. **`ScanDisplay` TUI**: Uses the `rich` library with a custom `__rich_console__` renderable to avoid flicker. Shows:
+   - Overall progress bar with spinner, percentage, elapsed time, and live counters.
+   - Per-worker status table with individual progress bars.
+   - Scrolling log of recent scan results (success/fail/crash/timeout/skip).
+4. **`generate_proto.py`**: Generates Python gRPC stubs and patches the broken absolute import (`import rps_pb2`) to a relative import (`from . import rps_pb2`).
+
+Dependencies: `grpcio`, `grpcio-tools`, `rich`, `click` (see `examples/python/pyproject.toml`).
+
+---
+
+## 4. Next Steps (Phase 7+)
 
 The immediate next goals are:
 1. **OS-Specific Formats**: Implement scanners for **AU** (macOS via CoreAudio) and **LV2** (Linux/Windows).
 2. **Vendor SQLite**: Bundle the SQLite amalgamation to remove the system dependency.
 3. **Extended Metadata**: Store additional plugin details (e.g., bus arrangements, preset lists) if exposed by the SDKs.
+4. **C++ Example Client**: Add a C++ gRPC client in `examples/cpp/`.
+5. **Scan Cancellation**: Implement a cancellation flag in `ScanEngine`/`ProcessPool` for the `StopScan` RPC.
+6. **Authentication**: Optional TLS/token auth for remote gRPC connections.

@@ -1,0 +1,156 @@
+syntax = "proto3";
+package rps.v1;
+
+// RPS Plugin Scanner gRPC Service
+service RpsService {
+  // Start a scan — returns a stream of events until completion.
+  // Returns ALREADY_EXISTS if a scan is already running.
+  rpc StartScan(StartScanRequest) returns (stream ScanEvent);
+
+  // Stop a running scan gracefully.
+  rpc StopScan(StopScanRequest) returns (StopScanResponse);
+
+  // Query server status (idle/scanning, uptime, db path).
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+
+  // Graceful server shutdown. Drains active scan first.
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Request / Response messages
+// ---------------------------------------------------------------------------
+
+message StartScanRequest {
+  repeated string scan_dirs = 1;   // --scan-dir (empty = use OS defaults)
+  string single_plugin = 2;       // --scan (single file path)
+  string mode = 3;                // "full" | "incremental" (default: "incremental")
+  string formats = 4;             // "all" | "vst3,clap" (default: "all")
+  string filter = 5;              // filename substring filter
+  uint32 limit = 6;               // 0 = unlimited
+  uint32 jobs = 7;                // parallel workers (default: 6)
+  uint32 retries = 8;             // max retries per plugin (default: 3)
+  uint32 timeout_ms = 9;          // per-plugin timeout in ms (default: 120000)
+  bool verbose = 10;              // enable debug-level logging
+}
+
+message StopScanRequest {}
+message StopScanResponse {
+  bool was_running = 1;
+}
+
+message GetStatusRequest {}
+message GetStatusResponse {
+  enum ServerState {
+    IDLE = 0;
+    SCANNING = 1;
+  }
+  ServerState state = 1;
+  int64 uptime_ms = 2;
+  string db_path = 3;
+}
+
+message ShutdownRequest {}
+message ShutdownResponse {}
+
+// ---------------------------------------------------------------------------
+// Streaming scan events
+// ---------------------------------------------------------------------------
+
+message ScanEvent {
+  oneof event {
+    ScanStarted scan_started = 1;
+    PluginStarted plugin_started = 2;
+    PluginProgress plugin_progress = 3;
+    PluginCompleted plugin_completed = 4;
+    PluginRetry plugin_retry = 5;
+    WorkerLog worker_log = 6;
+    MonitorReport monitor_report = 7;
+    ScanCompleted scan_completed = 8;
+  }
+}
+
+message ScanStarted {
+  uint32 total_plugins = 1;       // plugins to scan (after filtering)
+  uint32 worker_count = 2;
+  uint32 skipped_unchanged = 3;   // incremental: unchanged plugins
+  uint32 skipped_blocked = 4;     // incremental: previously blocked
+}
+
+message PluginStarted {
+  uint32 worker_id = 1;
+  uint32 plugin_index = 2;
+  uint32 total_plugins = 3;
+  string plugin_path = 4;
+  string plugin_filename = 5;
+}
+
+message PluginProgress {
+  uint32 worker_id = 1;
+  string plugin_path = 2;
+  int32 percentage = 3;           // 0-100
+  string stage = 4;               // e.g. "Loading DLL...", "Querying parameters..."
+}
+
+message PluginCompleted {
+  uint32 worker_id = 1;
+  string plugin_path = 2;
+  string plugin_filename = 3;
+  Outcome outcome = 4;
+  int64 elapsed_ms = 5;
+  // Populated on success:
+  string plugin_name = 6;
+  string plugin_version = 7;
+  string plugin_vendor = 8;
+  string plugin_format = 9;
+  // Populated on failure:
+  string error_message = 10;
+}
+
+enum Outcome {
+  OUTCOME_UNKNOWN = 0;
+  OUTCOME_SUCCESS = 1;
+  OUTCOME_FAIL = 2;
+  OUTCOME_CRASH = 3;
+  OUTCOME_TIMEOUT = 4;
+  OUTCOME_SKIPPED = 5;
+}
+
+message PluginRetry {
+  uint32 worker_id = 1;
+  string plugin_path = 2;
+  uint32 attempt = 3;
+  uint32 max_retries = 4;
+  string reason = 5;
+}
+
+message WorkerLog {
+  uint32 worker_id = 1;
+  string plugin_path = 2;
+  string line = 3;
+}
+
+message MonitorReport {
+  repeated ActiveWorker workers = 1;
+}
+
+message ActiveWorker {
+  uint32 worker_id = 1;
+  string plugin_path = 2;
+  int64 elapsed_ms = 3;
+}
+
+message ScanCompleted {
+  uint32 success = 1;
+  uint32 fail = 2;
+  uint32 crash = 3;
+  uint32 timeout = 4;
+  uint32 skipped = 5;
+  int64 total_ms = 6;
+  repeated FailedPlugin failures = 7;
+}
+
+message FailedPlugin {
+  string path = 1;
+  string reason = 2;
+}

@@ -2,20 +2,24 @@
 
 RPS is a modern, cross-platform audio plugin scanner designed from the ground up for extreme robustness and reliability. It supports scanning VST2, VST3, CLAP, AAX, AU, and LV2 formats on Windows, macOS, and Linux.
 
+RPS exposes a **gRPC API** so it can be driven from any language. A Python TUI example client is included.
+
 ## Why RPS?
 
 Scanning audio plugins is notoriously unreliable. Many plugins contain bugs, fail iLok license checks, or enter infinite loops during initialization. When a DAW or host application attempts to scan these plugins directly in its main process, a single bad plugin can crash the entire application.
 
 RPS solves this by using a **multi-process architecture**:
-- **`rps-pluginscanorchestrator`**: The coordinator. It manages a pool of worker processes, handles watchdogs/timeouts, and aggregates the results into a central SQLite database. If a plugin crashes, only the worker dies—the orchestrator logs the failure and moves on.
+- **`rps-server`**: A gRPC server that coordinates scanning. It manages a pool of worker processes, handles watchdogs/timeouts, streams progress events to clients, and aggregates results into a central SQLite database. If a plugin crashes, only the worker dies—the server logs the failure and moves on.
+- **`rps-pluginscanorchestrator`**: A standalone CLI wrapper around the same scan engine (no server needed).
 - **`rps-pluginscanner`**: The worker. It isolates the unsafe, third-party plugin code from the rest of your system.
+- **`examples/python/`**: A Python TUI client using `rich` that spawns/kills the server and displays per-worker progress bars.
 
 ## Project Axioms
 1. **Primary Objective**: Robustness (Crash and stall isolation).
 2. **Secondary Objective**: Performance / Speed (Parallel scanning).
 3. **Third Objective**: Ease of use via central SQLite database (external tools can simply query the DB).
-4. **Language**: Strictly Modern C++23.
-5. **Dependencies**: Restricted to STL, Boost, SQLite, and Plugin SDKs.
+4. **Language**: Strictly Modern C++23 (core engine). Python for example clients.
+5. **Dependencies**: STL, Boost, SQLite, gRPC/Protobuf, spdlog, and Plugin SDKs.
 
 ## Building
 
@@ -27,6 +31,8 @@ RPS solves this by using a **multi-process architecture**:
 | C++ Compiler | C++23 capable | Clang 16+ (recommended), GCC 13+, MSVC 2022 17.5+ |
 | Ninja | 1.11+ | Recommended build backend (optional, can use Make or VS) |
 | SQLite3 | 3.x | For the plugin database |
+| gRPC | 1.60+ | For the `rps-server` gRPC API |
+| spdlog | 1.12+ | Structured logging for `rps-server` |
 | Git | 2.x | For cloning submodules |
 
 **Boost 1.90** is built from source — no system Boost installation is needed. You must provide a path to a Boost source tree (see Step 1).
@@ -76,7 +82,8 @@ The `-D` flag takes priority over the environment variable. If neither is set, C
 Open the **MSYS2 CLANG64** shell and install build tools:
 ```bash
 pacman -S mingw-w64-clang-x86_64-cmake mingw-w64-clang-x86_64-ninja \
-          mingw-w64-clang-x86_64-clang mingw-w64-clang-x86_64-sqlite3
+          mingw-w64-clang-x86_64-clang mingw-w64-clang-x86_64-sqlite3 \
+          mingw-w64-clang-x86_64-grpc mingw-w64-clang-x86_64-spdlog
 ```
 
 Configure and build (see [Boost Source Tree](#boost-source-tree) for how to obtain Boost):
@@ -109,7 +116,7 @@ cmake --build build --config Release
 
 Install build tools via Homebrew:
 ```bash
-brew install cmake ninja sqlite
+brew install cmake ninja sqlite grpc spdlog
 ```
 
 Configure and build:
@@ -127,7 +134,7 @@ cmake --build build
 #### Linux (Fedora)
 
 ```bash
-sudo dnf install cmake ninja-build gcc-c++ clang sqlite-devel git
+sudo dnf install cmake ninja-build gcc-c++ clang sqlite-devel git grpc-devel grpc-plugins spdlog-devel
 ```
 
 Configure and build:
@@ -145,7 +152,8 @@ cmake --build build
 #### Linux (Ubuntu / Debian)
 
 ```bash
-sudo apt install cmake ninja-build g++ clang libsqlite3-dev git
+sudo apt install cmake ninja-build g++ clang libsqlite3-dev git \
+     libgrpc++-dev protobuf-compiler-grpc libspdlog-dev
 ```
 
 Configure and build:
@@ -164,17 +172,24 @@ cmake --build build
 
 ### Build Output
 
-After a successful build, you will find two binaries in the `build/` directory:
-- `build/apps/rps-pluginscanorchestrator/rps-pluginscanorchestrator` (or `.exe`)
-- `build/apps/rps-pluginscanner/rps-pluginscanner` (or `.exe`)
+After a successful build, you will find three binaries in the `build/` directory:
+- `build/apps/rps-pluginscanorchestrator/rps-pluginscanorchestrator` (or `.exe`) — standalone CLI
+- `build/apps/rps-pluginscanner/rps-pluginscanner` (or `.exe`) — scanner worker
+- `build/apps/rps-server/rps-server` (or `.exe`) — gRPC server
 
-Both binaries must reside in the **same directory** for the orchestrator to auto-locate the scanner worker.
+The orchestrator and server both auto-locate `rps-pluginscanner` relative to their own path.
 
 ## Usage
 
-You only need to interact with the **Orchestrator**. The orchestrator will automatically spawn the worker scanner processes as needed.
+RPS can be used in two ways:
+1. **Standalone CLI** (`rps-pluginscanorchestrator`) — run scans directly from the command line.
+2. **gRPC Server** (`rps-server`) — a long-lived daemon that accepts scan requests from any language client. See [gRPC Server](#grpc-server) and [Python TUI Client](#python-tui-client) below.
 
-### Command Line Arguments
+### Standalone CLI
+
+The orchestrator will automatically spawn the worker scanner processes as needed.
+
+#### Command Line Arguments
 
 ```text
 Orchestrator Options:
@@ -320,6 +335,75 @@ Scan results are stored in a SQLite database (default: `rps-plugins.db`) with WA
 | `aax_plugins` | AAX-specific variant data (1:N with `plugins`): manufacturer/product/plugin IDs (FourCC + numeric), effect ID, plugin type, stem formats (input/output/sidechain) |
 | `plugins_skipped` | Plugins that are not scannable (e.g., empty bundles, no loadable binary): `path`, `format`, `reason`, `file_mtime` |
 | `plugins_blocked` | Plugins that exhausted all retries or timed out: `path`, `format`, `reason`, `file_mtime` |
+| `vst3_classes` | VST3 multi-class entries (1:N with `plugins`): `class_index`, `name`, `uid`, `category`, `vendor`, `version` |
+
+## gRPC Server
+
+`rps-server` exposes the scan engine as a gRPC service, making RPS usable from any language.
+
+### Server CLI
+
+```text
+RPS Server Options:
+  -h [ --help ]                    Produce help message
+  -p [ --port ] arg (=50051)       gRPC listen port
+     --db arg (=rps-plugins.db)    Path to the SQLite database file
+  -b [ --scanner-bin ] arg         Path to the scanner binary
+     --log arg (=rps-server.log)   Log file path
+     --log-level arg (=info)       Log level: trace, debug, info, warn, error
+```
+
+### gRPC API
+
+Defined in `proto/rps.proto`:
+
+| RPC | Type | Description |
+|---|---|---|
+| `StartScan` | Server streaming | Start a scan, returns a stream of `ScanEvent` messages until completion |
+| `StopScan` | Unary | Stop a running scan gracefully |
+| `GetStatus` | Unary | Query server state (idle/scanning), uptime, db path |
+| `Shutdown` | Unary | Graceful server shutdown |
+
+Only one scan at a time is allowed. `StartScan` returns `ALREADY_EXISTS` if a scan is in progress.
+
+### Starting the Server
+
+```bash
+# Start with defaults (port 50051, rps-plugins.db)
+./rps-server
+
+# Custom options
+./rps-server --port 50051 --db my-plugins.db --log-level debug
+```
+
+## Python TUI Client
+
+A fully functional example client lives in `examples/python/`. It auto-spawns and kills `rps-server`, and displays rich per-worker progress bars using the `rich` library.
+
+### Setup
+
+```bash
+cd examples/python
+python -m venv .venv
+source .venv/bin/activate   # or .venv\Scripts\activate on Windows
+pip install -e .
+
+# Generate gRPC stubs (generates and patches imports)
+python generate_proto.py
+```
+
+### Usage
+
+```bash
+# Scan with TUI (auto-spawns server)
+python -m rps_client scan --formats vst3,clap --limit 50
+
+# Connect to an already-running server
+python -m rps_client --server localhost:50051 scan
+python -m rps_client --server localhost:50051 status
+```
+
+See `examples/python/README.md` for full documentation.
 
 ## Documentation
 

@@ -15,3 +15,9 @@ libs/rps-core/include/rps/core/vstsdk2.4/*
 MIOConsole3d.log
 rps-plugins.db-shm
 rps-plugins.db-wal
+# Python example client artifacts
+__pycache__/
+*.egg-info/
+examples/python/.venv/
+examples/python/rps_client/proto/rps_pb2*.py
+examples/python/rps-server.log
