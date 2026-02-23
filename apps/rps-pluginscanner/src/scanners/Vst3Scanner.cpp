@@ -31,6 +31,9 @@
 #include <pluginterfaces/base/ipluginbase.h>
 #include <pluginterfaces/vst/ivstcomponent.h>
 #include <pluginterfaces/vst/ivstaudioprocessor.h>
+#include <pluginterfaces/vst/ivsteditcontroller.h>
+#include <pluginterfaces/vst/ivsthostapplication.h>
+#include <cmath>
 
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop
@@ -52,6 +55,13 @@ namespace Steinberg {
     const FUID IPluginFactory::iid(0x7A4D811C, 0x52114A1F, 0xAED9D2EE, 0x0B43BF9F);
     const FUID IPluginFactory2::iid(0x0007B650, 0xF24B4C0B, 0xA464EDB9, 0xF00B2ABB);
     const FUID IPluginFactory3::iid(0x4555A2AB, 0xC1234E57, 0x9B122910, 0x36878931);
+    const FUID FUnknown::iid(0x00000000, 0x00000000, 0xC0000000, 0x00000046);
+    namespace Vst {
+        const FUID IComponent::iid(0xE831FF31, 0xF2D54301, 0x928EBBEE, 0x25697802);
+        const FUID IEditController::iid(0xDCD7BBE3, 0x7742448D, 0xA874AACC, 0x979C759E);
+        const FUID IComponentHandler::iid(0x93A0BEA3, 0x0BD045DB, 0x8E890B0C, 0xC1E46AC6);
+        const FUID IHostApplication::iid(0x58E595CC, 0xDB2D4969, 0x8B6AAF8C, 0x36A664E5);
+    }
 }
 
 extern bool g_verbose;
@@ -59,6 +69,60 @@ extern bool g_verbose;
 namespace rps::scanner {
 
 namespace {
+
+// ---------------------------------------------------------------------------
+// UTF-16 (String128) to UTF-8 converter — needed for ParameterInfo.title, BusInfo.name
+// ---------------------------------------------------------------------------
+static std::string utf16ToUtf8(const Steinberg::Vst::TChar* src) {
+    if (!src || src[0] == 0) return {};
+    std::string out;
+    for (size_t i = 0; src[i] != 0; ++i) {
+        char16_t c = static_cast<char16_t>(src[i]);
+        if (c < 0x80) {
+            out += static_cast<char>(c);
+        } else if (c < 0x800) {
+            out += static_cast<char>(0xC0 | (c >> 6));
+            out += static_cast<char>(0x80 | (c & 0x3F));
+        } else {
+            out += static_cast<char>(0xE0 | (c >> 12));
+            out += static_cast<char>(0x80 | ((c >> 6) & 0x3F));
+            out += static_cast<char>(0x80 | (c & 0x3F));
+        }
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// Minimal host context for IComponent::initialize / IEditController::initialize
+// ---------------------------------------------------------------------------
+class ScannerHostContext : public Steinberg::Vst::IHostApplication {
+public:
+    Steinberg::tresult PLUGIN_API queryInterface(const Steinberg::TUID _iid, void** obj) override {
+        if (Steinberg::FUnknownPrivate::iidEqual(_iid, Steinberg::FUnknown::iid.toTUID()) ||
+            Steinberg::FUnknownPrivate::iidEqual(_iid, Steinberg::Vst::IHostApplication::iid.toTUID())) {
+            addRef();
+            *obj = static_cast<Steinberg::Vst::IHostApplication*>(this);
+            return Steinberg::kResultOk;
+        }
+        *obj = nullptr;
+        return Steinberg::kNoInterface;
+    }
+    Steinberg::uint32 PLUGIN_API addRef() override { return 1; }
+    Steinberg::uint32 PLUGIN_API release() override { return 1; }
+
+    Steinberg::tresult PLUGIN_API getName(Steinberg::Vst::String128 name) override {
+        const char16_t src[] = u"rps-pluginscanner";
+        std::memcpy(name, src, sizeof(src));
+        return Steinberg::kResultOk;
+    }
+    Steinberg::tresult PLUGIN_API createInstance(Steinberg::TUID /*cid*/, Steinberg::TUID /*_iid*/,
+                                                  void** obj) override {
+        *obj = nullptr;
+        return Steinberg::kNoInterface;
+    }
+};
+
+static ScannerHostContext g_hostContext;
 
 // Resolves a .vst3 path to the actual loadable binary.
 // If given a bundle directory (.vst3/), navigates into Contents/{arch}/ to find the binary.
@@ -730,24 +794,153 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
     }
 
     result.scanMethod = "factory";
-
-    // I/O counts and parameters require full host instantiation (IComponent::initialize,
-    // getBusInfo, IEditController). Not available from factory metadata alone.
     result.numInputs = 0;
     result.numOutputs = 0;
+
+    // -----------------------------------------------------------------------
+    // Instantiate IComponent to get bus info (I/O channels) and IEditController
+    // for parameter extraction. This is optional — if it fails we still return
+    // the factory-level metadata above.
+    // -----------------------------------------------------------------------
+    progressCb(70, "Instantiating component...");
+    logStage("Creating IComponent instance...");
+
+    Steinberg::Vst::IComponent* component = nullptr;
+    Steinberg::tresult createRes = factory->createInstance(
+        classInfo.cid,
+        Steinberg::Vst::IComponent::iid.toTUID(),
+        reinterpret_cast<void**>(&component));
+
+    if (createRes == Steinberg::kResultOk && component) {
+        logStage("IComponent created. Calling initialize()...");
+        Steinberg::tresult initRes = component->initialize(
+            static_cast<Steinberg::FUnknown*>(&g_hostContext));
+
+        if (initRes == Steinberg::kResultOk) {
+            logStage("IComponent initialized.");
+            result.scanMethod = "component";
+
+            // --- Extract audio bus info (I/O channel counts) ---
+            progressCb(75, "Querying audio buses...");
+            {
+                using namespace Steinberg::Vst;
+                Steinberg::int32 numInputBuses = component->getBusCount(kAudio, kInput);
+                Steinberg::int32 numOutputBuses = component->getBusCount(kAudio, kOutput);
+                logStage("Audio buses: " + std::to_string(numInputBuses) + " input, "
+                         + std::to_string(numOutputBuses) + " output.");
+
+                Steinberg::int32 totalInputChannels = 0;
+                for (Steinberg::int32 i = 0; i < numInputBuses; ++i) {
+                    BusInfo bus{};
+                    if (component->getBusInfo(kAudio, kInput, i, bus) == Steinberg::kResultOk) {
+                        totalInputChannels += bus.channelCount;
+                        if (g_verbose) {
+                            std::cerr << "[vst3] " << pluginPath.filename().string()
+                                      << ":   Input bus " << i << ": \""
+                                      << utf16ToUtf8(bus.name) << "\" ("
+                                      << bus.channelCount << " ch, "
+                                      << (bus.busType == kMain ? "main" : "aux") << ")"
+                                      << std::endl;
+                        }
+                    }
+                }
+
+                Steinberg::int32 totalOutputChannels = 0;
+                for (Steinberg::int32 i = 0; i < numOutputBuses; ++i) {
+                    BusInfo bus{};
+                    if (component->getBusInfo(kAudio, kOutput, i, bus) == Steinberg::kResultOk) {
+                        totalOutputChannels += bus.channelCount;
+                        if (g_verbose) {
+                            std::cerr << "[vst3] " << pluginPath.filename().string()
+                                      << ":   Output bus " << i << ": \""
+                                      << utf16ToUtf8(bus.name) << "\" ("
+                                      << bus.channelCount << " ch, "
+                                      << (bus.busType == kMain ? "main" : "aux") << ")"
+                                      << std::endl;
+                        }
+                    }
+                }
+
+                result.numInputs = static_cast<uint32_t>(totalInputChannels);
+                result.numOutputs = static_cast<uint32_t>(totalOutputChannels);
+                logStage("Total audio I/O: " + std::to_string(result.numInputs) + " in, "
+                         + std::to_string(result.numOutputs) + " out.");
+            }
+
+            // --- Extract parameters via IEditController ---
+            progressCb(80, "Querying parameters...");
+            logStage("Attempting to get IEditController...");
+
+            Steinberg::Vst::IEditController* controller = nullptr;
+
+            // Strategy 1: Query IEditController directly from the component
+            // (single-component design where processor and controller are unified)
+            if (component->queryInterface(Steinberg::Vst::IEditController::iid.toTUID(),
+                                          reinterpret_cast<void**>(&controller)) == Steinberg::kResultOk
+                && controller) {
+                logStage("IEditController obtained via queryInterface (single-component).");
+            } else {
+                // Strategy 2: Get separate controller class ID and create it from factory
+                controller = nullptr;
+                Steinberg::TUID controllerCid;
+                if (component->getControllerClassId(controllerCid) == Steinberg::kResultOk) {
+                    logStage("Separate controller class found. Creating instance...");
+                    Steinberg::tresult ctrlRes = factory->createInstance(
+                        reinterpret_cast<Steinberg::FIDString>(controllerCid),
+                        Steinberg::Vst::IEditController::iid.toTUID(),
+                        reinterpret_cast<void**>(&controller));
+                    if (ctrlRes == Steinberg::kResultOk && controller) {
+                        logStage("Separate IEditController created. Calling initialize()...");
+                        controller->initialize(
+                            static_cast<Steinberg::FUnknown*>(&g_hostContext));
+                        logStage("Separate IEditController initialized.");
+                    } else {
+                        controller = nullptr;
+                        logStage("Failed to create separate IEditController.");
+                    }
+                } else {
+                    logStage("No controller class ID available.");
+                }
+            }
+
+            if (controller) {
+                Steinberg::int32 paramCount = controller->getParameterCount();
+                logStage("IEditController reports " + std::to_string(paramCount) + " parameter(s).");
+
+                for (Steinberg::int32 i = 0; i < paramCount; ++i) {
+                    Steinberg::Vst::ParameterInfo pinfo{};
+                    if (controller->getParameterInfo(i, pinfo) == Steinberg::kResultOk) {
+                        std::string paramName = utf16ToUtf8(pinfo.title);
+                        double defVal = pinfo.defaultNormalizedValue;
+                        if (!std::isfinite(defVal)) defVal = 0.0;
+
+                        result.parameters.push_back({
+                            static_cast<uint32_t>(pinfo.id),
+                            paramName.empty() ? ("Param " + std::to_string(pinfo.id)) : paramName,
+                            defVal
+                        });
+                    }
+                }
+                logStage("Extracted " + std::to_string(result.parameters.size()) + " parameter(s).");
+            } else {
+                logStage("No IEditController available — skipping parameter extraction.");
+            }
+        } else {
+            logStage("IComponent::initialize() failed (tresult=" + std::to_string(initRes)
+                     + "). Using factory-only metadata.");
+        }
+    } else {
+        logStage("createInstance for IComponent failed (tresult=" + std::to_string(createRes)
+                 + "). Using factory-only metadata.");
+    }
 
     progressCb(90, "Metadata extraction complete.");
     logStage("Metadata extraction complete — returning result before cleanup.");
 
-    // IMPORTANT: Return the result BEFORE cleanup. Some plugins (e.g. LX480 v4)
-    // crash with ACCESS_VIOLATION during factory->release(), ExitDll(), or
-    // FreeLibrary(). Since the scanner process exits immediately after returning,
-    // the OS reclaims all resources. Skipping explicit cleanup is safe and
-    // prevents losing a perfectly good scan result to a buggy destructor.
-    //
-    // The caller (main.cpp) sends the result via IPC, then the process exits.
-    // On exit, Windows automatically: unloads all DLLs, frees all memory,
-    // closes all handles.
+    // IMPORTANT: Skip all cleanup (component->terminate, factory->release, ExitDll,
+    // FreeLibrary). Some plugins (e.g. LX480 v4) crash with ACCESS_VIOLATION during
+    // cleanup. The scanner process exits immediately after returning — the OS reclaims
+    // all resources.
 
     progressCb(100, "Done.");
     return result;

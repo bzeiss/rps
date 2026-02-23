@@ -163,12 +163,31 @@ int main(int argc, char* argv[]) {
         logStage("Starting scan with " + activeScanner->getFormatName() + " scanner...");
         if (activeScanner) {
             try {
+                auto t0 = std::chrono::steady_clock::now();
                 auto result = activeScanner->scan(pluginPath, progressCb);
-                
+                auto t1 = std::chrono::steady_clock::now();
+
+                if (g_verbose) {
+                    auto scanMs = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+                    std::cerr << "[scanner] " << pluginPath.filename().string()
+                              << ": scan() returned in " << scanMs << "ms"
+                              << " (" << result.parameters.size() << " params)" << std::endl;
+                }
+
                 rps::ipc::Message resMsg;
                 resMsg.type = rps::ipc::MessageType::ScanResult;
                 resMsg.payload = result;
-                connection->sendMessage(resMsg);
+
+                auto t2 = std::chrono::steady_clock::now();
+                bool sent = connection->sendMessage(resMsg);
+                auto t3 = std::chrono::steady_clock::now();
+
+                if (g_verbose) {
+                    auto sendMs = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
+                    std::cerr << "[scanner] " << pluginPath.filename().string()
+                              << ": IPC sendMessage " << (sent ? "OK" : "FAILED")
+                              << " in " << sendMs << "ms" << std::endl;
+                }
             } catch (const std::exception& scanErr) {
                 std::string what = scanErr.what();
                 std::cerr << "Scanner Fatal Error: " << what << "\n";
@@ -184,10 +203,15 @@ int main(int argc, char* argv[]) {
 
     } catch (const std::exception& e) {
         std::cerr << "Scanner Fatal Error: " << e.what() << "\n";
-        return 1;
+        // Fall through to _exit below
     }
 
-    return 0;
+    // Use _exit() to terminate immediately, bypassing atexit handlers,
+    // static destructors, and — critically — DLL_PROCESS_DETACH callbacks.
+    // Many plugins spin up background threads and join them in DLL_PROCESS_DETACH,
+    // which can hang the process for 30-60+ seconds after the scan is already done.
+    // Since all IPC data has been sent, there's nothing left to clean up gracefully.
+    _exit(0);
 }
 
 

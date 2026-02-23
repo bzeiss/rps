@@ -58,8 +58,14 @@ bool MessageQueueConnection::sendMessage(const Message& msg) {
         std::string serialized = boost::json::serialize(jv);
 
         if (serialized.size() > MAX_MSG_SIZE) {
-            std::cerr << "IPC Error: Message too large to send (" << serialized.size() << " bytes)\n";
+            std::cerr << "IPC Error: Message too large to send (" << serialized.size()
+                      << " bytes, max " << MAX_MSG_SIZE << ")\n";
             return false;
+        }
+
+        // Log payload size for diagnostics (only for large messages)
+        if (serialized.size() > 65536) {
+            std::cerr << "[ipc] Sending large message: " << serialized.size() << " bytes\n";
         }
 
         m_txQueue->send(serialized.data(), serialized.size(), 0);

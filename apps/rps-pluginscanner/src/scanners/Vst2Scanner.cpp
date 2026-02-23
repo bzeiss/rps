@@ -14,11 +14,24 @@
 #include <cstring>
 #include <cmath>
 #include <algorithm>
+#include <chrono>
 
-// VST2.4 SDK headers
+// VST2.4 SDK headers — suppress warnings from third-party code
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
+#ifdef __clang__
+#pragma GCC diagnostic ignored "-Winvalid-utf8"
+#endif
+#endif
+
 #define VST_2_4_EXTENSIONS 1
 #include "pluginterfaces/vst2.x/aeffect.h"
 #include "pluginterfaces/vst2.x/aeffectx.h"
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 extern bool g_verbose;
 
@@ -228,10 +241,12 @@ rps::ipc::ScanResult Vst2Scanner::scan(const boost::filesystem::path& pluginPath
              + ", numInputs=" + std::to_string(effect->numInputs)
              + ", numOutputs=" + std::to_string(effect->numOutputs));
 
-    // Call effOpen to initialize the plugin
-    logStage("Calling effOpen...");
-    effect->dispatcher(effect, effOpen, 0, 0, nullptr, 0.0f);
-    logStage("effOpen done.");
+    // NOTE: We intentionally do NOT call effOpen. The AEffect struct fields and
+    // dispatcher metadata opcodes (effGetEffectName, effGetVendorString, etc.) are
+    // populated by the plugin constructor during VSTPluginMain. Calling effOpen
+    // triggers full initialization (license checks, sample loading, GUI setup)
+    // which can take seconds to minutes for some plugins (Waves, PatchWork, etc.).
+    // Skipping effOpen matches what fast scanners (JUCE, Bitwig) do.
 
     // --- Extract metadata ---
     progressCb(50, "Extracting metadata...");
@@ -319,21 +334,47 @@ rps::ipc::ScanResult Vst2Scanner::scan(const boost::filesystem::path& pluginPath
     VstInt32 numParams = effect->numParams;
     logStage("Plugin reports " + std::to_string(numParams) + " parameter(s).");
 
-    for (VstInt32 i = 0; i < numParams; ++i) {
-        char paramName[kVstMaxParamStrLen + 1] = {};
-        effect->dispatcher(effect, effGetParamName, i, 0, paramName, 0.0f);
+    {
+        auto paramStart = std::chrono::steady_clock::now();
+        for (VstInt32 i = 0; i < numParams; ++i) {
+            if (g_verbose && i == 0) {
+                logStage("Extracting param 0/" + std::to_string(numParams) + "...");
+            }
 
-        float defVal = effect->getParameter(effect, i);
-        // Sanitize non-finite values
-        if (!std::isfinite(static_cast<double>(defVal))) defVal = 0.0f;
+            char paramName[kVstMaxParamStrLen + 1] = {};
+            effect->dispatcher(effect, effGetParamName, i, 0, paramName, 0.0f);
 
-        result.parameters.push_back({
-            static_cast<uint32_t>(i),
-            paramName[0] ? paramName : ("Param " + std::to_string(i)),
-            static_cast<double>(defVal)
-        });
+            float defVal = effect->getParameter(effect, i);
+            // Sanitize non-finite values
+            if (!std::isfinite(static_cast<double>(defVal))) defVal = 0.0f;
+
+            result.parameters.push_back({
+                static_cast<uint32_t>(i),
+                paramName[0] ? paramName : ("Param " + std::to_string(i)),
+                static_cast<double>(defVal)
+            });
+
+            // Log slow parameter extraction (every 10 params or if a single param takes >500ms)
+            if (g_verbose) {
+                auto now = std::chrono::steady_clock::now();
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - paramStart).count();
+                if (elapsed > 2000 && i > 0) {
+                    logStage("WARNING: param extraction slow — " + std::to_string(i + 1) + "/"
+                             + std::to_string(numParams) + " done in " + std::to_string(elapsed) + "ms");
+                    // Abort parameter extraction if it's taking too long (>5s)
+                    if (elapsed > 5000) {
+                        logStage("Aborting parameter extraction after " + std::to_string(i + 1)
+                                 + " params (" + std::to_string(elapsed) + "ms). Plugin is too slow.");
+                        break;
+                    }
+                }
+            }
+        }
+        auto paramEnd = std::chrono::steady_clock::now();
+        auto paramMs = std::chrono::duration_cast<std::chrono::milliseconds>(paramEnd - paramStart).count();
+        logStage("Extracted " + std::to_string(result.parameters.size()) + " parameter(s) in "
+                 + std::to_string(paramMs) + "ms.");
     }
-    logStage("Extracted " + std::to_string(result.parameters.size()) + " parameter(s).");
 
     progressCb(90, "Metadata extraction complete.");
     logStage("Metadata extraction complete — returning result before cleanup.");
