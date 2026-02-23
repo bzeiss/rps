@@ -31,7 +31,7 @@ int main(int argc, char* argv[]) {
         ("scan,s", po::value<std::string>(), "Single file to scan")
         ("scanner-bin,b", po::value<std::string>()->default_value("rps-pluginscanner.exe"), "Path to the scanner binary")
         ("timeout,t", po::value<int>()->default_value(300000), "Timeout in ms per plugin (0 = no timeout, default: 5 min)")
-        ("jobs,j", po::value<size_t>()->default_value(std::thread::hardware_concurrency()), "Number of parallel workers")
+        ("jobs,j", po::value<size_t>()->default_value(6), "Number of parallel scanner workers (default: 6)")
         ("formats,f", po::value<std::string>()->default_value("all"), "Comma-separated list of formats to scan (e.g. vst3,clap) or 'all'")
         ("filter", po::value<std::string>(), "Only scan plugins whose filename contains this string")
         ("limit,l", po::value<size_t>()->default_value(0), "Maximum number of plugins to scan (0 = unlimited)")

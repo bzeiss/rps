@@ -35,6 +35,10 @@ public:
     // Whether this format's plugin "file" is actually a directory bundle (e.g. macOS .component)
     // Helps the discovery scanner know when to stop recursing
     virtual bool isBundleDirectory() const = 0;
+    
+    // Whether this format requires explicit opt-in (excluded from "all")
+    // Used for deprecated formats like VST2 that shouldn't be scanned by default
+    virtual bool isExplicitOnly() const { return false; }
 };
 
 class FormatRegistry {

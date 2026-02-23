@@ -34,7 +34,7 @@ We adhere to a set of strict constraints to ensure maximum compatibility, adopti
   - The C++ Standard Template Library (STL).
   - **Boost 1.90** (specifically `Boost.Process`, `Boost.Interprocess`, `Boost.JSON`, `Boost.Program_options`, `Boost.Filesystem`).
   - **SQLite3** (for the final output database).
-  - Plugin SDK Headers (VST3, CLAP, LV2, AU, AAX).
+  - Plugin SDK Headers (VST3, CLAP, LV2, AU, AAX, and optionally VST2.4).
 - No other third-party frameworks (e.g., JUCE, gRPC, Protobuf, nlohmann/json) are permitted.
 
 ### 2.1 Dependency Management
@@ -51,6 +51,24 @@ The `-D` flag takes priority over the environment variable. If neither is set, C
 Only the required Boost libraries are compiled (via `BOOST_INCLUDE_LIBRARIES`), keeping build times reasonable.
 
 On **Windows** (non-MSVC), the C/C++ runtimes are statically linked (`-static -static-libgcc -static-libstdc++`) to produce standalone executables with no DLL dependencies beyond the Windows system libraries.
+
+### 2.2 Optional: VST2.4 SDK
+
+VST2 scanning is gated behind a **compile-time CMake option** (`RPS_ENABLE_VST2`, default OFF) because the VST2.4 SDK is proprietary and cannot be redistributed.
+
+When enabled, the build expects the SDK at `libs/rps-core/include/rps/core/vstsdk2.4/` (or a custom path via `-DRPS_VST2_SDK_PATH`). The key header is `pluginterfaces/vst2.x/aeffect.h`.
+
+```bash
+# Enable VST2 with default SDK location:
+cmake -G Ninja -DRPS_ENABLE_VST2=ON -B build
+
+# Enable VST2 with custom SDK path:
+cmake -G Ninja -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=/path/to/vstsdk2.4 -B build
+```
+
+When OFF, no VST2 code is compiled or linked. The compile definition `RPS_VST2_ENABLED` controls `#ifdef` guards in `Vst2Scanner.hpp`, `Vst2Scanner.cpp`, and `main.cpp`.
+
+At runtime, VST2 is **excluded from `--formats all`** via the `isExplicitOnly()` trait. Users must explicitly pass `--formats vst2` to scan VST2 plugins. This prevents accidentally scanning thousands of unrelated `.dll` files in legacy VST2 directories.
 
 ---
 
@@ -99,5 +117,5 @@ To ensure the orchestrator and scanner binaries are portable and do not fail wit
 
 The immediate next goals are:
 1. **Phase 3 (OS Formats)**: Implement scanners for OS-specific formats (**AU** on macOS via CoreAudio, **LV2** on Linux/Windows).
-2. **Phase 3 (Legacy Formats)**: Implement legacy formats (**VST2**, **AAX**). Note that VST2 requires deprecated Steinberg SDK headers, and AAX requires the PACE/Avid SDK.
+2. **Phase 3 (Legacy Formats)**: ~~VST2~~ (done — opt-in via `RPS_ENABLE_VST2`). **AAX** still requires the PACE/Avid SDK.
 3. **Phase 4**: Expand the SQLite database to store even more plugin details (e.g., bus arrangements, preset lists) if exposed by the SDKs.

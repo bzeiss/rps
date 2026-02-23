@@ -125,6 +125,7 @@ class Vst2Traits : public IFormatTraits {
 public:
     PluginFormat getFormat() const override { return PluginFormat::VST2; }
     std::string getName() const override { return "vst2"; }
+    bool isExplicitOnly() const override { return true; }
     std::string getExtension() const override { 
 #if defined(_WIN32)
         return ".dll";
@@ -287,7 +288,8 @@ std::vector<const IFormatTraits*> FormatRegistry::parseFormats(const std::string
     std::vector<const IFormatTraits*> result;
     if (formatList.empty() || formatList == "all") {
         for (const auto& t : m_traits) {
-            result.push_back(t.get());
+            if (!t->isExplicitOnly())
+                result.push_back(t.get());
         }
         return result;
     }

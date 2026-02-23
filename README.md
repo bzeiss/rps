@@ -182,9 +182,10 @@ Orchestrator Options:
   -d [ --scan-dir ] arg                 Directories to recursively scan for plugins
   -s [ --scan ] arg                     Single file to scan
   -b [ --scanner-bin ] arg              Path to the scanner binary (default: rps-pluginscanner.exe)
-  -t [ --timeout ] arg (=10000)         Timeout in milliseconds for the scanner to respond
-  -j [ --jobs ] arg                     Number of parallel workers (default: system CPU core count)
+  -t [ --timeout ] arg (=300000)        Timeout in ms per plugin (default: 5 min)
+  -j [ --jobs ] arg (=6)                Number of parallel scanner workers (default: 6)
   -f [ --formats ] arg (=all)           Comma-separated list of formats to scan (e.g. vst3,clap) or 'all'
+  -r [ --retries ] arg (=3)             Number of retries for failed plugins (0 = no retries)
      --filter arg                       Only scan plugins whose filename contains this string
   -l [ --limit ] arg (=0)               Maximum number of plugins to scan (0 = unlimited)
   -v [ --verbose ]                      Enable verbose scanner output (plugin debug logs)
@@ -194,7 +195,7 @@ Orchestrator Options:
 ### Examples
 
 **1. Scan the default OS plugin directories for all formats**
-If you run the orchestrator without any path arguments, it will automatically search the standard VST3, CLAP, VST2, AU, and AAX folders for your specific OS.
+If you run the orchestrator without any path arguments, it will automatically search the standard VST3, CLAP, AU, and AAX folders for your specific OS. VST2 is excluded from `all` and must be explicitly requested (see below).
 ```bash
 ./rps-pluginscanorchestrator
 ```
@@ -204,7 +205,14 @@ If you run the orchestrator without any path arguments, it will automatically se
 ./rps-pluginscanorchestrator --formats vst3,clap
 ```
 
-**3. Scan a specific directory**
+**3. Scan VST2 plugins (requires VST2 build — see [Optional: VST2.4 Support](#optional-vst24-support))**
+```bash
+# VST2 must be explicitly requested — it is never included in --formats all
+./rps-pluginscanorchestrator --formats vst2
+./rps-pluginscanorchestrator --formats vst3,clap,vst2
+```
+
+**4. Scan a specific directory**
 ```bash
 # Windows
 rps-pluginscanorchestrator.exe --scan-dir "C:\Program Files\Common Files\VST3"
@@ -213,22 +221,22 @@ rps-pluginscanorchestrator.exe --scan-dir "C:\Program Files\Common Files\VST3"
 ./rps-pluginscanorchestrator --scan-dir "/Library/Audio/Plug-Ins/VST3"
 ```
 
-**4. Filter plugins by name and limit the count (useful for debugging)**
+**5. Filter plugins by name and limit the count (useful for debugging)**
 ```bash
 rps-pluginscanorchestrator.exe --formats vst3 --filter "FabFilter" --limit 10
 ```
 
-**5. Scan multiple directories with a specific number of workers**
+**6. Scan multiple directories with a specific number of workers**
 ```bash
 rps-pluginscanorchestrator.exe --scan-dir "C:\Folder1" "D:\Folder2" --jobs 4
 ```
 
-**6. Scan a single plugin with verbose debug output**
+**7. Scan a single plugin with verbose debug output**
 ```bash
 rps-pluginscanorchestrator.exe --scan "C:\VstPlugins\Massive.dll" --verbose
 ```
 
-**7. Scan with a longer timeout (for slow iLok-protected plugins)**
+**8. Scan with a longer timeout (for slow iLok-protected plugins)**
 ```bash
 rps-pluginscanorchestrator.exe --timeout 30000
 ```
@@ -256,6 +264,29 @@ If no paths are provided, RPS will automatically search the following directorie
 - `/usr/lib/clap`, `/usr/local/lib/clap`, `~/.clap`
 - `/usr/lib/lv2`, `/usr/local/lib/lv2`, `~/.lv2`
 - `/usr/lib/vst`, `/usr/local/lib/vst`, `~/.vst`
+
+## Optional: VST2.4 Support
+
+VST2 scanning is an **opt-in compile-time feature** because the VST2.4 SDK is proprietary and cannot be redistributed. It is disabled by default.
+
+### Enabling VST2
+
+1. **Obtain the VST2.4 SDK** from Steinberg (no longer publicly available — you must have a prior license agreement).
+2. **Place the SDK** so that `pluginterfaces/vst2.x/aeffect.h` exists at:
+   ```
+   libs/rps-core/include/rps/core/vstsdk2.4/pluginterfaces/vst2.x/aeffect.h
+   ```
+3. **Enable the feature** at configure time:
+   ```bash
+   # Via CMake flag:
+   cmake -G Ninja -DRPS_ENABLE_VST2=ON -B build
+
+   # Or with a custom SDK path:
+   cmake -G Ninja -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=/path/to/vstsdk2.4 -B build
+   ```
+4. **Build normally**: `cmake --build build`
+
+When `RPS_ENABLE_VST2` is OFF (the default), no VST2 SDK code is compiled or linked. The `--formats all` flag **never** includes VST2 — you must explicitly pass `--formats vst2`.
 
 ## Documentation
 

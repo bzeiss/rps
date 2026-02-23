@@ -18,6 +18,9 @@
 #include <rps/scanner/IPluginFormatScanner.hpp>
 #include <rps/scanner/ClapScanner.hpp>
 #include <rps/scanner/Vst3Scanner.hpp>
+#ifdef RPS_VST2_ENABLED
+#include <rps/scanner/Vst2Scanner.hpp>
+#endif
 #include <rps/core/FormatTraits.hpp>
 
 bool g_verbose = false;
@@ -27,6 +30,9 @@ std::vector<std::unique_ptr<IPluginFormatScanner>> ScannerFactory::createAllScan
     std::vector<std::unique_ptr<IPluginFormatScanner>> scanners;
     scanners.push_back(std::make_unique<ClapScanner>());
     scanners.push_back(std::make_unique<Vst3Scanner>());
+#ifdef RPS_VST2_ENABLED
+    scanners.push_back(std::make_unique<Vst2Scanner>());
+#endif
     // Add AU, LV2 here later
     return scanners;
 }

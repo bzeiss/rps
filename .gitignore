@@ -9,4 +9,6 @@ vst3_full_scan.log
 patch.json
 rps-plugins.db-journal
 esp_jit.log
+
 libs/rps-core/include/rps/core/vstsdk2.4/*
+

@@ -1,13 +1,24 @@
-add_executable(rps-pluginscanner 
+set(SCANNER_SOURCES
     src/main.cpp
     src/scanners/ClapScanner.cpp
     src/scanners/Vst3Scanner.cpp
 )
 
+if(RPS_ENABLE_VST2)
+    list(APPEND SCANNER_SOURCES src/scanners/Vst2Scanner.cpp)
+endif()
+
+add_executable(rps-pluginscanner ${SCANNER_SOURCES})
+
 target_include_directories(rps-pluginscanner PRIVATE 
     include
     ${CMAKE_SOURCE_DIR}/libs/rps-core/include/rps/core/vst3sdk
 )
+
+if(RPS_ENABLE_VST2)
+    target_include_directories(rps-pluginscanner PRIVATE ${RPS_VST2_SDK_PATH})
+    target_compile_definitions(rps-pluginscanner PRIVATE RPS_VST2_ENABLED)
+endif()
 
 target_link_libraries(rps-pluginscanner
     PRIVATE

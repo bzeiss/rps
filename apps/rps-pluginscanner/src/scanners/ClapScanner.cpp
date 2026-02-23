@@ -138,6 +138,7 @@ struct LibHandle {
     void* h = nullptr;
     void unload() { if (h) { dlclose(h); h = nullptr; } }
 #endif
+    void release() { h = nullptr; } // Prevent cleanup on destruction
     ~LibHandle() { unload(); }
 };
 
@@ -216,17 +217,10 @@ rps::ipc::ScanResult ClapScanner::scan(const boost::filesystem::path& pluginPath
     }
     logStage("entry->init() succeeded.");
 
-    // From here on, we must call entry->deinit() before unloading
-    auto cleanup = [&]() {
-        logStage("Calling entry->deinit()...");
-        entry->deinit();
-    };
-
     progressCb(30, "Querying plugin factory...");
     logStage("Querying plugin factory...");
     const void* factoryPtr = entry->get_factory(CLAP_PLUGIN_FACTORY_ID);
     if (!factoryPtr) {
-        cleanup();
         throw std::runtime_error("CLAP library does not provide a plugin factory.");
     }
 
@@ -235,7 +229,6 @@ rps::ipc::ScanResult ClapScanner::scan(const boost::filesystem::path& pluginPath
     logStage("Factory reports " + std::to_string(numPlugins) + " plugin(s).");
 
     if (numPlugins == 0) {
-        cleanup();
         throw std::runtime_error("SKIP: CLAP factory contains no plugins.");
     }
 
@@ -246,7 +239,6 @@ rps::ipc::ScanResult ClapScanner::scan(const boost::filesystem::path& pluginPath
 
     const clap_plugin_descriptor* desc = factory->get_plugin_descriptor(factory, 0);
     if (!desc) {
-        cleanup();
         throw std::runtime_error("CLAP factory returned null descriptor for index 0.");
     }
 
@@ -349,19 +341,22 @@ rps::ipc::ScanResult ClapScanner::scan(const boost::filesystem::path& pluginPath
                 logStage("Plugin does not implement clap.params extension.");
             }
 
-            progressCb(85, "Destroying plugin instance...");
-            logStage("Calling plugin->destroy()...");
-            plugin->destroy(plugin);
         } else {
             logStage("plugin->init() returned false — skipping param/port extraction.");
-            plugin->destroy(plugin);
         }
     } else {
         logStage("create_plugin returned null — skipping param/port extraction.");
     }
 
-    progressCb(90, "Deinitializing CLAP plugin...");
-    cleanup();
+    progressCb(90, "Metadata extraction complete.");
+    logStage("Metadata extraction complete — returning result before cleanup.");
+
+    // IMPORTANT: Skip plugin->destroy(), entry->deinit(), and FreeLibrary.
+    // Some CLAP plugins (e.g. The Usual Suspects synths) hang for minutes
+    // during cleanup due to internal thread joins or resource teardown.
+    // Since the scanner process exits immediately after returning, the OS
+    // reclaims all resources. Skipping cleanup prevents hanging.
+    lib.release(); // Prevent RAII FreeLibrary
 
     progressCb(100, "Done.");
     logStage("Scan complete.");

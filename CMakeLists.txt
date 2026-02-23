@@ -60,6 +60,21 @@ set_target_properties(SQLite::SQLite3 PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${SQLITE3_INCLUDE_DIR}"
 )
 
+# Optional: VST2.4 plugin scanning (requires the proprietary VST2 SDK)
+# Enable with: cmake -DRPS_ENABLE_VST2=ON
+option(RPS_ENABLE_VST2 "Enable VST2.4 plugin scanning (requires VST2 SDK)" OFF)
+if(RPS_ENABLE_VST2)
+    set(RPS_VST2_SDK_PATH "${CMAKE_SOURCE_DIR}/libs/rps-core/include/rps/core/vstsdk2.4" CACHE PATH "Path to VST2.4 SDK root")
+    if(NOT EXISTS "${RPS_VST2_SDK_PATH}/pluginterfaces/vst2.x/aeffect.h")
+        message(FATAL_ERROR
+            "VST2.4 SDK not found at: ${RPS_VST2_SDK_PATH}/pluginterfaces/vst2.x/aeffect.h\n"
+            "Place the VST2.4 SDK in libs/rps-core/include/rps/core/vstsdk2.4/\n"
+            "or set -DRPS_VST2_SDK_PATH=/path/to/vstsdk2.4"
+        )
+    endif()
+    message(STATUS "VST2.4 support ENABLED (SDK: ${RPS_VST2_SDK_PATH})")
+endif()
+
 # Include directories for libraries
 add_subdirectory(libs/rps-core)
 add_subdirectory(libs/rps-ipc)
