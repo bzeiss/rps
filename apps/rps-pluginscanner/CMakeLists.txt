@@ -20,7 +20,7 @@ target_link_libraries(rps-pluginscanner
 )
 
 if(WIN32)
-    target_link_libraries(rps-pluginscanner PRIVATE ws2_32)
+    target_link_libraries(rps-pluginscanner PRIVATE ws2_32 ole32)
 else()
     target_link_libraries(rps-pluginscanner PRIVATE dl)
 endif()

@@ -3,6 +3,7 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <objbase.h>
 #endif
 
 #include <iostream>
@@ -36,6 +37,10 @@ int main(int argc, char* argv[]) {
     // Suppress Windows error/crash dialog boxes from plugin DLLs.
     // This prevents pop-ups for access violations, missing DLLs, etc.
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+
+    // Initialize COM — many VST3 plugins (e.g. Waves WaveShell) require COM
+    // to be initialized before calling GetPluginFactory().
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 #endif
 
     namespace po = boost::program_options;
@@ -73,10 +78,19 @@ int main(int argc, char* argv[]) {
     std::string pluginPathStr = vm.count("plugin-path") ? vm["plugin-path"].as<std::string>() : "unknown";
     fs::path pluginPath(pluginPathStr);
 
+    // Stage logging: flushed immediately so orchestrator captures output even on crash
+    auto logStage = [&](const std::string& stage) {
+        if (g_verbose) {
+            std::cerr << "[scanner] " << pluginPath.filename().string() << ": " << stage << std::endl;
+        }
+    };
+
     try {
+        logStage("Connecting to IPC queue...");
         // 1. Connect to Orchestrator IPC Queue
         auto connection = rps::ipc::MessageQueueConnection::createClient(ipcId);
 
+        logStage("Waiting for ScanRequest...");
         // 2. Wait for the ScanRequest
         auto maybeMsg = connection->receiveMessage(5000); // 5 sec timeout
         if (!maybeMsg.has_value() || maybeMsg.value().type != rps::ipc::MessageType::ScanRequest) {
@@ -86,6 +100,7 @@ int main(int argc, char* argv[]) {
 
         auto req = std::get<rps::ipc::ScanRequest>(maybeMsg.value().payload);
 
+        logStage("Finding appropriate scanner...");
         // 3. Find appropriate scanner
         auto scanners = rps::scanner::ScannerFactory::createAllScanners();
         rps::scanner::IPluginFormatScanner* activeScanner = nullptr;
@@ -139,6 +154,7 @@ int main(int argc, char* argv[]) {
         // -----------------------------
 
         // 5. Execute Scan
+        logStage("Starting scan with " + activeScanner->getFormatName() + " scanner...");
         if (activeScanner) {
             auto result = activeScanner->scan(pluginPath, progressCb);
             

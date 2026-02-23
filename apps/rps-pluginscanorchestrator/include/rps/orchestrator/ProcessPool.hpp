@@ -28,9 +28,11 @@ public:
     // Enqueue jobs and block until all are finished.
     void runJobs(const std::vector<ScanJob>& jobs);
 
+    static std::string formatDuration(int64_t ms);
+
 private:
-    void workerThreadLoop();
-    void processJob(const ScanJob& job);
+    void workerThreadLoop(size_t workerId);
+    void processJob(const ScanJob& job, size_t workerId);
 
     size_t m_maxWorkers;
     db::DatabaseManager* m_db = nullptr;

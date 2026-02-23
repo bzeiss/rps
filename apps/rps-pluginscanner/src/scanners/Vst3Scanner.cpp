@@ -51,6 +51,8 @@ namespace Steinberg {
     const FUID IPluginFactory3::iid(0x4555A2AB, 0xC1234E57, 0x9B122910, 0x36878931);
 }
 
+extern bool g_verbose;
+
 namespace rps::scanner {
 
 namespace {
@@ -87,10 +89,22 @@ boost::filesystem::path resolveBinaryPath(const boost::filesystem::path& vst3Pat
         fs::path archPath = contentsPath / arch;
         if (!fs::exists(archPath) || !fs::is_directory(archPath)) continue;
 
-        // Return the first regular file found in the arch directory
+        // Look for the actual VST3 binary — must have a loadable extension
+        // Per VST3 spec, the binary inside the bundle has the same stem as the bundle
+        // but platform-specific extension (.vst3 on Windows, .so on Linux, no ext on macOS)
+#if defined(_WIN32)
+        const std::vector<std::string> validExts = {".vst3", ".dll"};
+#elif defined(__APPLE__)
+        const std::vector<std::string> validExts = {""};  // macOS Mach-O has no extension
+#else
+        const std::vector<std::string> validExts = {".so"};
+#endif
         for (const auto& entry : fs::directory_iterator(archPath)) {
-            if (fs::is_regular_file(entry.path())) {
-                return entry.path();
+            if (!fs::is_regular_file(entry.path())) continue;
+            auto ext = entry.path().extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            for (const auto& valid : validExts) {
+                if (ext == valid) return entry.path();
             }
         }
     }
@@ -107,17 +121,43 @@ bool Vst3Scanner::canHandle(const boost::filesystem::path& pluginPath) const {
 }
 
 rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath, ProgressCallback progressCb) {
+    auto logStage = [&](const std::string& stage) {
+        if (g_verbose) {
+            std::cerr << "[vst3] " << pluginPath.filename().string() << ": " << stage << std::endl;
+        }
+    };
+
     progressCb(10, "Resolving VST3 binary...");
+    logStage("Resolving binary path...");
 
     // Resolve bundle directory to actual binary (handles both bundles and single-file .vst3)
     boost::filesystem::path binaryPath = resolveBinaryPath(pluginPath);
+    logStage("Resolved to: " + binaryPath.string());
 
     progressCb(20, "Loading VST3 binary...");
+    logStage("Calling LoadLibrary...");
 
 #ifdef _WIN32
     HMODULE handle = LoadLibraryW(binaryPath.c_str());
     if (!handle) {
-        throw std::runtime_error("Failed to load VST3 DLL: " + binaryPath.string());
+        DWORD err = GetLastError();
+        throw std::runtime_error("Failed to load VST3 DLL: " + binaryPath.string() + " (Win32 error: " + std::to_string(err) + ")");
+    }
+    logStage("LoadLibrary succeeded.");
+
+    // VST3 Module Architecture: InitDll must be called after LoadLibrary, before GetPluginFactory
+    auto initDll = reinterpret_cast<bool(*)()>(
+        reinterpret_cast<void*>(GetProcAddress(handle, "InitDll"))
+    );
+    if (initDll) {
+        logStage("Calling InitDll()...");
+        if (!initDll()) {
+            FreeLibrary(handle);
+            throw std::runtime_error("InitDll() returned false for: " + binaryPath.string());
+        }
+        logStage("InitDll() succeeded.");
+    } else {
+        logStage("No InitDll export (optional).");
     }
 
     auto getFactory = reinterpret_cast<Steinberg::IPluginFactory* (*)()>(
@@ -127,6 +167,20 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
     void* handle = dlopen(binaryPath.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!handle) {
         throw std::runtime_error(std::string("Failed to load VST3 library: ") + dlerror());
+    }
+    logStage("dlopen succeeded.");
+
+    // VST3 Module Architecture: ModuleEntry must be called after dlopen, before GetPluginFactory
+    auto moduleEntry = reinterpret_cast<bool(*)(void*)>(dlsym(handle, "ModuleEntry"));
+    if (moduleEntry) {
+        logStage("Calling ModuleEntry()...");
+        if (!moduleEntry(handle)) {
+            dlclose(handle);
+            throw std::runtime_error("ModuleEntry() returned false for: " + binaryPath.string());
+        }
+        logStage("ModuleEntry() succeeded.");
+    } else {
+        logStage("No ModuleEntry export (optional).");
     }
 
     auto getFactory = reinterpret_cast<Steinberg::IPluginFactory* (*)()>(dlsym(handle, "GetPluginFactory"));
@@ -140,9 +194,12 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
 #endif
         throw std::runtime_error("Library does not export 'GetPluginFactory'. Not a valid VST3 plugin.");
     }
+    logStage("GetPluginFactory export found.");
 
     progressCb(30, "Getting VST3 Plugin Factory...");
+    logStage("Calling GetPluginFactory()...");
     Steinberg::IPluginFactory* factory = getFactory();
+    logStage("GetPluginFactory() returned.");
     if (!factory) {
 #ifdef _WIN32
         FreeLibrary(handle);
@@ -155,6 +212,20 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
     progressCb(50, "Extracting plugin metadata...");
     
     int32_t numClasses = factory->countClasses();
+    logStage("Factory reports " + std::to_string(numClasses) + " class(es).");
+
+    // Log all classes in verbose mode for diagnostics
+    if (g_verbose) {
+        Steinberg::PClassInfo ci;
+        for (int32_t i = 0; i < numClasses; ++i) {
+            if (factory->getClassInfo(i, &ci) == Steinberg::kResultOk) {
+                std::cerr << "[vst3] " << pluginPath.filename().string()
+                          << ":   class[" << i << "] name=\"" << ci.name
+                          << "\" category=\"" << ci.category << "\"" << std::endl;
+            }
+        }
+    }
+
     if (numClasses == 0) {
         factory->release();
 #ifdef _WIN32
@@ -233,8 +304,16 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
     factory->release();
 
 #ifdef _WIN32
+    // VST3 Module Architecture: ExitDll must be called before FreeLibrary
+    auto exitDll = reinterpret_cast<bool(*)()>(
+        reinterpret_cast<void*>(GetProcAddress(handle, "ExitDll"))
+    );
+    if (exitDll) exitDll();
     FreeLibrary(handle);
 #else
+    // VST3 Module Architecture: ModuleExit must be called before dlclose
+    auto moduleExit = reinterpret_cast<bool(*)()>(dlsym(handle, "ModuleExit"));
+    if (moduleExit) moduleExit();
     dlclose(handle);
 #endif
 

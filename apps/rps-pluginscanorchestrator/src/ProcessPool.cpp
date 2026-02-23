@@ -31,6 +31,24 @@ std::string stripAnsiCodes(const std::string& line) {
     return result;
 }
 
+std::string describeExitCode([[maybe_unused]] int code) {
+#ifdef _WIN32
+    // Common Windows NTSTATUS / exception codes
+    auto u = static_cast<unsigned int>(code);
+    switch (u) {
+        case 0xC0000005: return "ACCESS_VIOLATION";
+        case 0xC00000FD: return "STACK_OVERFLOW";
+        case 0xC0000094: return "INTEGER_DIVIDE_BY_ZERO";
+        case 0xC000001D: return "ILLEGAL_INSTRUCTION";
+        case 0xC0000374: return "HEAP_CORRUPTION";
+        case 0x80000003: return "BREAKPOINT";
+        case 0xC00000FE: return "STACK_BUFFER_OVERRUN";
+        default: break;
+    }
+#endif
+    return {};
+}
+
 } // anonymous namespace
 
 namespace rps::orchestrator {
@@ -57,7 +75,7 @@ void ProcessPool::runJobs(const std::vector<ScanJob>& jobs) {
     if (numThreads == 0) return;
 
     for (size_t i = 0; i < numThreads; ++i) {
-        m_threads.emplace_back(&ProcessPool::workerThreadLoop, this);
+        m_threads.emplace_back(&ProcessPool::workerThreadLoop, this, i + 1);
     }
 
     for (auto& t : m_threads) {
@@ -67,7 +85,22 @@ void ProcessPool::runJobs(const std::vector<ScanJob>& jobs) {
     m_threads.clear();
 }
 
-void ProcessPool::workerThreadLoop() {
+std::string ProcessPool::formatDuration(int64_t ms) {
+    if (ms < 1000) {
+        return std::to_string(ms) + "ms";
+    } else if (ms < 60000) {
+        auto s = ms / 1000;
+        auto rem = ms % 1000;
+        return std::to_string(s) + "s " + std::to_string(rem) + "ms";
+    } else {
+        auto m = ms / 60000;
+        auto s = (ms % 60000) / 1000;
+        auto rem = ms % 1000;
+        return std::to_string(m) + "m " + std::to_string(s) + "s " + std::to_string(rem) + "ms";
+    }
+}
+
+void ProcessPool::workerThreadLoop(size_t workerId) {
     while (!m_stop) {
         ScanJob job;
         {
@@ -76,17 +109,18 @@ void ProcessPool::workerThreadLoop() {
             job = m_jobQueue.back();
             m_jobQueue.pop_back();
         }
-        processJob(job);
+        processJob(job, workerId);
     }
 }
 
-void ProcessPool::processJob(const ScanJob& job) {
+void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
     auto uuid = boost::uuids::random_generator()();
     std::string ipcId = "rps_ipc_" + boost::uuids::to_string(uuid);
 
+    std::string pluginName = job.pluginPath.filename().string();
     {
         std::lock_guard<std::mutex> lock(m_consoleMutex);
-        std::cout << "[Worker Thread] Scanning: " << job.pluginPath.filename().string() << "\n";
+        std::cout << "[Worker #" << workerId << "] Scanning: " << pluginName << "\n";
     }
 
     try {
@@ -124,12 +158,19 @@ void ProcessPool::processJob(const ScanJob& job) {
 #endif
 
         const bool printVerbose = job.verbose;
-        std::thread stderrDrainer([&errStream, printVerbose, this]() {
+        std::vector<std::string> stderrLines;
+        std::mutex stderrMutex;
+        std::thread stderrDrainer([&errStream, &stderrLines, &stderrMutex, printVerbose, workerId, this]() {
             std::string line;
             while (std::getline(errStream, line)) {
+                std::string cleaned = stripAnsiCodes(line);
+                {
+                    std::lock_guard<std::mutex> lock(stderrMutex);
+                    stderrLines.push_back(cleaned);
+                }
                 if (printVerbose) {
                     std::lock_guard<std::mutex> lock(m_consoleMutex);
-                    std::cerr << stripAnsiCodes(line) << "\n";
+                    std::cerr << "[Worker #" << workerId << " DBG] " << cleaned << "\n";
                 }
             }
         });
@@ -140,7 +181,7 @@ void ProcessPool::processJob(const ScanJob& job) {
         
         if (!connection->sendMessage(reqMsg)) {
             std::lock_guard<std::mutex> lock(m_consoleMutex);
-            std::cerr << "[Worker Thread Error] Failed to send ScanRequest to worker.\n";
+            std::cerr << "[Worker #" << workerId << " ERROR] Failed to send ScanRequest for " << pluginName << "\n";
             scannerProc.terminate();
             return;
         }
@@ -166,9 +207,9 @@ void ProcessPool::processJob(const ScanJob& job) {
                     auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count();
                     {
                         std::lock_guard<std::mutex> lock(m_consoleMutex);
-                        std::cout << "[SUCCESS] " << job.pluginPath.filename().string() 
+                        std::cout << "[Worker #" << workerId << " SUCCESS] " << pluginName
                                   << " -> " << res.name << " v" << res.version 
-                                  << " (" << elapsedMs << " ms)\n";
+                                  << " (" << formatDuration(elapsedMs) << ")\n";
                     }
                     if (m_db) m_db->upsertPluginResult(job.pluginPath, res, elapsedMs);
                     done = true;
@@ -178,9 +219,15 @@ void ProcessPool::processJob(const ScanJob& job) {
                     auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count();
                     {
                         std::lock_guard<std::mutex> lock(m_consoleMutex);
-                        std::cerr << "[ERROR] " << job.pluginPath.filename().string() 
+                        std::cerr << "[Worker #" << workerId << " ERROR] " << pluginName
                                   << ": " << err.error 
-                                  << " (" << elapsedMs << " ms)\n";
+                                  << " (" << formatDuration(elapsedMs) << ")\n";
+                        if (!printVerbose) {
+                            std::lock_guard<std::mutex> slock(stderrMutex);
+                            for (const auto& l : stderrLines) {
+                                std::cerr << "  [Worker #" << workerId << " stderr] " << l << "\n";
+                            }
+                        }
                     }
                     if (m_db) m_db->recordPluginFailure(job.pluginPath, err.error + ": " + err.details, elapsedMs);
                     done = true;
@@ -188,24 +235,45 @@ void ProcessPool::processJob(const ScanJob& job) {
             } else {
                 if (!scannerProc.running()) {
                     auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count();
-                    std::string errMsg = "Process crashed (exit code: " + std::to_string(scannerProc.exit_code()) + ")";
+                    int exitCode = scannerProc.exit_code();
+                    bool isHardCrash = (exitCode < 0 || exitCode > 1);
+                    std::string tag = isHardCrash ? "CRASH" : "FAIL";
+                    std::string codeDesc = describeExitCode(exitCode);
+                    std::string errMsg = isHardCrash
+                        ? "Process crashed (exit code: " + std::to_string(exitCode)
+                        : "Scanner reported error (exit code: " + std::to_string(exitCode);
+                    if (!codeDesc.empty()) errMsg += " = " + codeDesc;
+                    errMsg += ")";
                     {
                         std::lock_guard<std::mutex> lock(m_consoleMutex);
-                        std::cerr << "[CRASH] " << job.pluginPath.filename().string() 
+                        std::cerr << "[Worker #" << workerId << " " << tag << "] " << pluginName
                                   << " " << errMsg 
-                                  << " (" << elapsedMs << " ms)\n";
+                                  << " (" << formatDuration(elapsedMs) << ")\n";
+                        // Dump captured stderr on crash (skip if already printed in verbose mode)
+                        if (!printVerbose) {
+                            std::lock_guard<std::mutex> slock(stderrMutex);
+                            for (const auto& l : stderrLines) {
+                                std::cerr << "  [Worker #" << workerId << " stderr] " << l << "\n";
+                            }
+                        }
                     }
                     if (m_db) m_db->recordPluginFailure(job.pluginPath, errMsg, elapsedMs);
                     done = true;
                 } 
-                else if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastResponseTime).count() > job.timeoutMs) {
+                else if (job.timeoutMs > 0 && std::chrono::duration_cast<std::chrono::milliseconds>(now - lastResponseTime).count() > job.timeoutMs) {
                     auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count();
                     std::string errMsg = "Process timed out (deadlocked/hung plugin)";
                     {
                         std::lock_guard<std::mutex> lock(m_consoleMutex);
-                        std::cerr << "[TIMEOUT] " << job.pluginPath.filename().string() 
+                        std::cerr << "[Worker #" << workerId << " TIMEOUT] " << pluginName
                                   << " " << errMsg 
-                                  << " (" << elapsedMs << " ms)\n";
+                                  << " (" << formatDuration(elapsedMs) << ")\n";
+                        if (!printVerbose) {
+                            std::lock_guard<std::mutex> slock(stderrMutex);
+                            for (const auto& l : stderrLines) {
+                                std::cerr << "  [Worker #" << workerId << " stderr] " << l << "\n";
+                            }
+                        }
                     }
                     if (m_db) m_db->recordPluginFailure(job.pluginPath, errMsg, elapsedMs);
                     scannerProc.terminate();
@@ -222,7 +290,7 @@ void ProcessPool::processJob(const ScanJob& job) {
 
     } catch (const std::exception& e) {
         std::lock_guard<std::mutex> lock(m_consoleMutex);
-        std::cerr << "[Worker Thread Fatal] " << job.pluginPath.filename().string() << ": " << e.what() << "\n";
+        std::cerr << "[Worker #" << workerId << " FATAL] " << pluginName << ": " << e.what() << "\n";
     }
 }
 
