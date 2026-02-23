@@ -206,12 +206,15 @@ int main(int argc, char* argv[]) {
         // Fall through to _exit below
     }
 
-    // Use _exit() to terminate immediately, bypassing atexit handlers,
-    // static destructors, and — critically — DLL_PROCESS_DETACH callbacks.
-    // Many plugins spin up background threads and join them in DLL_PROCESS_DETACH,
-    // which can hang the process for 30-60+ seconds after the scan is already done.
-    // Since all IPC data has been sent, there's nothing left to clean up gracefully.
+    // Terminate immediately. All IPC data has been sent; nothing left to clean up.
+    // On Windows, _exit() still calls ExitProcess() which triggers DLL_PROCESS_DETACH
+    // for every loaded plugin DLL -- many plugins hang there for 30-60+ seconds.
+    // TerminateProcess bypasses DLL_PROCESS_DETACH entirely.
+#ifdef _WIN32
+    TerminateProcess(GetCurrentProcess(), 0);
+#else
     _exit(0);
+#endif
 }
 
 

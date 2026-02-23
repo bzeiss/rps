@@ -41,8 +41,8 @@ public:
     // Load all plugin entries from DB for incremental comparison
     std::map<std::string, PluginCacheEntry> loadPluginCache();
 
-    // Delete all plugin and parameter data (for full scan mode)
-    void clearAllPlugins();
+    // Delete plugins and parameters for the specified formats only (for full scan mode)
+    void clearPluginsByFormats(const std::vector<std::string>& formats);
 
     // Remove DB entries for plugins no longer present on disk. Returns count removed.
     size_t removeStaleEntries(const std::set<std::string>& validPaths);

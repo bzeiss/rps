@@ -187,8 +187,18 @@ int main(int argc, char* argv[]) {
     size_t skippedUnchanged = 0;
 
     if (scanMode == "full") {
-        std::cout << "Mode: FULL -- clearing database and rescanning all plugins.\n";
-        db.clearAllPlugins();
+        // Collect format short names for targeted clearing
+        std::vector<std::string> formatNames;
+        for (const auto* traits : formatsToScan) {
+            formatNames.push_back(traits->getName());
+        }
+        std::string fmtList;
+        for (size_t i = 0; i < formatNames.size(); ++i) {
+            if (i > 0) fmtList += ", ";
+            fmtList += formatNames[i];
+        }
+        std::cout << "Mode: FULL -- clearing " << fmtList << " entries and rescanning.\n";
+        db.clearPluginsByFormats(formatNames);
     } else {
         std::cout << "Mode: INCREMENTAL -- skipping unchanged plugins.\n";
 

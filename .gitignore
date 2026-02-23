@@ -12,3 +12,6 @@ esp_jit.log
 
 libs/rps-core/include/rps/core/vstsdk2.4/*
 
+MIOConsole3d.log
+rps-plugins.db-shm
+rps-plugins.db-wal

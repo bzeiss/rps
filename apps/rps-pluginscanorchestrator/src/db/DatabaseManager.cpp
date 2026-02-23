@@ -71,6 +71,15 @@ void DatabaseManager::initializeSchema() {
     executeQuery(createTablePlugins);
     executeQuery(createTableParameters);
 
+    // Enable WAL mode for better concurrent write performance.
+    // WAL allows readers and writers to operate simultaneously.
+    // PRAGMA returns a result row, so we use sqlite3_exec directly.
+    {
+        char* errMsg = nullptr;
+        sqlite3_exec(m_db, "PRAGMA journal_mode=WAL;", nullptr, nullptr, &errMsg);
+        if (errMsg) sqlite3_free(errMsg);
+    }
+
     // Migrate existing databases: add columns if they don't exist.
     // SQLite ALTER TABLE ADD COLUMN is safe if column already exists (we catch the error).
     auto tryAddColumn = [this](const std::string& sql) {
@@ -86,6 +95,12 @@ void DatabaseManager::initializeSchema() {
 void DatabaseManager::upsertPluginResult(const boost::filesystem::path& pluginPath, const rps::ipc::ScanResult& result,
                                           int64_t scanTimeMs, const std::string& fileMtime, const std::string& fileHash) {
     std::lock_guard<std::mutex> lock(m_dbMutex);
+
+    // Wrap the entire operation in a single transaction. Without this, each
+    // INSERT is an implicit transaction with its own fsync — 30-50s for a
+    // plugin with thousands of parameters. With an explicit transaction,
+    // all writes share a single fsync at COMMIT.
+    executeQuery("BEGIN TRANSACTION;");
 
     sqlite3_stmt* stmt = nullptr;
     
@@ -178,6 +193,8 @@ void DatabaseManager::upsertPluginResult(const boost::filesystem::path& pluginPa
         }
         sqlite3_finalize(stmt);
     }
+
+    executeQuery("COMMIT;");
 }
 
 void DatabaseManager::recordPluginFailure(const boost::filesystem::path& pluginPath, const std::string& errorMsg,
@@ -239,10 +256,21 @@ std::map<std::string, DatabaseManager::PluginCacheEntry> DatabaseManager::loadPl
     return cache;
 }
 
-void DatabaseManager::clearAllPlugins() {
+void DatabaseManager::clearPluginsByFormats(const std::vector<std::string>& formats) {
     std::lock_guard<std::mutex> lock(m_dbMutex);
-    executeQuery("DELETE FROM parameters;");
-    executeQuery("DELETE FROM plugins;");
+
+    if (formats.empty()) return;
+
+    // Build IN clause: ('vst2','vst3',...)
+    std::string inClause;
+    for (size_t i = 0; i < formats.size(); ++i) {
+        if (i > 0) inClause += ",";
+        inClause += "'" + formats[i] + "'";
+    }
+
+    // Delete parameters for matching plugins first (FK)
+    executeQuery("DELETE FROM parameters WHERE plugin_id IN (SELECT id FROM plugins WHERE format IN (" + inClause + "));");
+    executeQuery("DELETE FROM plugins WHERE format IN (" + inClause + ");");
 }
 
 size_t DatabaseManager::removeStaleEntries(const std::set<std::string>& validPaths) {

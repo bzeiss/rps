@@ -7,6 +7,7 @@
 
 #include <rps/orchestrator/ProcessPool.hpp>
 #include <string>
+#include <iostream>
 #include <algorithm>
 #include <thread>
 #include <boost/uuid/uuid.hpp>
@@ -325,7 +326,16 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                     if (m_observer) {
                         m_observer->onPluginCompleted(workerId, pluginFullPath, ScanOutcome::Success, elapsedMs, &res, nullptr);
                     }
-                    if (m_db) m_db->upsertPluginResult(job.pluginPath, res, elapsedMs, fileMtime, fileHash);
+                    if (m_db) {
+                        auto dbT0 = std::chrono::steady_clock::now();
+                        m_db->upsertPluginResult(job.pluginPath, res, elapsedMs, fileMtime, fileHash);
+                        auto dbMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - dbT0).count();
+                        if (job.verbose) {
+                            std::cerr << "[Worker #" << workerId << " DBG] DB upsert: "
+                                      << dbMs << "ms (" << res.parameters.size() << " params)\n";
+                        }
+                    }
                     // Remove from failures list if this was a successful retry
                     {
                         std::lock_guard<std::mutex> flock(m_failureMutex);
@@ -402,25 +412,35 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
             }
         }
 
-        // Bounded cleanup: give scanner 5s to exit gracefully, then force kill
-        if (scannerProc.running()) {
-            auto cleanupStart = std::chrono::steady_clock::now();
-            while (scannerProc.running()) {
-                auto waited = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - cleanupStart).count();
-                if (waited > 5000) {
-                    if (m_observer) {
-                        m_observer->onWorkerForceKill(workerId, pluginFullPath);
-                    }
-                    scannerProc.terminate();
-                    break;
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        // --- Post-scan cleanup with diagnostic timing ---
+        auto cleanupT0 = std::chrono::steady_clock::now();
+        auto logCleanup = [&](const char* step) {
+            if (job.verbose) {
+                auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - cleanupT0).count();
+                std::cerr << "[Worker #" << workerId << " DBG] cleanup: " << step
+                          << " (+" << dt << "ms) running=" << scannerProc.running() << "\n";
             }
+        };
+
+        logCleanup("start");
+
+        if (scannerProc.running()) {
+            logCleanup("process still running, terminating");
+            scannerProc.terminate();
+            logCleanup("terminate() returned");
         }
-        if (scannerProc.running()) scannerProc.wait();
+
+        logCleanup("calling wait()");
+        scannerProc.wait();
+        logCleanup("wait() returned");
+
+        logCleanup("closing stderr pipe");
+        errStream.pipe().close();
+        logCleanup("pipe closed, joining drainer");
 
         stderrDrainer.join();
+        logCleanup("drainer joined, cleanup done");
 
     } catch (const std::exception& e) {
         std::string errMsg = std::string("FATAL: ") + e.what();
