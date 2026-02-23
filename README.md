@@ -14,7 +14,7 @@ RPS solves this by using a **multi-process architecture**:
 - **`rps-pluginscanner`**: The worker. It isolates the unsafe, third-party plugin code from the rest of your system.
 - **`examples/python/`**: A Python TUI client using `rich` that spawns/kills the server and displays per-worker progress bars.
 
-## Project Axioms
+## Project Goals
 1. **Primary Objective**: Robustness (Crash and stall isolation).
 2. **Secondary Objective**: Performance / Speed (Parallel scanning).
 3. **Third Objective**: Ease of use via central SQLite database (external tools can simply query the DB).
