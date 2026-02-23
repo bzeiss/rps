@@ -308,6 +308,7 @@ rps::ipc::ScanResult Vst2Scanner::scan(const boost::filesystem::path& pluginPath
     }
     logStage("Category: " + result.category);
 
+    result.format = "vst2";
     result.scanMethod = "vst2";
 
     // --- Shell plugin detection ---

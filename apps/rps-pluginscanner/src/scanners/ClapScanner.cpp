@@ -254,6 +254,7 @@ rps::ipc::ScanResult ClapScanner::scan(const boost::filesystem::path& pluginPath
     result.uid = desc->id ? desc->id : "";
     result.description = desc->description ? desc->description : "";
     result.url = desc->url ? desc->url : "";
+    result.format = "clap";
     result.scanMethod = "clap-factory";
 
     // Parse features into a single comma-separated category string

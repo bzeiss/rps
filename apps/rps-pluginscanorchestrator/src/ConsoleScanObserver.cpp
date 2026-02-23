@@ -109,7 +109,7 @@ void ConsoleScanObserver::onWorkerForceKill(size_t workerId, const std::string& 
     std::lock_guard<std::mutex> lock(m_mutex);
     auto name = boost::filesystem::path(pluginPath).filename().string();
     std::cerr << "[Worker #" << workerId << " WARN] " << name
-              << " scanner process still alive after result — force killing.\n";
+              << " scanner process still alive after result -- force killing.\n";
 }
 
 void ConsoleScanObserver::onPluginRetry(size_t workerId, const std::string& pluginPath,

@@ -46,6 +46,7 @@ void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const ScanR
         {"description", res.description},
         {"url", res.url},
         {"category", res.category},
+        {"format", res.format},
         {"scanMethod", res.scanMethod},
         {"numInputs", res.numInputs},
         {"numOutputs", res.numOutputs},
@@ -65,6 +66,7 @@ ScanResult tag_invoke(boost::json::value_to_tag<ScanResult>, const boost::json::
     if (obj.contains("description")) res.description = obj.at("description").as_string().c_str();
     if (obj.contains("url")) res.url = obj.at("url").as_string().c_str();
     if (obj.contains("category")) res.category = obj.at("category").as_string().c_str();
+    if (obj.contains("format")) res.format = obj.at("format").as_string().c_str();
     if (obj.contains("scanMethod")) res.scanMethod = obj.at("scanMethod").as_string().c_str();
 
     res.numInputs = obj.at("numInputs").to_number<uint32_t>();

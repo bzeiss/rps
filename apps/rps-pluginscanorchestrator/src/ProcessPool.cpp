@@ -203,6 +203,10 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
 
     std::string pluginName = job.pluginPath.filename().string();
     std::string pluginFullPath = job.pluginPath.string();
+
+    // Pre-compute file metadata for DB storage
+    std::string fileMtime = db::DatabaseManager::getFileMtime(job.pluginPath);
+    std::string fileHash = db::DatabaseManager::computeFileHash(job.pluginPath);
     if (m_observer) {
         m_observer->onPluginStarted(workerId, job.pluginIndex, job.totalPlugins, pluginFullPath);
     }
@@ -321,7 +325,7 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                     if (m_observer) {
                         m_observer->onPluginCompleted(workerId, pluginFullPath, ScanOutcome::Success, elapsedMs, &res, nullptr);
                     }
-                    if (m_db) m_db->upsertPluginResult(job.pluginPath, res, elapsedMs);
+                    if (m_db) m_db->upsertPluginResult(job.pluginPath, res, elapsedMs, fileMtime, fileHash);
                     // Remove from failures list if this was a successful retry
                     {
                         std::lock_guard<std::mutex> flock(m_failureMutex);
@@ -350,7 +354,7 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                             std::lock_guard<std::mutex> slock(stderrMutex);
                             m_observer->onWorkerStderrDump(workerId, pluginFullPath, stderrLines);
                         }
-                        if (m_db) m_db->recordPluginFailure(job.pluginPath, errMsg, elapsedMs);
+                        if (m_db) m_db->recordPluginFailure(job.pluginPath, errMsg, elapsedMs, fileMtime, fileHash);
                         recordFailure(pluginFullPath, errMsg);
                         ++m_fail;
                     }
@@ -374,7 +378,7 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                             std::lock_guard<std::mutex> slock(stderrMutex);
                             m_observer->onWorkerStderrDump(workerId, pluginFullPath, stderrLines);
                         }
-                        if (m_db) m_db->recordPluginFailure(job.pluginPath, errMsg, elapsedMs);
+                        if (m_db) m_db->recordPluginFailure(job.pluginPath, errMsg, elapsedMs, fileMtime, fileHash);
                         recordFailure(pluginFullPath, errMsg);
                         if (isHardCrash) ++m_crash; else ++m_fail;
                     }
@@ -389,7 +393,7 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                         std::lock_guard<std::mutex> slock(stderrMutex);
                         m_observer->onWorkerStderrDump(workerId, pluginFullPath, stderrLines);
                     }
-                    if (m_db) m_db->recordPluginFailure(job.pluginPath, errMsg, elapsedMs);
+                    if (m_db) m_db->recordPluginFailure(job.pluginPath, errMsg, elapsedMs, fileMtime, fileHash);
                     recordFailure(pluginFullPath, errMsg);
                     ++m_timeout;
                     scannerProc.terminate();

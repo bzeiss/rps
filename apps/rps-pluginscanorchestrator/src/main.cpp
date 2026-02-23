@@ -8,6 +8,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <set>
 #include <thread>
 #include <algorithm>
 #include <cctype>
@@ -37,7 +38,8 @@ int main(int argc, char* argv[]) {
         ("limit,l", po::value<size_t>()->default_value(0), "Maximum number of plugins to scan (0 = unlimited)")
         ("verbose,v", "Enable verbose scanner output (plugin debug logs)")
         ("retries,r", po::value<size_t>()->default_value(3), "Number of retries for failed plugins (0 = no retries)")
-        ("db", po::value<std::string>()->default_value("rps-plugins.db"), "Path to the output SQLite database file");
+        ("db", po::value<std::string>()->default_value("rps-plugins.db"), "Path to the output SQLite database file")
+        ("mode,m", po::value<std::string>()->default_value("incremental"), "Scan mode: 'full' (rescan everything) or 'incremental' (skip unchanged)");
         
     po::variables_map vm;
     try {
@@ -172,19 +174,95 @@ int main(int argc, char* argv[]) {
     std::cout << "Discovered " << pluginsToScan.size() << " plugins.\n";
     std::cout << "Using scanner binary: " << scannerPath.string() << "\n";
 
+    rps::orchestrator::db::DatabaseManager db(vm["db"].as<std::string>());
+    db.initializeSchema();
+
+    // --- Scan mode: full vs incremental ---
+    std::string scanMode = vm["mode"].as<std::string>();
+    if (scanMode != "full" && scanMode != "incremental") {
+        std::cerr << "Invalid --mode value: '" << scanMode << "'. Use 'full' or 'incremental'.\n";
+        return 1;
+    }
+
+    size_t skippedUnchanged = 0;
+
+    if (scanMode == "full") {
+        std::cout << "Mode: FULL -- clearing database and rescanning all plugins.\n";
+        db.clearAllPlugins();
+    } else {
+        std::cout << "Mode: INCREMENTAL -- skipping unchanged plugins.\n";
+
+        // Build set of all discovered paths (for stale entry removal)
+        std::set<std::string> discoveredPaths;
+        for (const auto& p : pluginsToScan) {
+            discoveredPaths.insert(p.string());
+        }
+
+        // Remove stale entries (plugins in DB but no longer on disk)
+        size_t staleRemoved = db.removeStaleEntries(discoveredPaths);
+        if (staleRemoved > 0) {
+            std::cout << "Removed " << staleRemoved << " stale database entries (plugins no longer on disk).\n";
+        }
+
+        // Load cache and filter out unchanged plugins
+        auto cache = db.loadPluginCache();
+        std::vector<fs::path> filtered;
+
+        for (const auto& p : pluginsToScan) {
+            std::string pathStr = p.string();
+            auto it = cache.find(pathStr);
+            if (it == cache.end()) {
+                // Not in DB → must scan
+                filtered.push_back(p);
+                continue;
+            }
+
+            const auto& entry = it->second;
+
+            // Compare file modification time
+            std::string currentMtime = rps::orchestrator::db::DatabaseManager::getFileMtime(p);
+            if (currentMtime != entry.fileMtime) {
+                // mtime differs → rescan
+                filtered.push_back(p);
+                continue;
+            }
+
+            // mtime matches → compare hash
+            std::string currentHash = rps::orchestrator::db::DatabaseManager::computeFileHash(p);
+            if (currentHash != entry.fileHash) {
+                // Hash differs → rescan
+                filtered.push_back(p);
+                continue;
+            }
+
+            // Unchanged — skip
+            skippedUnchanged++;
+        }
+
+        if (skippedUnchanged > 0) {
+            std::cout << "Skipping " << skippedUnchanged << " unchanged plugins.\n";
+        }
+
+        pluginsToScan = std::move(filtered);
+
+        if (pluginsToScan.empty()) {
+            std::cout << "All plugins are up-to-date. Nothing to scan.\n";
+            return 0;
+        }
+    }
+
+    // Build job list from the (possibly filtered) plugin list
     size_t totalPlugins = pluginsToScan.size();
     std::vector<rps::orchestrator::ScanJob> jobs;
     for (size_t i = 0; i < pluginsToScan.size(); ++i) {
         jobs.push_back({ pluginsToScan[i], scannerPath.string(), timeoutMs, verbose, i, totalPlugins, maxRetries, 0 });
     }
 
-    rps::orchestrator::db::DatabaseManager db(vm["db"].as<std::string>());
-    db.initializeSchema();
-
     rps::orchestrator::ConsoleScanObserver observer(verbose);
     rps::orchestrator::ProcessPool pool(numWorkers, &db, &observer);
     
     auto startTime = std::chrono::steady_clock::now();
+    std::cout << "Scanning " << pluginsToScan.size() << " plugin(s).\n";
     std::cout << "Starting process pool with " << numWorkers << " workers (timeout: " << timeoutMs << "ms, retries: " << maxRetries << ")...\n";
     std::cout << "--------------------------------------------------------\n";
     std::cout << "Output database: " << vm["db"].as<std::string>() << "\n";

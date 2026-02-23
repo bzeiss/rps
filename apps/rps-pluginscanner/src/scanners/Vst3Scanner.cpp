@@ -501,6 +501,7 @@ bool tryLoadModuleInfo(
         result.category = joined;
     }
 
+    result.format = "vst3";
     result.scanMethod = "moduleinfo.json";
 
     // I/O counts not available from moduleinfo.json
@@ -793,6 +794,7 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
         logStage("IPluginFactory2 not supported (older plugin).");
     }
 
+    result.format = "vst3";
     result.scanMethod = "factory";
     result.numInputs = 0;
     result.numOutputs = 0;
