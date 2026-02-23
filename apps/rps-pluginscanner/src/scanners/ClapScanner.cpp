@@ -12,6 +12,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <cstring>
+#include <cmath>
 #include <algorithm>
 #include <rps/core/clap/include/clap/clap.h>
 #include <rps/core/clap/include/clap/ext/params.h>
@@ -333,10 +334,13 @@ rps::ipc::ScanResult ClapScanner::scan(const boost::filesystem::path& pluginPath
                 for (uint32_t i = 0; i < numParams; ++i) {
                     clap_param_info_t pinfo{};
                     if (params->get_info(plugin, i, &pinfo)) {
+                        // Sanitize non-finite values (NaN, Inf) — boost::json rejects them
+                        double defVal = pinfo.default_value;
+                        if (!std::isfinite(defVal)) defVal = 0.0;
                         result.parameters.push_back({
                             static_cast<uint32_t>(pinfo.id),
                             pinfo.name,
-                            pinfo.default_value
+                            defVal
                         });
                     }
                 }

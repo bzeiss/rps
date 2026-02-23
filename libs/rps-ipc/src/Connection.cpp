@@ -8,8 +8,8 @@ namespace rps::ipc {
 
 using namespace boost::interprocess;
 
-constexpr size_t MAX_MSG_SIZE = 65536; // 64 KB
-constexpr size_t MAX_NUM_MSGS = 100;
+constexpr size_t MAX_MSG_SIZE = 1048576; // 1 MB — must accommodate plugins with many params
+constexpr size_t MAX_NUM_MSGS = 8;       // Low: protocol is request/response + progress events
 
 MessageQueueConnection::MessageQueueConnection(const std::string& name, bool isServer)
     : m_name(name), m_isServer(isServer) {
