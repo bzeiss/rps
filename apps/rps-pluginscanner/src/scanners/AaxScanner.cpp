@@ -122,6 +122,23 @@ std::pair<std::string, int64_t> AaxScanner::parseFourCCField(const std::string& 
         fourcc = trimmed;
     }
 
+    // Sanitize: some FourCC codes contain raw high bytes (e.g. 0xD2 0xC0 0xAA 0xA5)
+    // that are invalid UTF-8. Replace non-ASCII bytes with hex representation
+    // to keep the string JSON-safe. The numeric ID is what matters for PTSL.
+    bool hasNonAscii = false;
+    for (unsigned char c : fourcc) {
+        if (c > 127) { hasNonAscii = true; break; }
+    }
+    if (hasNonAscii && !fourcc.empty()) {
+        std::string hex = "0x";
+        for (unsigned char c : fourcc) {
+            char buf[3];
+            snprintf(buf, sizeof(buf), "%02X", c);
+            hex += buf;
+        }
+        fourcc = hex;
+    }
+
     return {fourcc, num};
 }
 

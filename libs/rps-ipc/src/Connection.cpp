@@ -97,13 +97,28 @@ std::optional<Message> MessageQueueConnection::receiveMessage(unsigned int timeo
 
         if (received && receivedSize > 0) {
             std::string serialized(buffer.data(), receivedSize);
-            boost::json::value jv = boost::json::parse(serialized);
-            return boost::json::value_to<Message>(jv);
+            try {
+                boost::json::value jv = boost::json::parse(serialized);
+                return boost::json::value_to<Message>(jv);
+            } catch (const std::exception& parseErr) {
+                std::cerr << "IPC Receive Error: " << parseErr.what() << "\n";
+                std::cerr << "  receivedSize=" << receivedSize << " bytes\n";
+                // Dump first 200 chars for diagnosis
+                size_t dumpLen = std::min(receivedSize, size_t(200));
+                std::cerr << "  raw[0.." << dumpLen << "]: [";
+                for (size_t i = 0; i < dumpLen; ++i) {
+                    char c = serialized[i];
+                    if (c >= 32 && c < 127) std::cerr << c;
+                    else std::cerr << "\\x" << std::hex << (int)(unsigned char)c << std::dec;
+                }
+                std::cerr << "]\n";
+                return std::nullopt;
+            }
         }
 
         return std::nullopt;
     } catch (const std::exception& e) {
-        std::cerr << "IPC Receive Error: " << e.what() << "\n";
+        std::cerr << "IPC Receive Error (transport): " << e.what() << "\n";
         return std::nullopt;
     }
 }
