@@ -235,13 +235,11 @@ rps-pluginscanorchestrator.exe --timeout 30000
 
 ### Default Plugin Paths
 
-If no paths are provided, RPS will automatically search the following directories based on your operating system:
+If no paths are provided, RPS will automatically search the following directories based on your operating system (32bit plugins are not supported!):
 
 **Windows:**
 - `C:\Program Files\Common Files\VST3`
-- `C:\Program Files (x86)\Common Files\VST3`
 - `C:\Program Files\Common Files\CLAP`
-- `C:\Program Files (x86)\Common Files\CLAP`
 - `C:\Program Files\Common Files\Avid\Audio\Plug-Ins` (AAX)
 - `C:\Program Files\Steinberg\VstPlugins` (VST2)
 - `C:\Program Files\VstPlugins` (VST2)
