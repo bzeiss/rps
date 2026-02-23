@@ -182,9 +182,10 @@ Orchestrator Options:
   -d [ --scan-dir ] arg                 Directories to recursively scan for plugins
   -s [ --scan ] arg                     Single file to scan
   -b [ --scanner-bin ] arg              Path to the scanner binary (default: rps-pluginscanner.exe)
-  -t [ --timeout ] arg (=300000)        Timeout in ms per plugin (default: 5 min)
+  -t [ --timeout ] arg (=120000)        Timeout in ms per plugin (default: 2 min)
   -j [ --jobs ] arg (=6)                Number of parallel scanner workers (default: 6)
   -f [ --formats ] arg (=all)           Comma-separated list of formats to scan (e.g. vst3,clap) or 'all'
+  -m [ --mode ] arg (=incremental)      Scan mode: 'full' or 'incremental' (see below)
   -r [ --retries ] arg (=3)             Number of retries for failed plugins (0 = no retries)
      --filter arg                       Only scan plugins whose filename contains this string
   -l [ --limit ] arg (=0)               Maximum number of plugins to scan (0 = unlimited)
@@ -238,7 +239,19 @@ rps-pluginscanorchestrator.exe --scan "C:\VstPlugins\Massive.dll" --verbose
 
 **8. Scan with a longer timeout (for slow iLok-protected plugins)**
 ```bash
-rps-pluginscanorchestrator.exe --timeout 30000
+rps-pluginscanorchestrator.exe --timeout 180000
+```
+
+**9. Force a full rescan (clear and rescan all plugins of the requested formats)**
+```bash
+./rps-pluginscanorchestrator --mode full
+./rps-pluginscanorchestrator --formats vst2 --mode full
+```
+
+**10. Incremental scan (default -- skip unchanged plugins)**
+```bash
+# This is the default. Only new or modified plugins are scanned.
+./rps-pluginscanorchestrator
 ```
 
 ### Default Plugin Paths
@@ -287,6 +300,18 @@ VST2 scanning is an **opt-in compile-time feature** because the VST2.4 SDK is pr
 4. **Build normally**: `cmake --build build`
 
 When `RPS_ENABLE_VST2` is OFF (the default), no VST2 SDK code is compiled or linked. The `--formats all` flag **never** includes VST2 — you must explicitly pass `--formats vst2`.
+
+## Scan Modes
+
+RPS supports two scan modes via `--mode`:
+
+- **`incremental`** (default): Only scans plugins that are new or have changed since the last scan. Change detection uses a two-stage check: file modification time first, then CRC32 hash if the timestamp matches. Plugins that no longer exist on disk are automatically removed from the database. This mode makes repeated scans near-instant.
+
+- **`full`**: Clears all database entries **for the requested format(s)** and rescans everything. A `--mode full --formats vst2` will only clear VST2 entries, leaving CLAP and VST3 results intact.
+
+## Database Schema
+
+Scan results are stored in a SQLite database (default: `rps-plugins.db`) with WAL journal mode for performance. The `plugins` table stores one row per plugin with columns: `format`, `path`, `name`, `uid`, `vendor`, `version`, `description`, `url`, `category`, `num_inputs`, `num_outputs`, `status`, `error_message`, `scan_time_ms`, `file_mtime`, `file_hash`, `last_scanned`. Parameters are in a separate `parameters` table linked by `plugin_id`.
 
 ## Documentation
 

@@ -241,12 +241,12 @@ rps::ipc::ScanResult Vst2Scanner::scan(const boost::filesystem::path& pluginPath
              + ", numInputs=" + std::to_string(effect->numInputs)
              + ", numOutputs=" + std::to_string(effect->numOutputs));
 
-    // NOTE: We intentionally do NOT call effOpen. The AEffect struct fields and
-    // dispatcher metadata opcodes (effGetEffectName, effGetVendorString, etc.) are
-    // populated by the plugin constructor during VSTPluginMain. Calling effOpen
-    // triggers full initialization (license checks, sample loading, GUI setup)
-    // which can take seconds to minutes for some plugins (Waves, PatchWork, etc.).
-    // Skipping effOpen matches what fast scanners (JUCE, Bitwig) do.
+    // Call effOpen to fully initialize the plugin. This may trigger license checks,
+    // sample loading, etc. on some plugins, but gives more accurate metadata.
+    progressCb(30, "Opening plugin...");
+    logStage("Calling effOpen...");
+    effect->dispatcher(effect, effOpen, 0, 0, nullptr, 0.0f);
+    logStage("effOpen returned.");
 
     // --- Extract metadata ---
     progressCb(50, "Extracting metadata...");
