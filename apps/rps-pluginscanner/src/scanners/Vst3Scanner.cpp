@@ -216,6 +216,90 @@ void checkBinaryArchitecture(const boost::filesystem::path& binaryPath) {
 #endif
 
 // ---------------------------------------------------------------------------
+// Loader-stub detection — some VST3 plugins (e.g. NotePerformer) ship a tiny
+// stub DLL whose GetPluginFactory() returns null. The actual plugin DLL lives
+// in Contents/Resources/ and is referenced by a .txt config file.
+// Format of the config (e.g. "Loader 64.txt"):
+//   Line 1: version number (e.g. "1")
+//   Line 2: relative path to DLL (e.g. "/Loader 64.dat")
+//   Lines 3+: metadata (URL, email, name, vendor)
+// ---------------------------------------------------------------------------
+#ifdef _WIN32
+boost::filesystem::path detectLoaderStubDll(const boost::filesystem::path& pluginPath, bool verbose) {
+    namespace fs = boost::filesystem;
+
+    fs::path resourcesDir = pluginPath / "Contents" / "Resources";
+    if (!fs::is_directory(resourcesDir)) return {};
+
+    // Look for .txt files in Resources that reference a .dat DLL
+    for (const auto& entry : fs::directory_iterator(resourcesDir)) {
+        if (!fs::is_regular_file(entry.path())) continue;
+        auto ext = entry.path().extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        if (ext != ".txt") continue;
+
+        std::ifstream txt(entry.path().string());
+        if (!txt) continue;
+
+        std::string line1, line2;
+        std::getline(txt, line1); // version
+        std::getline(txt, line2); // relative path (e.g. "/Loader 64.dat")
+
+        if (line2.empty()) continue;
+
+        // Strip leading '/' if present
+        if (line2[0] == '/') line2 = line2.substr(1);
+
+        // Check if the referenced file exists and is a PE
+        fs::path datPath = resourcesDir / line2;
+        if (!fs::is_regular_file(datPath)) continue;
+
+        // Verify it's a PE file and check architecture matches this process
+        std::ifstream f(datPath.string(), std::ios::binary);
+        char dosHeader[64] = {};
+        f.read(dosHeader, sizeof(dosHeader));
+        if (!f || dosHeader[0] != 'M' || dosHeader[1] != 'Z') continue;
+
+        uint32_t peOffset = *reinterpret_cast<uint32_t*>(&dosHeader[0x3C]);
+        f.seekg(peOffset);
+        char peSig[4] = {};
+        f.read(peSig, 4);
+        if (!f || peSig[0] != 'P' || peSig[1] != 'E' || peSig[2] != 0 || peSig[3] != 0) continue;
+
+        uint16_t machine = 0;
+        f.read(reinterpret_cast<char*>(&machine), 2);
+        if (!f) continue;
+
+#if defined(_M_X64) || defined(__x86_64__)
+        constexpr uint16_t expectedMachine = 0x8664;
+#elif defined(_M_IX86) || defined(__i386__)
+        constexpr uint16_t expectedMachine = 0x014C;
+#elif defined(_M_ARM64) || defined(__aarch64__)
+        constexpr uint16_t expectedMachine = 0xAA64;
+#else
+        constexpr uint16_t expectedMachine = 0;
+#endif
+        if (machine != expectedMachine) {
+            if (verbose) {
+                std::cerr << "[vst3] " << pluginPath.filename().string()
+                          << ": Skipping " << datPath.filename().string()
+                          << " (arch mismatch: 0x" << std::hex << machine << std::dec << ")" << std::endl;
+            }
+            continue;
+        }
+
+        if (verbose) {
+            std::cerr << "[vst3] " << pluginPath.filename().string()
+                      << ": Detected loader-stub pattern: " << entry.path().filename().string()
+                      << " -> " << datPath.string() << std::endl;
+        }
+        return datPath;
+    }
+    return {};
+}
+#endif
+
+// ---------------------------------------------------------------------------
 // moduleinfo.json fast path — extract metadata without loading the DLL
 // ---------------------------------------------------------------------------
 // Returns true if moduleinfo.json was found and parsed successfully.
@@ -404,8 +488,20 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
     logStage("Calling LoadLibrary...");
 
 #ifdef _WIN32
+    // Set DLL search directory to the bundle root so stub/loader plugins
+    // (e.g. NotePerformer) can find their dependent files (Loader 64.dat in
+    // Contents/Resources/) via internal LoadLibrary calls during GetPluginFactory().
+    // We keep it set until after GetPluginFactory() returns.
+    auto bundleRoot = pluginPath.wstring();
+    wchar_t oldDllDir[MAX_PATH] = {};
+    GetDllDirectoryW(MAX_PATH, oldDllDir);
+    SetDllDirectoryW(bundleRoot.c_str());
+    logStage("SetDllDirectoryW -> " + pluginPath.string());
+
     HMODULE handle = LoadLibraryW(binaryPath.c_str());
+
     if (!handle) {
+        SetDllDirectoryW(oldDllDir[0] ? oldDllDir : nullptr);
         DWORD err = GetLastError();
         throw std::runtime_error("Failed to load VST3 DLL: " + binaryPath.string() + " (Win32 error: " + std::to_string(err) + ")");
     }
@@ -418,6 +514,7 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
     if (initDll) {
         logStage("Calling InitDll()...");
         if (!initDll()) {
+            SetDllDirectoryW(oldDllDir[0] ? oldDllDir : nullptr);
             FreeLibrary(handle);
             throw std::runtime_error("InitDll() returned false for: " + binaryPath.string());
         }
@@ -454,6 +551,7 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
 
     if (!getFactory) {
 #ifdef _WIN32
+        SetDllDirectoryW(oldDllDir[0] ? oldDllDir : nullptr);
         FreeLibrary(handle);
 #else
         dlclose(handle);
@@ -466,13 +564,71 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
     logStage("Calling GetPluginFactory()...");
     Steinberg::IPluginFactory* factory = getFactory();
     logStage("GetPluginFactory() returned.");
+
+#ifdef _WIN32
+    // Restore DLL directory now that factory call is complete
+    SetDllDirectoryW(oldDllDir[0] ? oldDllDir : nullptr);
+    logStage("SetDllDirectoryW restored.");
+#endif
+
     if (!factory) {
 #ifdef _WIN32
-        FreeLibrary(handle);
+        // Fallback: detect loader-stub pattern (e.g. NotePerformer) and try
+        // loading the actual DLL directly from Contents/Resources/
+        logStage("GetPluginFactory returned null — checking for loader-stub pattern...");
+        auto loaderDll = detectLoaderStubDll(pluginPath, g_verbose);
+        if (!loaderDll.empty()) {
+            logStage("Loader-stub fallback: unloading stub, loading " + loaderDll.string());
+            FreeLibrary(handle);
+            handle = nullptr;
+
+            // Set DLL directory to Resources dir for the loader DLL's own dependencies
+            auto resourcesDir = loaderDll.parent_path().wstring();
+            SetDllDirectoryW(resourcesDir.c_str());
+            logStage("SetDllDirectoryW -> " + loaderDll.parent_path().string());
+
+            handle = LoadLibraryW(loaderDll.c_str());
+            SetDllDirectoryW(oldDllDir[0] ? oldDllDir : nullptr);
+
+            if (!handle) {
+                DWORD err = GetLastError();
+                throw std::runtime_error("Loader-stub fallback: failed to load " + loaderDll.string()
+                                         + " (Win32 error: " + std::to_string(err) + ")");
+            }
+            logStage("Loader-stub fallback: LoadLibrary succeeded.");
+
+            auto initDll2 = reinterpret_cast<bool(*)()>(
+                reinterpret_cast<void*>(GetProcAddress(handle, "InitDll")));
+            if (initDll2) {
+                logStage("Loader-stub fallback: calling InitDll()...");
+                if (!initDll2()) {
+                    FreeLibrary(handle);
+                    throw std::runtime_error("Loader-stub fallback: InitDll() returned false for: " + loaderDll.string());
+                }
+                logStage("Loader-stub fallback: InitDll() succeeded.");
+            }
+
+            auto getFactory2 = reinterpret_cast<Steinberg::IPluginFactory* (*)()>(
+                reinterpret_cast<void*>(GetProcAddress(handle, "GetPluginFactory")));
+            if (getFactory2) {
+                logStage("Loader-stub fallback: calling GetPluginFactory()...");
+                factory = getFactory2();
+                logStage("Loader-stub fallback: GetPluginFactory() " +
+                         std::string(factory ? "succeeded!" : "returned null again."));
+            }
+
+            if (!factory) {
+                FreeLibrary(handle);
+                throw std::runtime_error("Loader-stub fallback: GetPluginFactory still returned null from " + loaderDll.string());
+            }
+        } else {
+            FreeLibrary(handle);
+            throw std::runtime_error("GetPluginFactory returned null.");
+        }
 #else
         dlclose(handle);
-#endif
         throw std::runtime_error("GetPluginFactory returned null.");
+#endif
     }
 
     progressCb(50, "Extracting plugin metadata...");
@@ -527,6 +683,8 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
         throw std::runtime_error("SKIP: VST3 factory contains no scannable processor classes.");
     }
 
+    logStage("Found scannable class at index " + std::to_string(foundClassIndex) + ": \"" + classInfo.name + "\"");
+
     rps::ipc::ScanResult result;
     result.name = classInfo.name;
     result.version = "1.0.0";
@@ -536,52 +694,60 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
     snprintf(uidBuf, sizeof(uidBuf), "%08X%08X%08X%08X", 
         classInfo.cid[0], classInfo.cid[1], classInfo.cid[2], classInfo.cid[3]);
     result.uid = uidBuf;
+    logStage("UID: " + result.uid);
 
     // Extract factory-level info (vendor, URL, email) as baseline
+    logStage("Calling getFactoryInfo()...");
     Steinberg::PFactoryInfo factoryInfo;
     if (factory->getFactoryInfo(&factoryInfo) == Steinberg::kResultOk) {
         result.vendor = factoryInfo.vendor;
         result.url = factoryInfo.url;
+        logStage("Factory info: vendor=\"" + result.vendor + "\" url=\"" + result.url + "\"");
     } else {
         result.vendor = "Unknown VST3 Vendor";
+        logStage("getFactoryInfo() failed.");
     }
 
     // Attempt to query IPluginFactory2 for per-class details (may override vendor/version)
+    logStage("Querying IPluginFactory2...");
     Steinberg::IPluginFactory2* factory2 = nullptr;
     if (factory->queryInterface(Steinberg::IPluginFactory2::iid, reinterpret_cast<void**>(&factory2)) == Steinberg::kResultOk) {
+        logStage("IPluginFactory2 supported. Calling getClassInfo2()...");
         Steinberg::PClassInfo2 classInfo2;
         if (factory2->getClassInfo2(foundClassIndex, &classInfo2) == Steinberg::kResultOk) {
             if (classInfo2.vendor[0] != '\0') result.vendor = classInfo2.vendor;
             if (classInfo2.version[0] != '\0') result.version = classInfo2.version;
             result.category = classInfo2.subCategories;
+            logStage("ClassInfo2: vendor=\"" + result.vendor + "\" version=\"" + result.version + "\" subCategories=\"" + result.category + "\"");
+        } else {
+            logStage("getClassInfo2() failed.");
         }
+        logStage("Releasing IPluginFactory2...");
         factory2->release();
+        logStage("IPluginFactory2 released.");
+    } else {
+        logStage("IPluginFactory2 not supported (older plugin).");
     }
 
     result.scanMethod = "factory";
 
-    progressCb(80, "Extracting features...");
     // I/O counts and parameters require full host instantiation (IComponent::initialize,
     // getBusInfo, IEditController). Not available from factory metadata alone.
     result.numInputs = 0;
     result.numOutputs = 0;
 
-    progressCb(90, "Releasing factory...");
-    factory->release();
+    progressCb(90, "Metadata extraction complete.");
+    logStage("Metadata extraction complete — returning result before cleanup.");
 
-#ifdef _WIN32
-    // VST3 Module Architecture: ExitDll must be called before FreeLibrary
-    auto exitDll = reinterpret_cast<bool(*)()>(
-        reinterpret_cast<void*>(GetProcAddress(handle, "ExitDll"))
-    );
-    if (exitDll) exitDll();
-    FreeLibrary(handle);
-#else
-    // VST3 Module Architecture: ModuleExit must be called before dlclose
-    auto moduleExit = reinterpret_cast<bool(*)()>(dlsym(handle, "ModuleExit"));
-    if (moduleExit) moduleExit();
-    dlclose(handle);
-#endif
+    // IMPORTANT: Return the result BEFORE cleanup. Some plugins (e.g. LX480 v4)
+    // crash with ACCESS_VIOLATION during factory->release(), ExitDll(), or
+    // FreeLibrary(). Since the scanner process exits immediately after returning,
+    // the OS reclaims all resources. Skipping explicit cleanup is safe and
+    // prevents losing a perfectly good scan result to a buggy destructor.
+    //
+    // The caller (main.cpp) sends the result via IPC, then the process exits.
+    // On exit, Windows automatically: unloads all DLLs, frees all memory,
+    // closes all handles.
 
     progressCb(100, "Done.");
     return result;
