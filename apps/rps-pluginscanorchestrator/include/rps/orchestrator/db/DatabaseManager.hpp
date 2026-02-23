@@ -34,6 +34,14 @@ public:
     // Called automatically by upsertPluginResult when format is "aax".
     void upsertAaxPluginVariants(int64_t pluginId, const rps::ipc::ScanResult& result);
 
+    // Record a skipped plugin (not scannable, e.g. empty bundle)
+    void recordPluginSkip(const boost::filesystem::path& pluginPath, const std::string& format,
+                          const std::string& reason, const std::string& fileMtime = "");
+
+    // Record a blocked plugin (exhausted all retries or timed out)
+    void recordPluginBlocked(const boost::filesystem::path& pluginPath, const std::string& format,
+                             const std::string& reason, const std::string& fileMtime = "");
+
     // --- Incremental scan support ---
 
     struct PluginCacheEntry {
@@ -42,14 +50,20 @@ public:
         std::string status;
     };
 
-    // Load all plugin entries from DB for incremental comparison
-    std::map<std::string, PluginCacheEntry> loadPluginCache();
+    // Load plugin entries from DB for incremental comparison (filtered by formats)
+    std::map<std::string, PluginCacheEntry> loadPluginCache(const std::vector<std::string>& formats = {});
+
+    // Load skipped plugin paths from plugins_skipped for incremental comparison (filtered by formats)
+    std::map<std::string, std::string> loadSkippedCache(const std::vector<std::string>& formats = {});
+
+    // Load blocked plugin paths from plugins_blocked for incremental comparison (filtered by formats)
+    std::map<std::string, std::string> loadBlockedCache(const std::vector<std::string>& formats = {});
 
     // Delete plugins and parameters for the specified formats only (for full scan mode)
     void clearPluginsByFormats(const std::vector<std::string>& formats);
 
-    // Remove DB entries for plugins no longer present on disk. Returns count removed.
-    size_t removeStaleEntries(const std::set<std::string>& validPaths);
+    // Remove DB entries for plugins no longer present on disk (filtered by formats). Returns count removed.
+    size_t removeStaleEntries(const std::set<std::string>& validPaths, const std::vector<std::string>& formats = {});
 
     // Compute CRC32 hash of a file (hex string)
     static std::string computeFileHash(const boost::filesystem::path& filePath);

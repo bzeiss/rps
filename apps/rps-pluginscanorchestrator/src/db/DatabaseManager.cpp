@@ -88,9 +88,33 @@ void DatabaseManager::initializeSchema() {
         );
     )";
 
+    const std::string createTablePluginsSkipped = R"(
+        CREATE TABLE IF NOT EXISTS plugins_skipped (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT UNIQUE NOT NULL,
+            format TEXT,
+            reason TEXT,
+            file_mtime TEXT,
+            last_scanned TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    )";
+
+    const std::string createTablePluginsBlocked = R"(
+        CREATE TABLE IF NOT EXISTS plugins_blocked (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT UNIQUE NOT NULL,
+            format TEXT,
+            reason TEXT,
+            file_mtime TEXT,
+            last_scanned TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    )";
+
     executeQuery(createTablePlugins);
     executeQuery(createTableParameters);
     executeQuery(createTableAaxPlugins);
+    executeQuery(createTablePluginsSkipped);
+    executeQuery(createTablePluginsBlocked);
 
     // Enable WAL mode for better concurrent write performance.
     // WAL allows readers and writers to operate simultaneously.
@@ -296,6 +320,7 @@ void DatabaseManager::recordPluginFailure(const boost::filesystem::path& pluginP
                                            int64_t scanTimeMs, const std::string& fileMtime, const std::string& fileHash) {
     std::lock_guard<std::mutex> lock(m_dbMutex);
 
+    executeQuery("BEGIN TRANSACTION;");
     sqlite3_stmt* stmt = nullptr;
     
     const std::string upsertFailureSql = R"(
@@ -326,13 +351,144 @@ void DatabaseManager::recordPluginFailure(const boost::filesystem::path& pluginP
         std::cerr << "Failed to execute plugin failure update.\n";
     }
     sqlite3_finalize(stmt);
+    executeQuery("COMMIT;");
 }
 
-std::map<std::string, DatabaseManager::PluginCacheEntry> DatabaseManager::loadPluginCache() {
+void DatabaseManager::recordPluginSkip(const boost::filesystem::path& pluginPath, const std::string& format,
+                                        const std::string& reason, const std::string& fileMtime) {
+    std::lock_guard<std::mutex> lock(m_dbMutex);
+
+    executeQuery("BEGIN TRANSACTION;");
+    sqlite3_stmt* stmt = nullptr;
+
+    const std::string upsertSql = R"(
+        INSERT INTO plugins_skipped (path, format, reason, file_mtime, last_scanned)
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(path) DO UPDATE SET
+            format=excluded.format,
+            reason=excluded.reason,
+            file_mtime=excluded.file_mtime,
+            last_scanned=excluded.last_scanned;
+    )";
+
+    if (sqlite3_prepare_v2(m_db, upsertSql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "Failed to prepare plugin skip statement.\n";
+        executeQuery("ROLLBACK;");
+        return;
+    }
+
+    std::string pathStr = pluginPath.string();
+    sqlite3_bind_text(stmt, 1, pathStr.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, format.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, reason.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4, fileMtime.c_str(), -1, SQLITE_TRANSIENT);
+
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        std::cerr << "Failed to execute plugin skip upsert.\n";
+    }
+    sqlite3_finalize(stmt);
+    executeQuery("COMMIT;");
+}
+
+std::map<std::string, std::string> DatabaseManager::loadSkippedCache(const std::vector<std::string>& formats) {
+    std::lock_guard<std::mutex> lock(m_dbMutex);
+    std::map<std::string, std::string> cache;
+
+    std::string sql = "SELECT path, file_mtime FROM plugins_skipped";
+    if (!formats.empty()) {
+        std::string inClause;
+        for (size_t i = 0; i < formats.size(); ++i) {
+            if (i > 0) inClause += ",";
+            inClause += "'" + formats[i] + "'";
+        }
+        sql += " WHERE format IN (" + inClause + ")";
+    }
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(m_db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) return cache;
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        std::string path = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        const char* mt = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        cache[path] = mt ? mt : "";
+    }
+    sqlite3_finalize(stmt);
+    return cache;
+}
+
+void DatabaseManager::recordPluginBlocked(const boost::filesystem::path& pluginPath, const std::string& format,
+                                           const std::string& reason, const std::string& fileMtime) {
+    std::lock_guard<std::mutex> lock(m_dbMutex);
+
+    executeQuery("BEGIN TRANSACTION;");
+    sqlite3_stmt* stmt = nullptr;
+
+    const std::string upsertSql = R"(
+        INSERT INTO plugins_blocked (path, format, reason, file_mtime, last_scanned)
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(path) DO UPDATE SET
+            format=excluded.format,
+            reason=excluded.reason,
+            file_mtime=excluded.file_mtime,
+            last_scanned=excluded.last_scanned;
+    )";
+
+    if (sqlite3_prepare_v2(m_db, upsertSql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "Failed to prepare plugin blocked statement.\n";
+        executeQuery("ROLLBACK;");
+        return;
+    }
+
+    std::string pathStr = pluginPath.string();
+    sqlite3_bind_text(stmt, 1, pathStr.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, format.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, reason.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4, fileMtime.c_str(), -1, SQLITE_TRANSIENT);
+
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        std::cerr << "Failed to execute plugin blocked upsert.\n";
+    }
+    sqlite3_finalize(stmt);
+    executeQuery("COMMIT;");
+}
+
+std::map<std::string, std::string> DatabaseManager::loadBlockedCache(const std::vector<std::string>& formats) {
+    std::lock_guard<std::mutex> lock(m_dbMutex);
+    std::map<std::string, std::string> cache;
+
+    std::string sql = "SELECT path, file_mtime FROM plugins_blocked";
+    if (!formats.empty()) {
+        std::string inClause;
+        for (size_t i = 0; i < formats.size(); ++i) {
+            if (i > 0) inClause += ",";
+            inClause += "'" + formats[i] + "'";
+        }
+        sql += " WHERE format IN (" + inClause + ")";
+    }
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(m_db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) return cache;
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        std::string path = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        const char* mt = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        cache[path] = mt ? mt : "";
+    }
+    sqlite3_finalize(stmt);
+    return cache;
+}
+
+std::map<std::string, DatabaseManager::PluginCacheEntry> DatabaseManager::loadPluginCache(const std::vector<std::string>& formats) {
     std::lock_guard<std::mutex> lock(m_dbMutex);
     std::map<std::string, PluginCacheEntry> cache;
 
-    const std::string sql = "SELECT path, file_mtime, file_hash, status FROM plugins";
+    std::string sql = "SELECT path, file_mtime, file_hash, status FROM plugins";
+    if (!formats.empty()) {
+        std::string inClause;
+        for (size_t i = 0; i < formats.size(); ++i) {
+            if (i > 0) inClause += ",";
+            inClause += "'" + formats[i] + "'";
+        }
+        sql += " WHERE format IN (" + inClause + ")";
+    }
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(m_db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) return cache;
 
@@ -363,19 +519,31 @@ void DatabaseManager::clearPluginsByFormats(const std::vector<std::string>& form
         inClause += "'" + formats[i] + "'";
     }
 
+    executeQuery("BEGIN TRANSACTION;");
     // Delete child rows for matching plugins first (FK)
     executeQuery("DELETE FROM aax_plugins WHERE plugin_id IN (SELECT id FROM plugins WHERE format IN (" + inClause + "));");
     executeQuery("DELETE FROM parameters WHERE plugin_id IN (SELECT id FROM plugins WHERE format IN (" + inClause + "));");
     executeQuery("DELETE FROM plugins WHERE format IN (" + inClause + ");");
+    executeQuery("DELETE FROM plugins_skipped WHERE format IN (" + inClause + ");");
+    executeQuery("DELETE FROM plugins_blocked WHERE format IN (" + inClause + ");");
+    executeQuery("COMMIT;");
 }
 
-size_t DatabaseManager::removeStaleEntries(const std::set<std::string>& validPaths) {
+size_t DatabaseManager::removeStaleEntries(const std::set<std::string>& validPaths, const std::vector<std::string>& formats) {
     std::lock_guard<std::mutex> lock(m_dbMutex);
     size_t removed = 0;
 
-    // Collect all paths in DB
+    // Collect paths in DB (filtered by formats if provided)
     std::vector<std::string> dbPaths;
-    const std::string sql = "SELECT path FROM plugins";
+    std::string sql = "SELECT path FROM plugins";
+    if (!formats.empty()) {
+        std::string inClause;
+        for (size_t i = 0; i < formats.size(); ++i) {
+            if (i > 0) inClause += ",";
+            inClause += "'" + formats[i] + "'";
+        }
+        sql += " WHERE format IN (" + inClause + ")";
+    }
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(m_db, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
         while (sqlite3_step(stmt) == SQLITE_ROW) {
@@ -384,30 +552,78 @@ size_t DatabaseManager::removeStaleEntries(const std::set<std::string>& validPat
         sqlite3_finalize(stmt);
     }
 
+    // Also collect stale skipped and blocked paths
+    auto collectAuxPaths = [&](const std::string& table) {
+        std::vector<std::string> paths;
+        std::string auxSql = "SELECT path FROM " + table;
+        if (!formats.empty()) {
+            std::string inClause;
+            for (size_t i = 0; i < formats.size(); ++i) {
+                if (i > 0) inClause += ",";
+                inClause += "'" + formats[i] + "'";
+            }
+            auxSql += " WHERE format IN (" + inClause + ")";
+        }
+        if (sqlite3_prepare_v2(m_db, auxSql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
+            while (sqlite3_step(stmt) == SQLITE_ROW) {
+                paths.push_back(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0)));
+            }
+            sqlite3_finalize(stmt);
+        }
+        return paths;
+    };
+    auto dbSkippedPaths = collectAuxPaths("plugins_skipped");
+    auto dbBlockedPaths = collectAuxPaths("plugins_blocked");
+
+    // Prepare statements once, reuse in loop
+    sqlite3_stmt* stmtDelAax = nullptr;
+    sqlite3_stmt* stmtDelParams = nullptr;
+    sqlite3_stmt* stmtDelPlugin = nullptr;
+    sqlite3_stmt* stmtDelSkip = nullptr;
+    sqlite3_stmt* stmtDelBlock = nullptr;
+    sqlite3_prepare_v2(m_db, "DELETE FROM aax_plugins WHERE plugin_id IN (SELECT id FROM plugins WHERE path = ?)", -1, &stmtDelAax, nullptr);
+    sqlite3_prepare_v2(m_db, "DELETE FROM parameters WHERE plugin_id IN (SELECT id FROM plugins WHERE path = ?)", -1, &stmtDelParams, nullptr);
+    sqlite3_prepare_v2(m_db, "DELETE FROM plugins WHERE path = ?", -1, &stmtDelPlugin, nullptr);
+    sqlite3_prepare_v2(m_db, "DELETE FROM plugins_skipped WHERE path = ?", -1, &stmtDelSkip, nullptr);
+    sqlite3_prepare_v2(m_db, "DELETE FROM plugins_blocked WHERE path = ?", -1, &stmtDelBlock, nullptr);
+
+    auto deleteByPath = [&](sqlite3_stmt* s, const std::string& p) {
+        if (s) {
+            sqlite3_bind_text(s, 1, p.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_step(s);
+            sqlite3_reset(s);
+        }
+    };
+
+    executeQuery("BEGIN TRANSACTION;");
     for (const auto& p : dbPaths) {
         if (validPaths.find(p) == validPaths.end()) {
-            // Path no longer on disk — remove
-            const std::string delAax = "DELETE FROM aax_plugins WHERE plugin_id IN (SELECT id FROM plugins WHERE path = ?)";
-            if (sqlite3_prepare_v2(m_db, delAax.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
-                sqlite3_bind_text(stmt, 1, p.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_step(stmt);
-                sqlite3_finalize(stmt);
-            }
-            const std::string delParams = "DELETE FROM parameters WHERE plugin_id IN (SELECT id FROM plugins WHERE path = ?)";
-            if (sqlite3_prepare_v2(m_db, delParams.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
-                sqlite3_bind_text(stmt, 1, p.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_step(stmt);
-                sqlite3_finalize(stmt);
-            }
-            const std::string delPlugin = "DELETE FROM plugins WHERE path = ?";
-            if (sqlite3_prepare_v2(m_db, delPlugin.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
-                sqlite3_bind_text(stmt, 1, p.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_step(stmt);
-                sqlite3_finalize(stmt);
-            }
+            deleteByPath(stmtDelAax, p);
+            deleteByPath(stmtDelParams, p);
+            deleteByPath(stmtDelPlugin, p);
             removed++;
         }
     }
+    for (const auto& p : dbSkippedPaths) {
+        if (validPaths.find(p) == validPaths.end()) {
+            deleteByPath(stmtDelSkip, p);
+            removed++;
+        }
+    }
+    for (const auto& p : dbBlockedPaths) {
+        if (validPaths.find(p) == validPaths.end()) {
+            deleteByPath(stmtDelBlock, p);
+            removed++;
+        }
+    }
+    executeQuery("COMMIT;");
+
+    if (stmtDelAax) sqlite3_finalize(stmtDelAax);
+    if (stmtDelParams) sqlite3_finalize(stmtDelParams);
+    if (stmtDelPlugin) sqlite3_finalize(stmtDelPlugin);
+    if (stmtDelSkip) sqlite3_finalize(stmtDelSkip);
+    if (stmtDelBlock) sqlite3_finalize(stmtDelBlock);
+
     return removed;
 }
 

@@ -185,13 +185,15 @@ int main(int argc, char* argv[]) {
     }
 
     size_t skippedUnchanged = 0;
+    auto startTime = std::chrono::steady_clock::now();
+
+    // Collect format short names (used by both full and incremental mode)
+    std::vector<std::string> formatNames;
+    for (const auto* traits : formatsToScan) {
+        formatNames.push_back(traits->getName());
+    }
 
     if (scanMode == "full") {
-        // Collect format short names for targeted clearing
-        std::vector<std::string> formatNames;
-        for (const auto* traits : formatsToScan) {
-            formatNames.push_back(traits->getName());
-        }
         std::string fmtList;
         for (size_t i = 0; i < formatNames.size(); ++i) {
             if (i > 0) fmtList += ", ";
@@ -208,18 +210,41 @@ int main(int argc, char* argv[]) {
             discoveredPaths.insert(p.string());
         }
 
-        // Remove stale entries (plugins in DB but no longer on disk)
-        size_t staleRemoved = db.removeStaleEntries(discoveredPaths);
+        // Remove stale entries (plugins in DB but no longer on disk) -- only for scanned formats
+        size_t staleRemoved = db.removeStaleEntries(discoveredPaths, formatNames);
         if (staleRemoved > 0) {
             std::cout << "Removed " << staleRemoved << " stale database entries (plugins no longer on disk).\n";
         }
 
-        // Load cache and filter out unchanged plugins
-        auto cache = db.loadPluginCache();
+        // Load cache and filter out unchanged, skipped, and blocked plugins
+        auto cache = db.loadPluginCache(formatNames);
+        auto skippedCache = db.loadSkippedCache(formatNames);
+        auto blockedCache = db.loadBlockedCache(formatNames);
         std::vector<fs::path> filtered;
+        size_t blockedCount = 0;
 
         for (const auto& p : pluginsToScan) {
             std::string pathStr = p.string();
+            std::string currentMtime = rps::orchestrator::db::DatabaseManager::getFileMtime(p);
+
+            // Check if previously blocked (exhausted retries) and file unchanged
+            auto blockIt = blockedCache.find(pathStr);
+            if (blockIt != blockedCache.end()) {
+                if (currentMtime == blockIt->second) {
+                    blockedCount++;
+                    continue;
+                }
+            }
+
+            // Check if previously skipped (and file unchanged)
+            auto skipIt = skippedCache.find(pathStr);
+            if (skipIt != skippedCache.end()) {
+                if (currentMtime == skipIt->second) {
+                    skippedUnchanged++;
+                    continue;
+                }
+            }
+
             auto it = cache.find(pathStr);
             if (it == cache.end()) {
                 // Not in DB → must scan
@@ -229,24 +254,19 @@ int main(int argc, char* argv[]) {
 
             const auto& entry = it->second;
 
-            // Compare file modification time
-            std::string currentMtime = rps::orchestrator::db::DatabaseManager::getFileMtime(p);
+            // Compare file modification time — mtime is sufficient for change detection
             if (currentMtime != entry.fileMtime) {
                 // mtime differs → rescan
                 filtered.push_back(p);
                 continue;
             }
 
-            // mtime matches → compare hash
-            std::string currentHash = rps::orchestrator::db::DatabaseManager::computeFileHash(p);
-            if (currentHash != entry.fileHash) {
-                // Hash differs → rescan
-                filtered.push_back(p);
-                continue;
-            }
-
             // Unchanged — skip
             skippedUnchanged++;
+        }
+
+        if (blockedCount > 0) {
+            std::cout << "Skipping " << blockedCount << " blocked plugins (previously failed all retries).\n";
         }
 
         if (skippedUnchanged > 0) {
@@ -256,7 +276,9 @@ int main(int argc, char* argv[]) {
         pluginsToScan = std::move(filtered);
 
         if (pluginsToScan.empty()) {
-            std::cout << "All plugins are up-to-date. Nothing to scan.\n";
+            auto endTime = std::chrono::steady_clock::now();
+            auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+            std::cout << "All plugins are up-to-date. Nothing to scan. (" << elapsedMs << "ms)\n";
             return 0;
         }
     }
@@ -265,13 +287,20 @@ int main(int argc, char* argv[]) {
     size_t totalPlugins = pluginsToScan.size();
     std::vector<rps::orchestrator::ScanJob> jobs;
     for (size_t i = 0; i < pluginsToScan.size(); ++i) {
-        jobs.push_back({ pluginsToScan[i], scannerPath.string(), timeoutMs, verbose, i, totalPlugins, maxRetries, 0 });
+        // Determine format from the plugin path
+        std::string fmt;
+        for (const auto* traits : formatsToScan) {
+            if (traits->isPluginPath(pluginsToScan[i])) {
+                fmt = traits->getName();
+                break;
+            }
+        }
+        jobs.push_back({ pluginsToScan[i], scannerPath.string(), timeoutMs, verbose, i, totalPlugins, maxRetries, 0, fmt });
     }
 
     rps::orchestrator::ConsoleScanObserver observer(verbose);
     rps::orchestrator::ProcessPool pool(numWorkers, &db, &observer);
     
-    auto startTime = std::chrono::steady_clock::now();
     std::cout << "Scanning " << pluginsToScan.size() << " plugin(s).\n";
     std::cout << "Starting process pool with " << numWorkers << " workers (timeout: " << timeoutMs << "ms, retries: " << maxRetries << ")...\n";
     std::cout << "--------------------------------------------------------\n";

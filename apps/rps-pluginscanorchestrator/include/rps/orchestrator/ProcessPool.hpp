@@ -25,6 +25,7 @@ struct ScanJob {
     size_t totalPlugins = 0;
     size_t maxRetries = 3;
     size_t attempt = 0;  // 0 = first try, 1 = first retry, etc.
+    std::string format;  // e.g. "vst3", "clap", "aax" — used to persist skips
 };
 
 class ProcessPool {

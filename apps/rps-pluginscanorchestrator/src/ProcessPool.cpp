@@ -370,6 +370,7 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                         if (m_observer) {
                             m_observer->onPluginCompleted(workerId, pluginFullPath, ScanOutcome::Skipped, elapsedMs, nullptr, &errMsg);
                         }
+                        if (m_db) m_db->recordPluginSkip(job.pluginPath, job.format, err.details, fileMtime);
                         ++m_skipped;
                     } else if (!enqueueRetry(job, errMsg, workerId)) {
                         if (m_observer) {
@@ -377,7 +378,10 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                             std::lock_guard<std::mutex> slock(stderrMutex);
                             m_observer->onWorkerStderrDump(workerId, pluginFullPath, stderrLines);
                         }
-                        if (m_db) m_db->recordPluginFailure(job.pluginPath, errMsg, elapsedMs, fileMtime, fileHash);
+                        if (m_db) {
+                            m_db->recordPluginFailure(job.pluginPath, errMsg, elapsedMs, fileMtime, fileHash);
+                            m_db->recordPluginBlocked(job.pluginPath, job.format, errMsg, fileMtime);
+                        }
                         recordFailure(pluginFullPath, errMsg);
                         ++m_fail;
                     }
@@ -401,7 +405,10 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                             std::lock_guard<std::mutex> slock(stderrMutex);
                             m_observer->onWorkerStderrDump(workerId, pluginFullPath, stderrLines);
                         }
-                        if (m_db) m_db->recordPluginFailure(job.pluginPath, errMsg, elapsedMs, fileMtime, fileHash);
+                        if (m_db) {
+                            m_db->recordPluginFailure(job.pluginPath, errMsg, elapsedMs, fileMtime, fileHash);
+                            m_db->recordPluginBlocked(job.pluginPath, job.format, errMsg, fileMtime);
+                        }
                         recordFailure(pluginFullPath, errMsg);
                         if (isHardCrash) ++m_crash; else ++m_fail;
                     }
@@ -416,7 +423,10 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                         std::lock_guard<std::mutex> slock(stderrMutex);
                         m_observer->onWorkerStderrDump(workerId, pluginFullPath, stderrLines);
                     }
-                    if (m_db) m_db->recordPluginFailure(job.pluginPath, errMsg, elapsedMs, fileMtime, fileHash);
+                    if (m_db) {
+                        m_db->recordPluginFailure(job.pluginPath, errMsg, elapsedMs, fileMtime, fileHash);
+                        m_db->recordPluginBlocked(job.pluginPath, job.format, errMsg, fileMtime);
+                    }
                     recordFailure(pluginFullPath, errMsg);
                     ++m_timeout;
                     scannerProc.terminate();
