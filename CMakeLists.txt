@@ -81,7 +81,7 @@ add_subdirectory(libs/rps-ipc)
 add_subdirectory(libs/rps-engine)
 
 # Include directories for applications
-add_subdirectory(apps/rps-pluginscanorchestrator)
+add_subdirectory(apps/rps-standalone)
 add_subdirectory(apps/rps-pluginscanner)
 add_subdirectory(apps/rps-server)
 

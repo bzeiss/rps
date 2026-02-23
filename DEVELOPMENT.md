@@ -20,7 +20,7 @@ RPS solves this problem by using a strict **multi-process architecture**:
    - Logs to console and file via `spdlog`.
    - Can be driven from any language (Python, C++, etc.).
 
-3. **`rps-pluginscanorchestrator`** (Standalone CLI)
+3. **`rps-standalone`** (Standalone CLI)
    - A thin CLI wrapper (~100 lines) around `rps-engine`. No server needed.
 
 4. **`rps-pluginscanner`** (The Worker)
@@ -89,7 +89,7 @@ We have successfully completed **Phase 1 (IPC Foundation)**, **Phase 2 (Process 
 
 #### Libraries
 - `libs/rps-core/`: Format traits, registry, and filesystem discovery logic.
-- `libs/rps-ipc/`: Shared IPC transport layer and JSON serialization logic (orchestrator ↔ scanner).
+- `libs/rps-ipc/`: Shared IPC transport layer and JSON serialization logic (engine ↔ scanner).
 - `libs/rps-engine/`: **The reusable scan engine library** (namespace `rps::engine`). Contains all orchestration logic extracted from the original CLI app:
   - `ScanEngine.hpp/.cpp`: Top-level `ScanEngine` class with `runScan(ScanConfig, ScanObserver*)`. Thread-safe (one scan at a time).
   - `ScanConfig`: Struct encapsulating all scan parameters (formats, mode, jobs, timeout, etc.).
@@ -99,7 +99,7 @@ We have successfully completed **Phase 1 (IPC Foundation)**, **Phase 2 (Process 
   - `db/DatabaseManager.hpp/.cpp`: SQLite database layer — schema, upserts, incremental cache, skipped/blocked management.
 
 #### Applications
-- `apps/rps-pluginscanorchestrator/`: Standalone CLI wrapper. A thin `main.cpp` (~100 lines) that parses CLI args into `ScanConfig` and calls `ScanEngine::runScan()`.
+- `apps/rps-standalone/`: Standalone CLI wrapper. A thin `main.cpp` (~100 lines) that parses CLI args into `ScanConfig` and calls `ScanEngine::runScan()`.
 - `apps/rps-pluginscanner/`: The worker application. Loads the plugin DLL natively.
   - `src/scanners/Vst3Scanner.cpp`: VST3 scanning via native COM/module loading.
   - `src/scanners/ClapScanner.cpp`: CLAP scanning via the CLAP C API.
@@ -123,31 +123,31 @@ Located in `libs/rps-ipc/include/rps/ipc/Messages.hpp`.
 Instead of binary serialization like Protobuf, we chose to serialize our IPC messages as **JSON strings** using `Boost.JSON`. This provides clean, extensible, and easily debuggable messages. If a scanner crashes, we can easily inspect the last JSON payload sent over the pipe.
 
 The protocol consists of a wrapper `Message` struct containing a variant payload:
-- `ScanRequest`: Sent by Orchestrator -> Scanner. Contains the path to the `.dll`/`.so`.
-- `ProgressEvent`: Sent by Scanner -> Orchestrator. Contains percentage and status strings (e.g., "Instantiating Plugin"). Crucial for resetting the Orchestrator's watchdog timer.
-- `ScanResult`: Sent by Scanner -> Orchestrator on success. Contains rich DAW-ready metadata: Name, Vendor, Version, UID, Description, URL, Categories, Parameter lists, and an `extraData` map for format-specific metadata (e.g., AAX variant triad IDs).
-- `ErrorMessage`: Sent by Scanner -> Orchestrator on caught, non-fatal errors. Errors prefixed with `SKIP:` are treated as non-scannable plugins (stored in `plugins_skipped`).
+- `ScanRequest`: Sent by Engine -> Scanner. Contains the path to the `.dll`/`.so`.
+- `ProgressEvent`: Sent by Scanner -> Engine. Contains percentage and status strings (e.g., "Instantiating Plugin"). Crucial for resetting the engine's watchdog timer.
+- `ScanResult`: Sent by Scanner -> Engine on success. Contains rich DAW-ready metadata: Name, Vendor, Version, UID, Description, URL, Categories, Parameter lists, and an `extraData` map for format-specific metadata (e.g., AAX variant triad IDs).
+- `ErrorMessage`: Sent by Scanner -> Engine on caught, non-fatal errors. Errors prefixed with `SKIP:` are treated as non-scannable plugins (stored in `plugins_skipped`).
 
 ### 3.3 The IPC Transport Layer
 Located in `libs/rps-ipc/include/rps/ipc/Connection.hpp`.
 
 We use **Boost.Interprocess** `message_queue` for fast, local, cross-platform communication. 
-Each worker is assigned a unique UUID by the orchestrator at startup. The orchestrator spawns two queues per worker (one for TX, one for RX) named using that UUID. The scanner receives this UUID via command-line arguments and connects to the existing queues.
+Each worker is assigned a unique UUID by the engine at startup. The engine spawns two queues per worker (one for TX, one for RX) named using that UUID. The scanner receives this UUID via command-line arguments and connects to the existing queues.
 
 ### 3.4 Crash Isolation, Watchdog Logic, and UI Suppression
 The core feature of RPS is fully implemented in `ProcessPool.cpp` and `scanner/main.cpp`:
 
-1. The orchestrator uses `boost::process` to spawn the scanner and passes the IPC UUID.
-2. **UI Suppression (Windows)**: The orchestrator assigns the scanner child process to a Windows Job Object with `JOB_OBJECT_UILIMIT_HANDLES`. This silently blocks the plugin from creating Win32 `MessageBox` dialogs (which commonly happen during license/mutex failures) that would otherwise block the scanner indefinitely. The scanner itself also calls `SetErrorMode` to suppress OS-level crash dialogs.
-3. The orchestrator enters a polling loop. Every time it receives a `ProgressEvent`, it updates a `lastResponseTime` timestamp.
-4. If the process dies (e.g., a **Segmentation Fault** / `0xC0000005`), the orchestrator catches it gracefully, logs the exit code, and moves on.
-5. If the process is still running but the time since `lastResponseTime` exceeds a defined `--timeout`, the orchestrator assumes the plugin is **hung/deadlocked**, calls `scannerProc.terminate()`, and gracefully moves on.
+1. The engine uses `boost::process` to spawn the scanner and passes the IPC UUID.
+2. **UI Suppression (Windows)**: The engine assigns the scanner child process to a Windows Job Object with `JOB_OBJECT_UILIMIT_HANDLES`. This silently blocks the plugin from creating Win32 `MessageBox` dialogs (which commonly happen during license/mutex failures) that would otherwise block the scanner indefinitely. The scanner itself also calls `SetErrorMode` to suppress OS-level crash dialogs.
+3. The engine enters a polling loop. Every time it receives a `ProgressEvent`, it updates a `lastResponseTime` timestamp.
+4. If the process dies (e.g., a **Segmentation Fault** / `0xC0000005`), the engine catches it gracefully, logs the exit code, and moves on.
+5. If the process is still running but the time since `lastResponseTime` exceeds a defined `--timeout`, the engine assumes the plugin is **hung/deadlocked**, calls `scannerProc.terminate()`, and gracefully moves on.
 
 ### 3.5 Scanner Process Lifecycle
 After extracting metadata, the scanner process must exit as fast as possible. Plugin DLLs frequently hang during cleanup (`DLL_PROCESS_DETACH` on Windows, `dlclose` callbacks on Linux/macOS). RPS handles this with a two-sided approach:
 
 - **Scanner side**: On Windows, the scanner calls `TerminateProcess(GetCurrentProcess(), 0)` instead of `_exit(0)` to skip `DLL_PROCESS_DETACH` handlers entirely. On other platforms, `_exit(0)` suffices.
-- **Orchestrator side**: After receiving the scan result via IPC, the orchestrator immediately calls `terminate()` on the child process (no grace period) and explicitly closes the stderr pipe to unblock the drainer thread. This eliminates any post-scan delay.
+- **Engine side**: After receiving the scan result via IPC, the engine immediately calls `terminate()` on the child process (no grace period) and explicitly closes the stderr pipe to unblock the drainer thread. This eliminates any post-scan delay.
 
 ### 3.6 Database Performance
 SQLite writes are wrapped in explicit `BEGIN TRANSACTION / COMMIT` blocks. Without this, each parameter INSERT is an implicit transaction with its own `fsync` -- a plugin with 2000+ parameters would take 30-50 seconds to persist. With explicit transactions, the same operation completes in under 50ms.
@@ -183,7 +183,7 @@ The cache files use a tab-indented text format containing multiple plugin varian
 1. Parses all variants into `AaxPluginVariant` structs.
 2. Picks the "best" variant for the main `ScanResult` (Native/PlugInType=3 preferred, stereo preferred).
 3. Packs **all** variant data into `ScanResult.extraData` as key-value pairs (e.g., `aax_v0_manufacturer_id`, `aax_v0_product_id_num`, etc.).
-4. The orchestrator unpacks `extraData` into the `aax_plugins` table (1:N relationship with `plugins`).
+4. The engine unpacks `extraData` into the `aax_plugins` table (1:N relationship with `plugins`).
 
 FourCC codes containing non-ASCII bytes (invalid UTF-8) are sanitized to hex representation (e.g., `0xD2C0AAA5`) to keep JSON serialization safe. The numeric IDs are stored separately and are what PTSL (Pro Tools Scripting) needs.
 
@@ -201,7 +201,7 @@ FourCC codes containing non-ASCII bytes (invalid UTF-8) are sanitized to hex rep
 All mutating database operations are wrapped in explicit `BEGIN TRANSACTION / COMMIT` blocks for both atomicity and performance.
 
 ### 3.11 Build Robustness & Static Linking
-To ensure the orchestrator and scanner binaries are portable and do not fail with "missing DLL" errors (exit code 127 on Windows), we strictly **statically link** the C/C++ runtimes (`-static-libgcc -static-libstdc++`), Boost, and SQLite. On Windows, we use the MSYS2 Clang64 environment for the most compliant C++23 build.
+To ensure the scanner binaries are portable and do not fail with "missing DLL" errors (exit code 127 on Windows), we strictly **statically link** the C/C++ runtimes (`-static-libgcc -static-libstdc++`), Boost, and SQLite. On Windows, we use the MSYS2 Clang64 environment for the most compliant C++23 build.
 
 ---
 

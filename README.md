@@ -10,7 +10,7 @@ Scanning audio plugins is notoriously unreliable. Many plugins contain bugs, fai
 
 RPS solves this by using a **multi-process architecture**:
 - **`rps-server`**: A gRPC server that coordinates scanning. It manages a pool of worker processes, handles watchdogs/timeouts, streams progress events to clients, and aggregates results into a central SQLite database. If a plugin crashes, only the worker dies—the server logs the failure and moves on.
-- **`rps-pluginscanorchestrator`**: A standalone CLI wrapper around the same scan engine (no server needed).
+- **`rps-standalone`**: A standalone CLI wrapper around the same scan engine (no server needed).
 - **`rps-pluginscanner`**: The worker. It isolates the unsafe, third-party plugin code from the rest of your system.
 - **`examples/python/`**: A Python TUI client using `rich` that spawns/kills the server and displays per-worker progress bars.
 
@@ -173,27 +173,27 @@ cmake --build build
 ### Build Output
 
 After a successful build, you will find four binaries in the `build/` directory:
-- `build/apps/rps-pluginscanorchestrator/rps-pluginscanorchestrator` (or `.exe`) — standalone CLI
+- `build/apps/rps-standalone/rps-standalone` (or `.exe`) — standalone CLI
 - `build/apps/rps-pluginscanner/rps-pluginscanner` (or `.exe`) — scanner worker
 - `build/apps/rps-server/rps-server` (or `.exe`) — gRPC server
 - `build/examples/cpp/rps-example-client` (or `.exe`) — C++ gRPC example client
 
-The orchestrator and server both auto-locate `rps-pluginscanner` relative to their own path.
+The standalone CLI and server both auto-locate `rps-pluginscanner` relative to their own path.
 
 ## Usage
 
 RPS can be used in two ways:
-1. **Standalone CLI** (`rps-pluginscanorchestrator`) — run scans directly from the command line.
+1. **Standalone CLI** (`rps-standalone`) — run scans directly from the command line.
 2. **gRPC Server** (`rps-server`) — a long-lived daemon that accepts scan requests from any language client. See [gRPC Server](#grpc-server) and [Python TUI Client](#python-tui-client) below.
 
 ### Standalone CLI
 
-The orchestrator will automatically spawn the worker scanner processes as needed.
+The standalone CLI will automatically spawn the worker scanner processes as needed.
 
 #### Command Line Arguments
 
 ```text
-Orchestrator Options:
+RPS Standalone Options:
   -h [ --help ]                         Produce help message
   -d [ --scan-dir ] arg                 Directories to recursively scan for plugins
   -s [ --scan ] arg                     Single file to scan
@@ -212,62 +212,62 @@ Orchestrator Options:
 ### Examples
 
 **1. Scan the default OS plugin directories for all formats**
-If you run the orchestrator without any path arguments, it will automatically search the standard VST3, CLAP, AU, and AAX folders for your specific OS. VST2 is excluded from `all` and must be explicitly requested (see below).
+If you run `rps-standalone` without any path arguments, it will automatically search the standard VST3, CLAP, AU, and AAX folders for your specific OS. VST2 is excluded from `all` and must be explicitly requested (see below).
 ```bash
-./rps-pluginscanorchestrator
+./rps-standalone
 ```
 
 **2. Scan only VST3 and CLAP formats**
 ```bash
-./rps-pluginscanorchestrator --formats vst3,clap
+./rps-standalone --formats vst3,clap
 ```
 
 **3. Scan VST2 plugins (requires VST2 build — see [Optional: VST2.4 Support](#optional-vst24-support))**
 ```bash
 # VST2 must be explicitly requested — it is never included in --formats all
-./rps-pluginscanorchestrator --formats vst2
-./rps-pluginscanorchestrator --formats vst3,clap,vst2
+./rps-standalone --formats vst2
+./rps-standalone --formats vst3,clap,vst2
 ```
 
 **4. Scan a specific directory**
 ```bash
 # Windows
-rps-pluginscanorchestrator.exe --scan-dir "C:\Program Files\Common Files\VST3"
+rps-standalone.exe --scan-dir "C:\Program Files\Common Files\VST3"
 
 # macOS / Linux
-./rps-pluginscanorchestrator --scan-dir "/Library/Audio/Plug-Ins/VST3"
+./rps-standalone --scan-dir "/Library/Audio/Plug-Ins/VST3"
 ```
 
 **5. Filter plugins by name and limit the count (useful for debugging)**
 ```bash
-rps-pluginscanorchestrator.exe --formats vst3 --filter "FabFilter" --limit 10
+rps-standalone.exe --formats vst3 --filter "FabFilter" --limit 10
 ```
 
 **6. Scan multiple directories with a specific number of workers**
 ```bash
-rps-pluginscanorchestrator.exe --scan-dir "C:\Folder1" "D:\Folder2" --jobs 4
+rps-standalone.exe --scan-dir "C:\Folder1" "D:\Folder2" --jobs 4
 ```
 
 **7. Scan a single plugin with verbose debug output**
 ```bash
-rps-pluginscanorchestrator.exe --scan "C:\VstPlugins\Massive.dll" --verbose
+rps-standalone.exe --scan "C:\VstPlugins\Massive.dll" --verbose
 ```
 
 **8. Scan with a longer timeout (for slow iLok-protected plugins)**
 ```bash
-rps-pluginscanorchestrator.exe --timeout 180000
+rps-standalone.exe --timeout 180000
 ```
 
 **9. Force a full rescan (clear and rescan all plugins of the requested formats)**
 ```bash
-./rps-pluginscanorchestrator --mode full
-./rps-pluginscanorchestrator --formats vst2 --mode full
+./rps-standalone --mode full
+./rps-standalone --formats vst2 --mode full
 ```
 
 **10. Incremental scan (default -- skip unchanged plugins)**
 ```bash
 # This is the default. Only new or modified plugins are scanned.
-./rps-pluginscanorchestrator
+./rps-standalone
 ```
 
 ### Default Plugin Paths

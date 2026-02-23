@@ -16,7 +16,7 @@
 int main(int argc, char* argv[]) {
     namespace po = boost::program_options;
     
-    po::options_description desc("Orchestrator Options");
+    po::options_description desc("RPS Standalone Options");
     desc.add_options()
         ("help,h", "Produce help message")
         ("scan-dir,d", po::value<std::vector<std::string>>()->multitoken(), "Directories to recursively scan for plugins")
@@ -83,7 +83,7 @@ int main(int argc, char* argv[]) {
     }
     if (config.jobs == 0) config.jobs = 1;
 
-    std::cout << "RPS Plugin Scan Orchestrator starting...\n";
+    std::cout << "RPS Standalone Scanner starting...\n";
     std::cout << "Output database: " << config.dbPath << "\n";
 
     rps::engine::ConsoleScanObserver observer(config.verbose);
