@@ -271,6 +271,19 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
             }
         });
 
+        // Helper: safely join the stderr drainer. Must be called before
+        // stderrDrainer goes out of scope, or std::terminate() is triggered.
+        auto safeJoinDrainer = [&]() {
+            try { errStream.pipe().close(); } catch (...) {}
+            if (stderrDrainer.joinable()) stderrDrainer.join();
+        };
+
+        // Everything from here until safeJoinDrainer() is wrapped in a try-catch
+        // that ensures the drainer is joined before any exception propagates.
+        // Without this, stack unwinding would destroy stderrDrainer while still
+        // joinable, triggering std::terminate().
+        try {
+
         rps::ipc::Message reqMsg;
         reqMsg.type = rps::ipc::MessageType::ScanRequest;
         reqMsg.payload = rps::ipc::ScanRequest{ job.pluginPath.string(), "unknown", false };
@@ -285,7 +298,7 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                 ++m_fail;
             }
             scannerProc.terminate();
-            stderrDrainer.join();
+            safeJoinDrainer();
             deregisterWorker();
             return;
         }
@@ -412,38 +425,57 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
             }
         }
 
-        // --- Post-scan cleanup with diagnostic timing ---
-        auto cleanupT0 = std::chrono::steady_clock::now();
-        auto logCleanup = [&](const char* step) {
-            if (job.verbose) {
-                auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - cleanupT0).count();
-                std::cerr << "[Worker #" << workerId << " DBG] cleanup: " << step
-                          << " (+" << dt << "ms) running=" << scannerProc.running() << "\n";
+        // --- Post-scan cleanup ---
+        // stderrDrainer MUST be joined before it goes out of scope, otherwise
+        // std::terminate() is called (destroying a joinable thread is UB).
+        // Wrap cleanup in its own try-catch to guarantee the join.
+        try {
+            auto cleanupT0 = std::chrono::steady_clock::now();
+            auto logCleanup = [&](const char* step) {
+                if (job.verbose) {
+                    auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - cleanupT0).count();
+                    std::cerr << "[Worker #" << workerId << " DBG] cleanup: " << step
+                              << " (+" << dt << "ms) running=" << scannerProc.running() << "\n";
+                }
+            };
+
+            logCleanup("start");
+
+            if (scannerProc.running()) {
+                logCleanup("process still running, terminating");
+                scannerProc.terminate();
+                logCleanup("terminate() returned");
             }
-        };
 
-        logCleanup("start");
-
-        if (scannerProc.running()) {
-            logCleanup("process still running, terminating");
-            scannerProc.terminate();
-            logCleanup("terminate() returned");
+            logCleanup("calling wait()");
+            scannerProc.wait();
+            logCleanup("wait() returned");
+        } catch (const std::exception& ex) {
+            std::cerr << "[Worker #" << workerId << " WARN] cleanup exception: " << ex.what() << "\n";
         }
 
-        logCleanup("calling wait()");
-        scannerProc.wait();
-        logCleanup("wait() returned");
+        // Always close the pipe and join the drainer, even if the above failed
+        safeJoinDrainer();
 
-        logCleanup("closing stderr pipe");
-        errStream.pipe().close();
-        logCleanup("pipe closed, joining drainer");
-
-        stderrDrainer.join();
-        logCleanup("drainer joined, cleanup done");
+        } catch (...) {
+            // Join drainer before re-throwing so ~thread doesn't call std::terminate
+            safeJoinDrainer();
+            throw;
+        }
 
     } catch (const std::exception& e) {
         std::string errMsg = std::string("FATAL: ") + e.what();
+        if (!enqueueRetry(job, errMsg, workerId)) {
+            if (m_observer) {
+                m_observer->onPluginCompleted(workerId, pluginFullPath, ScanOutcome::Crash, 0, nullptr, &errMsg);
+            }
+            recordFailure(pluginFullPath, errMsg);
+            ++m_crash;
+        }
+    } catch (...) {
+        // Catch non-std exceptions to prevent std::terminate
+        std::string errMsg = "FATAL: Unknown exception";
         if (!enqueueRetry(job, errMsg, workerId)) {
             if (m_observer) {
                 m_observer->onPluginCompleted(workerId, pluginFullPath, ScanOutcome::Crash, 0, nullptr, &errMsg);
