@@ -461,7 +461,7 @@ static std::vector<std::string> readBlockedFromDb(const std::string& dbPath) {
 // Write vst3plugins.xml
 // ---------------------------------------------------------------------------
 static void writePluginsXml(const fs::path& outputPath, const std::vector<Vst3PluginInfo>& plugins) {
-    std::ofstream ofs(outputPath.string());
+    std::ofstream ofs(outputPath.string(), std::ios::binary);
     if (!ofs) {
         std::cerr << "Failed to write: " << outputPath << std::endl;
         return;
@@ -521,7 +521,7 @@ static void writePluginsXml(const fs::path& outputPath, const std::vector<Vst3Pl
 // Write vst3blocklist.xml
 // ---------------------------------------------------------------------------
 static void writeBlocklistXml(const fs::path& outputPath, const std::vector<std::string>& blockedPaths) {
-    std::ofstream ofs(outputPath.string());
+    std::ofstream ofs(outputPath.string(), std::ios::binary);
     if (!ofs) {
         std::cerr << "Failed to write: " << outputPath << std::endl;
         return;
@@ -542,7 +542,7 @@ static void writeBlocklistXml(const fs::path& outputPath, const std::vector<std:
 // ---------------------------------------------------------------------------
 static void writeAllowlistXml(const fs::path& outputPath) {
     if (fs::exists(outputPath)) return; // Preserve user-managed allowlist
-    std::ofstream ofs(outputPath.string());
+    std::ofstream ofs(outputPath.string(), std::ios::binary);
     if (!ofs) return;
     ofs << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
     ofs << "<pluginpaths />";
