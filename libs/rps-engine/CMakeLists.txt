@@ -23,7 +23,6 @@ target_link_libraries(rps-engine
         Boost::interprocess
         Boost::uuid
         Boost::dll
-        Boost::crc
 )
 
 if(WIN32)
