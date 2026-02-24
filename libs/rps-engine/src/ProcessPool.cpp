@@ -20,6 +20,7 @@
 #pragma clang diagnostic ignored "-Wdll-attribute-on-redeclaration"
 #pragma clang diagnostic ignored "-Wunused-parameter"
 #pragma clang diagnostic ignored "-Wunused-variable"
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 #endif
 #include <rps/ipc/Connection.hpp>
 #include <boost/process/v1.hpp>
