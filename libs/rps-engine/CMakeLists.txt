@@ -5,7 +5,10 @@ add_library(rps-engine STATIC
     src/db/DatabaseManager.cpp
 )
 
-target_include_directories(rps-engine PUBLIC include)
+target_include_directories(rps-engine
+    PUBLIC include
+    PRIVATE ${BOOST_SOURCE_DIR}/libs/crc/include
+)
 
 target_link_libraries(rps-engine
     PUBLIC
@@ -20,6 +23,7 @@ target_link_libraries(rps-engine
         Boost::interprocess
         Boost::uuid
         Boost::dll
+        Boost::crc
 )
 
 if(WIN32)
