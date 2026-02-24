@@ -3,6 +3,8 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <io.h>
+#include <fcntl.h>
 #endif
 
 #include <iostream>
@@ -205,7 +207,7 @@ static std::string xmlEscape(const std::string& s) {
 }
 
 static std::string xmlElement(const std::string& tag, const std::string& value) {
-    if (value.empty()) return "<" + tag + "/>";
+    if (value.empty()) return "<" + tag + " />";
     return "<" + tag + ">" + xmlEscape(value) + "</" + tag + ">";
 }
 
@@ -238,51 +240,6 @@ static std::string resolvePluginDisplayPath(const std::string& pluginPath) {
         if (c == '\\') c = '/';
     }
     return result;
-}
-
-// ---------------------------------------------------------------------------
-// Get executable timestamp as string (platform-specific)
-// On Windows: FILETIME (100-ns intervals since 1601-01-01)
-// On other platforms: seconds since epoch
-// ---------------------------------------------------------------------------
-static std::string getExecutableTimestamp(const fs::path& pluginPath) {
-    // Find the actual executable within the bundle
-    fs::path execPath = pluginPath;
-
-    // If it's a bundle directory, find the binary inside
-    if (fs::is_directory(pluginPath)) {
-#ifdef _WIN32
-        fs::path candidate = pluginPath / "Contents" / "x86_64-win" / (pluginPath.stem().string() + ".vst3");
-        if (fs::exists(candidate)) execPath = candidate;
-#elif defined(__APPLE__)
-        fs::path candidate = pluginPath / "Contents" / "MacOS" / pluginPath.stem().string();
-        if (fs::exists(candidate)) execPath = candidate;
-#else
-        fs::path candidate = pluginPath / "Contents" / "x86_64-linux" / (pluginPath.stem().string() + ".so");
-        if (fs::exists(candidate)) execPath = candidate;
-#endif
-    }
-
-    if (!fs::exists(execPath) || !fs::is_regular_file(execPath)) {
-        // Fall back to the plugin path itself
-        execPath = pluginPath;
-    }
-
-#ifdef _WIN32
-    WIN32_FILE_ATTRIBUTE_DATA fad;
-    if (GetFileAttributesExW(execPath.wstring().c_str(), GetFileExInfoStandard, &fad)) {
-        ULARGE_INTEGER uli;
-        uli.LowPart = fad.ftLastWriteTime.dwLowDateTime;
-        uli.HighPart = fad.ftLastWriteTime.dwHighDateTime;
-        return std::to_string(uli.QuadPart);
-    }
-#endif
-    // Fallback: use boost mtime as seconds since epoch
-    try {
-        auto mtime = fs::last_write_time(execPath);
-        return std::to_string(static_cast<int64_t>(mtime));
-    } catch (...) {}
-    return "0";
 }
 
 // ---------------------------------------------------------------------------
@@ -475,18 +432,13 @@ static void writePluginsXml(const fs::path& outputPath, const std::vector<Vst3Pl
     for (auto& plugin : plugins) {
         ofs << "<plugin>";
         std::string displayPath = resolvePluginDisplayPath(plugin.path);
-        ofs << "<path>" << xmlEscape(displayPath) << "</path>";
-        ofs << "<vendor>" << xmlEscape(plugin.vendor) << "</vendor>";
-        ofs << "<url>" << xmlEscape(plugin.url) << "</url>";
-        ofs << "<email>" << xmlEscape(plugin.email) << "</email>";
+        ofs << xmlElement("path", displayPath);
+        ofs << xmlElement("vendor", plugin.vendor);
+        ofs << xmlElement("url", plugin.url);
+        ofs << xmlElement("email", plugin.email);
         ofs << "<flags>" << plugin.flags << "</flags>";
         ofs << "<codesigned>false</codesigned>";
         ofs << "<architectures>" << archFlag << "</architectures>";
-
-        std::string timestamp = getExecutableTimestamp(fs::path(plugin.path));
-        ofs << "<timestamps>";
-        ofs << "<executable>" << timestamp << "</executable>";
-        ofs << "</timestamps>";
 
         for (auto& cls : plugin.classes) {
             ofs << "<class>";
@@ -834,8 +786,11 @@ int main(int argc, char* argv[]) {
 
     // --- Without -progress: dump vst3plugins.xml to stdout ---
     if (!showProgress) {
+#ifdef _WIN32
+        _setmode(_fileno(stdout), _O_BINARY);
+#endif
         fs::path xmlPath = outputDir / "vst3plugins.xml";
-        std::ifstream xmlIn(xmlPath.string());
+        std::ifstream xmlIn(xmlPath.string(), std::ios::binary);
         if (xmlIn) {
             std::cout << xmlIn.rdbuf();
         }
