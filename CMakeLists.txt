@@ -50,15 +50,18 @@ set(BOOST_INCLUDE_LIBRARIES json program_options filesystem process interprocess
 add_subdirectory(${BOOST_SOURCE_DIR} ${CMAKE_BINARY_DIR}/_deps/boost EXCLUDE_FROM_ALL)
 
 # Find SQLite3
-# Force finding the static library
-find_library(SQLITE3_STATIC_LIBRARY NAMES libsqlite3.a sqlite3.a REQUIRED)
-find_path(SQLITE3_INCLUDE_DIR NAMES sqlite3.h REQUIRED)
-
-add_library(SQLite::SQLite3 UNKNOWN IMPORTED)
-set_target_properties(SQLite::SQLite3 PROPERTIES
-    IMPORTED_LOCATION "${SQLITE3_STATIC_LIBRARY}"
-    INTERFACE_INCLUDE_DIRECTORIES "${SQLITE3_INCLUDE_DIR}"
-)
+# Prefer the static library; fall back to shared via find_package
+find_library(SQLITE3_STATIC_LIBRARY NAMES libsqlite3.a sqlite3.a)
+if(SQLITE3_STATIC_LIBRARY)
+    find_path(SQLITE3_INCLUDE_DIR NAMES sqlite3.h REQUIRED)
+    add_library(SQLite::SQLite3 UNKNOWN IMPORTED)
+    set_target_properties(SQLite::SQLite3 PROPERTIES
+        IMPORTED_LOCATION "${SQLITE3_STATIC_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${SQLITE3_INCLUDE_DIR}"
+    )
+else()
+    find_package(SQLite3 REQUIRED)
+endif()
 
 # Optional: VST2.4 plugin scanning (requires the proprietary VST2 SDK)
 # Enable with: cmake -DRPS_ENABLE_VST2=ON

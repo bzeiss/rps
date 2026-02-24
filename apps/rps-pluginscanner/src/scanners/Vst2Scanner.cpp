@@ -26,6 +26,11 @@
 #endif
 
 #define VST_2_4_EXTENSIONS 1
+#ifndef _WIN32
+#ifndef __cdecl
+#define __cdecl
+#endif
+#endif
 #include "pluginterfaces/vst2.x/aeffect.h"
 #include "pluginterfaces/vst2.x/aeffectx.h"
 

@@ -14,15 +14,19 @@
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
 
+#ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wnested-anon-types"
 #pragma clang diagnostic ignored "-Wdll-attribute-on-redeclaration"
 #pragma clang diagnostic ignored "-Wunused-parameter"
 #pragma clang diagnostic ignored "-Wunused-variable"
+#endif
 #include <rps/ipc/Connection.hpp>
 #include <boost/process/v1.hpp>
 #include <boost/process/v1/pipe.hpp>
+#ifdef __clang__
 #pragma clang diagnostic pop
+#endif
 
 namespace {
 

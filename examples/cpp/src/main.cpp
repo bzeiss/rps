@@ -25,13 +25,17 @@
 #include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
 
+#ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wnested-anon-types"
 #pragma clang diagnostic ignored "-Wdll-attribute-on-redeclaration"
 #pragma clang diagnostic ignored "-Wunused-parameter"
 #pragma clang diagnostic ignored "-Wunused-variable"
+#endif
 #include <grpcpp/grpcpp.h>
+#ifdef __clang__
 #pragma clang diagnostic pop
+#endif
 
 #include "rps.grpc.pb.h"
 #include "rps.pb.h"
