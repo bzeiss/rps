@@ -1048,6 +1048,8 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
             }
         }
 
+        // Fall back to factory vendor if per-class vendor is empty
+        if (classVendor.empty()) classVendor = factoryInfo.vendor;
         result.extraData[prefix + "vendor"] = classVendor;
         result.extraData[prefix + "version"] = classVersion;
         result.extraData[prefix + "sdkVersion"] = sdkVersion;
@@ -1056,7 +1058,8 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
 
         // For "Plugin Compatibility Class" entries, extract compatibility UIDs
         if (std::strcmp(ci.category, "Plugin Compatibility Class") == 0) {
-            logStage("Found Plugin Compatibility Class at index " + std::to_string(i) + ", querying compat UIDs...");
+            logStage("Found Plugin Compatibility Class at index " + std::to_string(i)
+                     + " CID=" + tuidToHex(ci.cid) + ", querying compat UIDs...");
             Steinberg::IPluginCompatibility* compat = nullptr;
             Steinberg::tresult compatRes = factory->createInstance(
                 ci.cid,
@@ -1064,9 +1067,29 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
                 reinterpret_cast<void**>(&compat));
             if (compatRes == Steinberg::kResultOk && compat) {
                 MemoryStream stream;
-                if (compat->getCompatibilityJSON(&stream) == Steinberg::kResultTrue) {
+                Steinberg::tresult jsonRes = compat->getCompatibilityJSON(&stream);
+                if (jsonRes == Steinberg::kResultTrue) {
                     std::string json = stream.str();
-                    logStage("Compat JSON: " + json);
+                    logStage("Compat JSON (" + std::to_string(json.size()) + " bytes): " + json);
+                    // Strip trailing commas (some plugins emit JSON5-style output)
+                    {
+                        std::string cleaned;
+                        cleaned.reserve(json.size());
+                        bool inStr = false;
+                        for (size_t ci = 0; ci < json.size(); ++ci) {
+                            char ch = json[ci];
+                            if (ch == '"' && (ci == 0 || json[ci - 1] != '\\')) inStr = !inStr;
+                            if (!inStr && ch == ',') {
+                                size_t nj = ci + 1;
+                                while (nj < json.size() && (json[nj] == ' ' || json[nj] == '\t' ||
+                                       json[nj] == '\n' || json[nj] == '\r')) ++nj;
+                                if (nj < json.size() && (json[nj] == '}' || json[nj] == ']'))
+                                    continue;
+                            }
+                            cleaned += ch;
+                        }
+                        json = std::move(cleaned);
+                    }
                     // Parse the JSON array to extract Old UIDs
                     // Format: [{"New":"HEXUID","Old":["HEXUID1","HEXUID2"]}]
                     try {
@@ -1091,12 +1114,19 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
                                 }
                             }
                             result.extraData[prefix + "compat_count"] = std::to_string(compatIdx);
+                            logStage("Extracted " + std::to_string(compatIdx) + " compat UIDs");
+                        } else {
+                            logStage("Compat JSON is not an array");
                         }
                     } catch (const std::exception& e) {
                         logStage("Failed to parse compat JSON: " + std::string(e.what()));
                     }
+                } else {
+                    logStage("getCompatibilityJSON returned " + std::to_string(jsonRes));
                 }
                 compat->release();
+            } else {
+                logStage("createInstance for IPluginCompatibility failed: " + std::to_string(compatRes));
             }
         }
     }

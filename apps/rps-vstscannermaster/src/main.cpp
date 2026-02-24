@@ -347,8 +347,13 @@ static std::vector<Vst3PluginInfo> readPluginsFromDb(const std::string& dbPath) 
         ORDER BY class_index
     )";
 
+    // Resolve compat UIDs by matching new_uid to the class's CID.
+    // The Plugin Compatibility Class declares compat entries with (new_uid, old_uid),
+    // but Steinberg's XML puts them under the Audio Module Class whose CID matches new_uid.
     const std::string selectCompat = R"(
-        SELECT old_uid FROM vst3_compat_uids WHERE class_id = ?
+        SELECT old_uid FROM vst3_compat_uids
+        WHERE class_id IN (SELECT id FROM vst3_classes WHERE plugin_id = ?)
+          AND new_uid = ?
     )";
 
     for (auto& plugin : plugins) {
@@ -373,10 +378,11 @@ static std::vector<Vst3PluginInfo> readPluginsFromDb(const std::string& dbPath) 
             sqlite3_finalize(stmt);
         }
 
-        // Read compat UIDs for each class
+        // Read compat UIDs for each class — match by CID (new_uid) not by class_id
         for (auto& cls : plugin.classes) {
             if (sqlite3_prepare_v2(db, selectCompat.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
-                sqlite3_bind_int64(stmt, 1, cls.dbId);
+                sqlite3_bind_int64(stmt, 1, plugin.pluginId);
+                sqlite3_bind_text(stmt, 2, cls.uid.c_str(), -1, SQLITE_TRANSIENT);
                 while (sqlite3_step(stmt) == SQLITE_ROW) {
                     if (sqlite3_column_text(stmt, 0))
                         cls.compatUids.push_back(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0)));
