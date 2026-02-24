@@ -46,7 +46,7 @@ if(NOT EXISTS "${BOOST_SOURCE_DIR}/CMakeLists.txt")
         "Then pass: cmake -DBOOST_SOURCE_DIR=/path/to/boost\n"
     )
 endif()
-set(BOOST_INCLUDE_LIBRARIES json program_options filesystem process interprocess uuid dll date_time)
+set(BOOST_INCLUDE_LIBRARIES json program_options filesystem process interprocess uuid dll date_time crc)
 add_subdirectory(${BOOST_SOURCE_DIR} ${CMAKE_BINARY_DIR}/_deps/boost EXCLUDE_FROM_ALL)
 
 # Find SQLite3
