@@ -77,7 +77,11 @@ public:
     }
 
     void onPluginProgress(size_t, const std::string&, int, const std::string&) override {}
-    void onPluginSlowWarning(size_t, const std::string&, int64_t) override {}
+    void onPluginSlowWarning(size_t /*workerId*/, const std::string& pluginPath, int64_t elapsedMs) override {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto name = fs::path(pluginPath).stem().string();
+        m_log << "  SLOW: " << name << " still scanning after " << (elapsedMs / 1000) << "s" << std::endl;
+    }
 
     void onPluginCompleted(size_t /*workerId*/, const std::string& pluginPath,
                             rps::engine::ScanOutcome outcome, int64_t elapsedMs,
@@ -125,7 +129,11 @@ public:
         for (const auto& line : lines)
             m_log << "    " << line << std::endl;
     }
-    void onWorkerForceKill(size_t, const std::string&) override {}
+    void onWorkerForceKill(size_t /*workerId*/, const std::string& pluginPath) override {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto name = fs::path(pluginPath).stem().string();
+        m_log << "  FORCE KILL: " << name << " did not respond to terminate, using TerminateProcess" << std::endl;
+    }
     void onPluginRetry(size_t /*workerId*/, const std::string& pluginPath,
                        size_t attempt, size_t /*maxAttempts*/,
                        const std::string& reason) override {
@@ -133,7 +141,14 @@ public:
         auto name = fs::path(pluginPath).stem().string();
         m_log << "  Retry #" << attempt << " for " << name << ": " << reason << std::endl;
     }
-    void onMonitorReport(const std::vector<std::pair<size_t, std::pair<std::string, int64_t>>>&) override {}
+    void onMonitorReport(const std::vector<std::pair<size_t, std::pair<std::string, int64_t>>>& report) override {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto& [workerId, info] : report) {
+            auto name = fs::path(info.first).stem().string();
+            m_log << "  [Worker #" << workerId << "] " << name
+                  << " still scanning (" << (info.second / 1000) << "s)" << std::endl;
+        }
+    }
     void onScanCompleted(size_t, size_t, size_t, size_t, size_t, int64_t,
                           const std::vector<std::pair<std::string, std::string>>&) override {}
 
@@ -537,9 +552,10 @@ static void writeAllowlistXml(const fs::path& outputPath) {
 // Write cacheVersion
 // ---------------------------------------------------------------------------
 static void writeCacheVersion(const fs::path& outputPath) {
-    std::ofstream ofs(outputPath.string());
+    std::ofstream ofs(outputPath.string(), std::ios::binary);
     if (!ofs) return;
-    ofs << "1\n";
+    const char data[] = { 0x04, 0x00, 0x00, 0x00 };
+    ofs.write(data, sizeof(data));
 }
 
 // ---------------------------------------------------------------------------
@@ -625,6 +641,7 @@ int main(int argc, char* argv[]) {
     bool rescan = vm.count("rescan") > 0;
     bool verbose = vm.count("verbose") > 0;
     int timeoutSecs = vm["timeout"].as<int>();
+    if (timeoutSecs <= 0) timeoutSecs = 120; // Cubase passes 0 (no timeout) — enforce 120s default
     size_t jobs = vm["jobs"].as<size_t>();
     if (jobs == 0) jobs = 1;
 

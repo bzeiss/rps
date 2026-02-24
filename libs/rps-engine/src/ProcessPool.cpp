@@ -443,7 +443,15 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                     }
                     recordFailure(pluginFullPath, errMsg);
                     ++m_timeout;
-                    scannerProc.terminate();
+                    // Try graceful terminate first, then force-kill
+                    try { scannerProc.terminate(); } catch (...) {}
+#ifdef _WIN32
+                    // If still alive after terminate(), force-kill via TerminateProcess
+                    if (scannerProc.running()) {
+                        if (m_observer) m_observer->onWorkerForceKill(workerId, pluginFullPath);
+                        TerminateProcess(scannerProc.native_handle(), 1);
+                    }
+#endif
                     done = true;
                 }
             }
@@ -470,6 +478,15 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                 logCleanup("process still running, terminating");
                 try { scannerProc.terminate(); } catch (...) {}
                 logCleanup("terminate() returned");
+#ifdef _WIN32
+                // Force-kill if still alive after graceful terminate
+                if (scannerProc.running()) {
+                    logCleanup("still running after terminate, force-killing");
+                    if (m_observer) m_observer->onWorkerForceKill(workerId, pluginFullPath);
+                    TerminateProcess(scannerProc.native_handle(), 1);
+                    logCleanup("TerminateProcess called");
+                }
+#endif
             }
 
             logCleanup("calling wait()");
