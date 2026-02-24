@@ -26,7 +26,13 @@ int main(int argc, char* argv[]) {
         ("help,h", "Produce help message")
         ("port,p", po::value<int>()->default_value(50051), "gRPC listen port")
         ("db", po::value<std::string>()->default_value("rps-plugins.db"), "Path to the SQLite database file")
-        ("scanner-bin,b", po::value<std::string>()->default_value("rps-pluginscanner.exe"), "Path to the scanner binary")
+        ("scanner-bin,b", po::value<std::string>()->default_value(
+#ifdef _WIN32
+            "rps-pluginscanner.exe"
+#else
+            "rps-pluginscanner"
+#endif
+        ), "Path to the scanner binary")
         ("log", po::value<std::string>()->default_value("rps-server.log"), "Log file path")
         ("log-level", po::value<std::string>()->default_value("info"), "Log level: trace, debug, info, warn, error");
 

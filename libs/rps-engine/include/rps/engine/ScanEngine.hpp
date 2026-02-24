@@ -10,7 +10,11 @@ namespace rps::engine {
 struct ScanConfig {
     std::vector<std::string> scanDirs;       // --scan-dir
     std::string singlePlugin;                // --scan (empty = not set)
+#ifdef _WIN32
     std::string scannerBin = "rps-pluginscanner.exe";
+#else
+    std::string scannerBin = "rps-pluginscanner";
+#endif
     std::string dbPath = "rps-plugins.db";
     std::string mode = "incremental";        // "full" | "incremental"
     std::string formats = "all";             // comma-separated or "all"

@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <csignal>
+#include <fcntl.h>
 #endif
 
 #include <iostream>
@@ -99,6 +100,13 @@ public:
         // Fork + exec on POSIX
         m_pid = fork();
         if (m_pid == 0) {
+            // Suppress stdout/stderr — server logs to file already
+            int devnull = open("/dev/null", O_WRONLY);
+            if (devnull >= 0) {
+                dup2(devnull, STDOUT_FILENO);
+                dup2(devnull, STDERR_FILENO);
+                close(devnull);
+            }
             execlp(m_bin.c_str(), m_bin.c_str(),
                    "--port", std::to_string(m_port).c_str(),
                    "--db", m_db.c_str(),
