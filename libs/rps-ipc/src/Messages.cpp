@@ -42,22 +42,49 @@ void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const ScanR
         {"name", res.name},
         {"vendor", res.vendor},
         {"version", res.version},
+        {"uid", res.uid},
+        {"description", res.description},
+        {"url", res.url},
+        {"category", res.category},
+        {"format", res.format},
+        {"scanMethod", res.scanMethod},
         {"numInputs", res.numInputs},
         {"numOutputs", res.numOutputs},
-        {"parameters", boost::json::value_from(res.parameters)}
+        {"parameters", boost::json::value_from(res.parameters)},
+        {"extraData", [&]() {
+            boost::json::object obj;
+            for (const auto& [k, v] : res.extraData)
+                obj[k] = v;
+            return obj;
+        }()}
     };
 }
 
 ScanResult tag_invoke(boost::json::value_to_tag<ScanResult>, const boost::json::value& jv) {
-    auto const& obj = jv.as_object();
-    return {
-        boost::json::value_to<std::string>(obj.at("name")),
-        boost::json::value_to<std::string>(obj.at("vendor")),
-        boost::json::value_to<std::string>(obj.at("version")),
-        boost::json::value_to<uint32_t>(obj.at("numInputs")),
-        boost::json::value_to<uint32_t>(obj.at("numOutputs")),
-        boost::json::value_to<std::vector<ParameterInfo>>(obj.at("parameters"))
-    };
+    const auto& obj = jv.as_object();
+    ScanResult res;
+    res.name = obj.at("name").as_string().c_str();
+    res.vendor = obj.at("vendor").as_string().c_str();
+    res.version = obj.at("version").as_string().c_str();
+    
+    // Optional new fields (for backward compatibility if missing in old JSON)
+    if (obj.contains("uid")) res.uid = obj.at("uid").as_string().c_str();
+    if (obj.contains("description")) res.description = obj.at("description").as_string().c_str();
+    if (obj.contains("url")) res.url = obj.at("url").as_string().c_str();
+    if (obj.contains("category")) res.category = obj.at("category").as_string().c_str();
+    if (obj.contains("format")) res.format = obj.at("format").as_string().c_str();
+    if (obj.contains("scanMethod")) res.scanMethod = obj.at("scanMethod").as_string().c_str();
+
+    res.numInputs = obj.at("numInputs").to_number<uint32_t>();
+    res.numOutputs = obj.at("numOutputs").to_number<uint32_t>();
+    res.parameters = boost::json::value_to<std::vector<ParameterInfo>>(obj.at("parameters"));
+    if (obj.contains("extraData") && obj.at("extraData").is_object()) {
+        for (const auto& [k, v] : obj.at("extraData").as_object()) {
+            if (v.is_string())
+                res.extraData[std::string(k)] = std::string(v.as_string());
+        }
+    }
+    return res;
 }
 
 void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const ProgressEvent& evt) {

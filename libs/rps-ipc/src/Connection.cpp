@@ -8,8 +8,8 @@ namespace rps::ipc {
 
 using namespace boost::interprocess;
 
-constexpr size_t MAX_MSG_SIZE = 65536; // 64 KB
-constexpr size_t MAX_NUM_MSGS = 100;
+constexpr size_t MAX_MSG_SIZE = 1048576; // 1 MB — must accommodate plugins with many params
+constexpr size_t MAX_NUM_MSGS = 8;       // Low: protocol is request/response + progress events
 
 MessageQueueConnection::MessageQueueConnection(const std::string& name, bool isServer)
     : m_name(name), m_isServer(isServer) {
@@ -58,8 +58,14 @@ bool MessageQueueConnection::sendMessage(const Message& msg) {
         std::string serialized = boost::json::serialize(jv);
 
         if (serialized.size() > MAX_MSG_SIZE) {
-            std::cerr << "IPC Error: Message too large to send (" << serialized.size() << " bytes)\n";
+            std::cerr << "IPC Error: Message too large to send (" << serialized.size()
+                      << " bytes, max " << MAX_MSG_SIZE << ")\n";
             return false;
+        }
+
+        // Log payload size for diagnostics (only for large messages)
+        if (serialized.size() > 65536) {
+            std::cerr << "[ipc] Sending large message: " << serialized.size() << " bytes\n";
         }
 
         m_txQueue->send(serialized.data(), serialized.size(), 0);
@@ -91,13 +97,28 @@ std::optional<Message> MessageQueueConnection::receiveMessage(unsigned int timeo
 
         if (received && receivedSize > 0) {
             std::string serialized(buffer.data(), receivedSize);
-            boost::json::value jv = boost::json::parse(serialized);
-            return boost::json::value_to<Message>(jv);
+            try {
+                boost::json::value jv = boost::json::parse(serialized);
+                return boost::json::value_to<Message>(jv);
+            } catch (const std::exception& parseErr) {
+                std::cerr << "IPC Receive Error: " << parseErr.what() << "\n";
+                std::cerr << "  receivedSize=" << receivedSize << " bytes\n";
+                // Dump first 200 chars for diagnosis
+                size_t dumpLen = std::min(receivedSize, size_t(200));
+                std::cerr << "  raw[0.." << dumpLen << "]: [";
+                for (size_t i = 0; i < dumpLen; ++i) {
+                    char c = serialized[i];
+                    if (c >= 32 && c < 127) std::cerr << c;
+                    else std::cerr << "\\x" << std::hex << (int)(unsigned char)c << std::dec;
+                }
+                std::cerr << "]\n";
+                return std::nullopt;
+            }
         }
 
         return std::nullopt;
     } catch (const std::exception& e) {
-        std::cerr << "IPC Receive Error: " << e.what() << "\n";
+        std::cerr << "IPC Receive Error (transport): " << e.what() << "\n";
         return std::nullopt;
     }
 }

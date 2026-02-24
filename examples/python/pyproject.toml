@@ -1,0 +1,14 @@
+[project]
+name = "rps-client"
+version = "0.1.0"
+description = "Python TUI client for RPS Plugin Scanner"
+requires-python = ">=3.10"
+dependencies = [
+    "grpcio>=1.60.0",
+    "grpcio-tools>=1.60.0",
+    "rich>=13.0.0",
+    "click>=8.0.0",
+]
+
+[project.scripts]
+rps-client = "rps_client.__main__:main"

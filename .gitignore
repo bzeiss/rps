@@ -1,41 +1,24 @@
-# Prerequisites
-*.d
+build/
+build/*
+rps-plugins.db
+build/.ninja_log
+build/CMakeFiles/CMakeConfigureLog.yaml
 
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
+vst3_full_scan.log
 
-# Precompiled Headers
-*.gch
-*.pch
+patch.json
+rps-plugins.db-journal
+esp_jit.log
 
-# Linker files
-*.ilk
+libs/rps-core/include/rps/core/vstsdk2.4/*
 
-# Debugger Files
-*.pdb
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
-
-# debug information files
-*.dwo
+MIOConsole3d.log
+rps-plugins.db-shm
+rps-plugins.db-wal
+# Python example client artifacts
+__pycache__/
+*.egg-info/
+examples/python/.venv/
+examples/python/rps_client/proto/rps_pb2*.py
+examples/python/rps-server.log
+rps-server.log
