@@ -8,6 +8,12 @@
 #include <boost/filesystem.hpp>
 #include <iostream>
 #include <csignal>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 static std::atomic<grpc::Server*> g_server{nullptr};
 
@@ -71,6 +77,17 @@ int main(int argc, char* argv[]) {
         std::cerr << "Log init failed: " << ex.what() << std::endl;
         return 1;
     }
+
+#ifdef _WIN32
+    // Kill all child scanner processes when this process exits (Ctrl+C, taskkill, etc.)
+    HANDLE hJob = CreateJobObject(nullptr, nullptr);
+    if (hJob) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli = {};
+        jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli));
+        AssignProcessToJobObject(hJob, GetCurrentProcess());
+    }
+#endif
 
     // --- Resolve scanner binary ---
     std::string scannerBin = vm["scanner-bin"].as<std::string>();

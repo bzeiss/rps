@@ -53,6 +53,8 @@ void DatabaseManager::initializeSchema() {
             scan_time_ms INTEGER DEFAULT 0,
             file_mtime TEXT,
             file_hash TEXT,
+            factory_email TEXT,
+            factory_flags INTEGER DEFAULT 0,
             last_scanned TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     )";
@@ -118,9 +120,24 @@ void DatabaseManager::initializeSchema() {
             name TEXT,
             uid TEXT,
             category TEXT,
+            class_category TEXT,
+            cardinality INTEGER,
+            class_flags INTEGER,
+            sub_categories TEXT,
+            sdk_version TEXT,
             vendor TEXT,
             version TEXT,
             FOREIGN KEY (plugin_id) REFERENCES plugins(id) ON DELETE CASCADE
+        );
+    )";
+
+    const std::string createTableVst3CompatUids = R"(
+        CREATE TABLE IF NOT EXISTS vst3_compat_uids (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            class_id INTEGER NOT NULL,
+            new_uid TEXT NOT NULL,
+            old_uid TEXT NOT NULL,
+            FOREIGN KEY (class_id) REFERENCES vst3_classes(id) ON DELETE CASCADE
         );
     )";
 
@@ -128,6 +145,7 @@ void DatabaseManager::initializeSchema() {
     executeQuery(createTableParameters);
     executeQuery(createTableAaxPlugins);
     executeQuery(createTableVst3Classes);
+    executeQuery(createTableVst3CompatUids);
     executeQuery(createTablePluginsSkipped);
     executeQuery(createTablePluginsBlocked);
 
@@ -150,6 +168,13 @@ void DatabaseManager::initializeSchema() {
     tryAddColumn("ALTER TABLE plugins ADD COLUMN format TEXT;");
     tryAddColumn("ALTER TABLE plugins ADD COLUMN file_mtime TEXT;");
     tryAddColumn("ALTER TABLE plugins ADD COLUMN file_hash TEXT;");
+    tryAddColumn("ALTER TABLE plugins ADD COLUMN factory_email TEXT;");
+    tryAddColumn("ALTER TABLE plugins ADD COLUMN factory_flags INTEGER DEFAULT 0;");
+    tryAddColumn("ALTER TABLE vst3_classes ADD COLUMN class_category TEXT;");
+    tryAddColumn("ALTER TABLE vst3_classes ADD COLUMN cardinality INTEGER;");
+    tryAddColumn("ALTER TABLE vst3_classes ADD COLUMN class_flags INTEGER;");
+    tryAddColumn("ALTER TABLE vst3_classes ADD COLUMN sub_categories TEXT;");
+    tryAddColumn("ALTER TABLE vst3_classes ADD COLUMN sdk_version TEXT;");
 }
 
 void DatabaseManager::upsertPluginResult(const boost::filesystem::path& pluginPath, const rps::ipc::ScanResult& result,
@@ -166,8 +191,8 @@ void DatabaseManager::upsertPluginResult(const boost::filesystem::path& pluginPa
     
     // 1. Upsert into plugins table
     const std::string upsertPluginSql = R"(
-        INSERT INTO plugins (format, path, name, uid, vendor, version, description, url, category, num_inputs, num_outputs, status, error_message, scan_time_ms, file_mtime, file_hash, last_scanned)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUCCESS', NULL, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO plugins (format, path, name, uid, vendor, version, description, url, category, num_inputs, num_outputs, status, error_message, scan_time_ms, file_mtime, file_hash, factory_email, factory_flags, last_scanned)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUCCESS', NULL, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(path) DO UPDATE SET
             format=excluded.format,
             name=excluded.name,
@@ -184,6 +209,8 @@ void DatabaseManager::upsertPluginResult(const boost::filesystem::path& pluginPa
             scan_time_ms=excluded.scan_time_ms,
             file_mtime=excluded.file_mtime,
             file_hash=excluded.file_hash,
+            factory_email=excluded.factory_email,
+            factory_flags=excluded.factory_flags,
             last_scanned=excluded.last_scanned;
     )";
 
@@ -208,6 +235,17 @@ void DatabaseManager::upsertPluginResult(const boost::filesystem::path& pluginPa
     sqlite3_bind_int64(stmt, 12, scanTimeMs);                                     // scan_time_ms
     sqlite3_bind_text(stmt, 13, fileMtime.c_str(), -1, SQLITE_TRANSIENT);         // file_mtime
     sqlite3_bind_text(stmt, 14, fileHash.c_str(), -1, SQLITE_TRANSIENT);          // file_hash
+
+    // Extract factory_email and factory_flags from extraData (set by Vst3Scanner)
+    auto emailIt = result.extraData.find("vst3_factory_email");
+    std::string factoryEmail = (emailIt != result.extraData.end()) ? emailIt->second : "";
+    auto flagsIt = result.extraData.find("vst3_factory_flags");
+    int factoryFlags = 0;
+    if (flagsIt != result.extraData.end()) {
+        try { factoryFlags = std::stoi(flagsIt->second); } catch (...) {}
+    }
+    sqlite3_bind_text(stmt, 15, factoryEmail.c_str(), -1, SQLITE_TRANSIENT);      // factory_email
+    sqlite3_bind_int(stmt, 16, factoryFlags);                                     // factory_flags
 
     if (sqlite3_step(stmt) != SQLITE_DONE) {
         std::cerr << "Failed to execute plugin upsert.\n";
@@ -337,8 +375,16 @@ void DatabaseManager::upsertAaxPluginVariants(int64_t pluginId, const rps::ipc::
 }
 
 void DatabaseManager::upsertVst3Classes(int64_t pluginId, const rps::ipc::ScanResult& result) {
-    // Delete old VST3 classes for this plugin
+    // Delete old VST3 compat UIDs (cascade would handle this, but be explicit)
     sqlite3_stmt* stmt = nullptr;
+    const std::string deleteCompatSql = "DELETE FROM vst3_compat_uids WHERE class_id IN (SELECT id FROM vst3_classes WHERE plugin_id = ?)";
+    if (sqlite3_prepare_v2(m_db, deleteCompatSql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_int64(stmt, 1, pluginId);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+
+    // Delete old VST3 classes for this plugin
     const std::string deleteOldSql = "DELETE FROM vst3_classes WHERE plugin_id = ?";
     if (sqlite3_prepare_v2(m_db, deleteOldSql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
         sqlite3_bind_int64(stmt, 1, pluginId);
@@ -346,13 +392,26 @@ void DatabaseManager::upsertVst3Classes(int64_t pluginId, const rps::ipc::ScanRe
         sqlite3_finalize(stmt);
     }
 
-    auto it = result.extraData.find("vst3_class_count");
-    if (it == result.extraData.end()) return;
-    int classCount = std::stoi(it->second);
+    // Use vst3_all_c{N}_ prefix (ALL classes) if available, fall back to vst3_c{N}_ (processors only)
+    auto allIt = result.extraData.find("vst3_all_class_count");
+    auto procIt = result.extraData.find("vst3_class_count");
+    bool useAllClasses = (allIt != result.extraData.end());
+    int classCount = 0;
+    std::string prefixBase;
+    if (useAllClasses) {
+        classCount = std::stoi(allIt->second);
+        prefixBase = "vst3_all_c";
+    } else if (procIt != result.extraData.end()) {
+        classCount = std::stoi(procIt->second);
+        prefixBase = "vst3_c";
+    } else {
+        return;
+    }
 
     const std::string insertSql = R"(
-        INSERT INTO vst3_classes (plugin_id, class_index, name, uid, category, vendor, version)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO vst3_classes (plugin_id, class_index, name, uid, category, class_category,
+            cardinality, class_flags, sub_categories, sdk_version, vendor, version)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     )";
 
     if (sqlite3_prepare_v2(m_db, insertSql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
@@ -361,29 +420,94 @@ void DatabaseManager::upsertVst3Classes(int64_t pluginId, const rps::ipc::ScanRe
     }
 
     for (int i = 0; i < classCount; ++i) {
-        std::string prefix = "vst3_c" + std::to_string(i) + "_";
+        std::string prefix = prefixBase + std::to_string(i) + "_";
         auto getStr = [&](const std::string& key) -> std::string {
             auto found = result.extraData.find(prefix + key);
             return (found != result.extraData.end()) ? found->second : "";
+        };
+        auto getInt = [&](const std::string& key) -> int64_t {
+            auto found = result.extraData.find(prefix + key);
+            if (found != result.extraData.end() && !found->second.empty()) {
+                try { return std::stoll(found->second); } catch (...) {}
+            }
+            return 0;
         };
 
         sqlite3_bind_int64(stmt, 1, pluginId);
         sqlite3_bind_int(stmt, 2, i);
 
-        std::string name = getStr("name");
-        std::string uid = getStr("uid");
-        std::string category = getStr("category");
+        std::string name = getStr(useAllClasses ? "name" : "name");
+        std::string uid = getStr(useAllClasses ? "cid" : "uid");
+        // For vst3_all_ prefix: 'category' is class category (e.g. "Audio Module Class")
+        // and 'subCategories' is pipe-delimited subcats.
+        // For vst3_c_ prefix: 'category' is actually subCategories (legacy).
+        std::string subCats = useAllClasses ? getStr("subCategories") : getStr("category");
+        std::string classCategory = useAllClasses ? getStr("category") : "";
         std::string vendor = getStr("vendor");
         std::string version = getStr("version");
+        std::string sdkVersion = getStr("sdkVersion");
+        int64_t cardinality = getInt("cardinality");
+        int64_t classFlags = getInt("classFlags");
 
         sqlite3_bind_text(stmt, 3, name.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(stmt, 4, uid.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 5, category.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 6, vendor.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 7, version.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 5, subCats.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 6, classCategory.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(stmt, 7, cardinality);
+        sqlite3_bind_int64(stmt, 8, classFlags);
+        sqlite3_bind_text(stmt, 9, subCats.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 10, sdkVersion.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 11, vendor.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 12, version.c_str(), -1, SQLITE_TRANSIENT);
 
         sqlite3_step(stmt);
         sqlite3_reset(stmt);
+    }
+    sqlite3_finalize(stmt);
+
+    // Insert compatibility UIDs
+    if (!useAllClasses) return; // compat UIDs only available with vst3_all_ prefix
+
+    // We need to retrieve the inserted class IDs to link compat UIDs.
+    // Re-query the class IDs we just inserted.
+    const std::string selectClassesSql = "SELECT id, class_index FROM vst3_classes WHERE plugin_id = ? ORDER BY class_index";
+    std::map<int, int64_t> classIdMap; // class_index -> DB id
+    if (sqlite3_prepare_v2(m_db, selectClassesSql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_int64(stmt, 1, pluginId);
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            int64_t dbId = sqlite3_column_int64(stmt, 0);
+            int classIdx = sqlite3_column_int(stmt, 1);
+            classIdMap[classIdx] = dbId;
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    const std::string insertCompatSql = "INSERT INTO vst3_compat_uids (class_id, new_uid, old_uid) VALUES (?, ?, ?)";
+    if (sqlite3_prepare_v2(m_db, insertCompatSql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+        return;
+    }
+
+    for (int i = 0; i < classCount; ++i) {
+        std::string prefix = prefixBase + std::to_string(i) + "_";
+        auto compatCountIt = result.extraData.find(prefix + "compat_count");
+        if (compatCountIt == result.extraData.end()) continue;
+        int compatCount = std::stoi(compatCountIt->second);
+        auto classDbIt = classIdMap.find(i);
+        if (classDbIt == classIdMap.end()) continue;
+        int64_t classDbId = classDbIt->second;
+
+        for (int j = 0; j < compatCount; ++j) {
+            std::string cPrefix = prefix + "compat_" + std::to_string(j) + "_";
+            auto newIt = result.extraData.find(cPrefix + "new");
+            auto oldIt = result.extraData.find(cPrefix + "old");
+            if (newIt == result.extraData.end() || oldIt == result.extraData.end()) continue;
+
+            sqlite3_bind_int64(stmt, 1, classDbId);
+            sqlite3_bind_text(stmt, 2, newIt->second.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 3, oldIt->second.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_step(stmt);
+            sqlite3_reset(stmt);
+        }
     }
     sqlite3_finalize(stmt);
 }

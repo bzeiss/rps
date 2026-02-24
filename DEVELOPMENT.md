@@ -23,7 +23,12 @@ RPS solves this problem by using a strict **multi-process architecture**:
 3. **`rps-standalone`** (Standalone CLI)
    - A thin CLI wrapper (~100 lines) around `rps-engine`. No server needed.
 
-4. **`rps-pluginscanner`** (The Worker)
+4. **`vstscannermaster`** (VST3 Scanner Master)
+   - Drop-in replacement for Steinberg's `vstscannermaster.exe`.
+   - Accepts the same CLI arguments (`-prefPath`, `-licenceLevel`, `-hostName`, `-progress`, `-rescan`, `-timeout`).
+   - Uses `rps-engine` for crash-isolated VST3 scanning, then reads the SQLite DB and writes Steinberg-compatible XML cache files (`vst3plugins.xml`, `vst3blocklist.xml`, `vst3allowlist.xml`).
+
+5. **`rps-pluginscanner`** (The Worker)
    - A disposable, isolated process.
    - It connects to the engine via IPC (Inter-Process Communication), receives a `ScanRequest`, and loads a single target plugin into its own memory space.
    - It extracts the necessary metadata (name, parameters, inputs/outputs) and reports it back via `ProgressEvent` and `ScanResult` messages.

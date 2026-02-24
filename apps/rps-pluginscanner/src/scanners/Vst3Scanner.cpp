@@ -15,6 +15,8 @@
 #include <algorithm>
 #include <functional>
 #include <vector>
+#include <map>
+#include <cstdint>
 #include <boost/filesystem.hpp>
 #include <boost/json.hpp>
 
@@ -33,6 +35,7 @@
 #include <pluginterfaces/vst/ivstaudioprocessor.h>
 #include <pluginterfaces/vst/ivsteditcontroller.h>
 #include <pluginterfaces/vst/ivsthostapplication.h>
+#include <pluginterfaces/base/iplugincompatibility.h>
 #include <cmath>
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -56,6 +59,8 @@ namespace Steinberg {
     const FUID IPluginFactory2::iid(0x0007B650, 0xF24B4C0B, 0xA464EDB9, 0xF00B2ABB);
     const FUID IPluginFactory3::iid(0x4555A2AB, 0xC1234E57, 0x9B122910, 0x36878931);
     const FUID FUnknown::iid(0x00000000, 0x00000000, 0xC0000000, 0x00000046);
+    const FUID IBStream::iid(0xC3BF6EA2, 0x30994752, 0x9B6BF990, 0x1EE33E9B);
+    const FUID IPluginCompatibility::iid(0x4AFD4B6A, 0x35D7C240, 0xA5C31414, 0xFB7D15E6);
     namespace Vst {
         const FUID IComponent::iid(0xE831FF31, 0xF2D54301, 0x928EBBEE, 0x25697802);
         const FUID IEditController::iid(0xDCD7BBE3, 0x7742448D, 0xA874AACC, 0x979C759E);
@@ -123,6 +128,93 @@ public:
 };
 
 static ScannerHostContext g_hostContext;
+
+// ---------------------------------------------------------------------------
+// Minimal IBStream implementation for IPluginCompatibility::getCompatibilityJSON
+// ---------------------------------------------------------------------------
+class MemoryStream : public Steinberg::IBStream {
+public:
+    Steinberg::tresult PLUGIN_API queryInterface(const Steinberg::TUID _iid, void** obj) override {
+        if (Steinberg::FUnknownPrivate::iidEqual(_iid, Steinberg::FUnknown::iid.toTUID()) ||
+            Steinberg::FUnknownPrivate::iidEqual(_iid, Steinberg::IBStream::iid.toTUID())) {
+            addRef();
+            *obj = static_cast<Steinberg::IBStream*>(this);
+            return Steinberg::kResultOk;
+        }
+        *obj = nullptr;
+        return Steinberg::kNoInterface;
+    }
+    Steinberg::uint32 PLUGIN_API addRef() override { return 1; }
+    Steinberg::uint32 PLUGIN_API release() override { return 1; }
+
+    Steinberg::tresult PLUGIN_API read(void* buffer, Steinberg::int32 numBytes, Steinberg::int32* numBytesRead) override {
+        if (!buffer) return Steinberg::kInvalidArgument;
+        Steinberg::int32 avail = static_cast<Steinberg::int32>(m_data.size()) - static_cast<Steinberg::int32>(m_pos);
+        if (avail <= 0) { if (numBytesRead) *numBytesRead = 0; return Steinberg::kResultOk; }
+        Steinberg::int32 toRead = (numBytes < avail) ? numBytes : avail;
+        std::memcpy(buffer, m_data.data() + m_pos, toRead);
+        m_pos += toRead;
+        if (numBytesRead) *numBytesRead = toRead;
+        return Steinberg::kResultOk;
+    }
+    Steinberg::tresult PLUGIN_API write(void* buffer, Steinberg::int32 numBytes, Steinberg::int32* numBytesWritten) override {
+        if (!buffer || numBytes <= 0) { if (numBytesWritten) *numBytesWritten = 0; return Steinberg::kResultOk; }
+        auto* src = static_cast<const char*>(buffer);
+        if (m_pos == m_data.size()) {
+            m_data.insert(m_data.end(), src, src + numBytes);
+        } else {
+            size_t end = m_pos + numBytes;
+            if (end > m_data.size()) m_data.resize(end);
+            std::memcpy(m_data.data() + m_pos, src, numBytes);
+        }
+        m_pos += numBytes;
+        if (numBytesWritten) *numBytesWritten = numBytes;
+        return Steinberg::kResultOk;
+    }
+    Steinberg::tresult PLUGIN_API seek(Steinberg::int64 pos, Steinberg::int32 mode, Steinberg::int64* result) override {
+        Steinberg::int64 newPos = 0;
+        if (mode == kIBSeekSet) newPos = pos;
+        else if (mode == kIBSeekCur) newPos = static_cast<Steinberg::int64>(m_pos) + pos;
+        else if (mode == kIBSeekEnd) newPos = static_cast<Steinberg::int64>(m_data.size()) + pos;
+        if (newPos < 0) newPos = 0;
+        m_pos = static_cast<size_t>(newPos);
+        if (result) *result = static_cast<Steinberg::int64>(m_pos);
+        return Steinberg::kResultOk;
+    }
+    Steinberg::tresult PLUGIN_API tell(Steinberg::int64* pos) override {
+        if (pos) *pos = static_cast<Steinberg::int64>(m_pos);
+        return Steinberg::kResultOk;
+    }
+
+    std::string str() const { return std::string(m_data.begin(), m_data.end()); }
+private:
+    std::vector<char> m_data;
+    size_t m_pos = 0;
+};
+
+// ---------------------------------------------------------------------------
+// Helper: Convert TUID (16 bytes) to 32-char uppercase hex string
+// On Windows (COM_COMPATIBLE=1), the first 8 bytes are stored in GUID layout:
+//   Data1 (4 bytes LE uint32) + Data2 (2 bytes LE uint16) + Data3 (2 bytes LE uint16)
+// followed by 8 raw bytes. The canonical hex string re-interprets them accordingly.
+// ---------------------------------------------------------------------------
+static std::string tuidToHex(const Steinberg::TUID cid) {
+    char buf[33];
+#if COM_COMPATIBLE
+    auto* b = reinterpret_cast<const unsigned char*>(cid);
+    uint32_t d1 = b[0] | (uint32_t(b[1]) << 8) | (uint32_t(b[2]) << 16) | (uint32_t(b[3]) << 24);
+    uint16_t d2 = b[4] | (uint16_t(b[5]) << 8);
+    uint16_t d3 = b[6] | (uint16_t(b[7]) << 8);
+    snprintf(buf, sizeof(buf), "%08X%04X%04X%02X%02X%02X%02X%02X%02X%02X%02X",
+             d1, d2, d3, b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]);
+#else
+    for (int i = 0; i < 16; ++i) {
+        snprintf(buf + i * 2, 3, "%02X", static_cast<unsigned char>(cid[i]));
+    }
+    buf[32] = '\0';
+#endif
+    return buf;
+}
 
 // Resolves a .vst3 path to the actual loadable binary.
 // If given a bundle directory (.vst3/), navigates into Contents/{arch}/ to find the binary.
@@ -432,12 +524,23 @@ bool tryLoadModuleInfo(
 
     auto& root = jv.as_object();
 
-    // Extract Factory Info (vendor, URL)
-    std::string factoryVendor, factoryUrl;
+    // Extract Factory Info (vendor, URL, email, flags)
+    std::string factoryVendor, factoryUrl, factoryEmail;
+    int32_t factoryFlags = 0;
     if (root.contains("Factory Info")) {
         auto& fi = root["Factory Info"].as_object();
         if (fi.contains("Vendor")) factoryVendor = fi["Vendor"].as_string().c_str();
         if (fi.contains("URL")) factoryUrl = fi["URL"].as_string().c_str();
+        if (fi.contains("E-Mail")) factoryEmail = fi["E-Mail"].as_string().c_str();
+        if (fi.contains("Flags") && fi["Flags"].is_object()) {
+            auto& flags = fi["Flags"].as_object();
+            if (flags.contains("Unicode") && flags["Unicode"].is_bool() && flags["Unicode"].as_bool())
+                factoryFlags |= 1; // kUnicode
+            if (flags.contains("Classes Discardable") && flags["Classes Discardable"].is_bool() && flags["Classes Discardable"].as_bool())
+                factoryFlags |= 2; // kClassesDiscardable
+            if (flags.contains("Component Non Discardable") && flags["Component Non Discardable"].is_bool() && flags["Component Non Discardable"].as_bool())
+                factoryFlags |= 8; // kComponentNonDiscardable
+        }
     }
 
     // Enumerate all classes from moduleinfo.json
@@ -516,6 +619,83 @@ bool tryLoadModuleInfo(
     // I/O counts not available from moduleinfo.json
     result.numInputs = 0;
     result.numOutputs = 0;
+
+    // -----------------------------------------------------------------------
+    // Store factory-level email and flags for vstscannermaster XML output
+    // -----------------------------------------------------------------------
+    result.extraData["vst3_factory_email"] = factoryEmail;
+    result.extraData["vst3_factory_flags"] = std::to_string(factoryFlags);
+
+    // -----------------------------------------------------------------------
+    // Second pass: capture ALL classes for vstscannermaster XML output
+    // -----------------------------------------------------------------------
+    // Parse compatibility map first: New CID → list of Old CIDs
+    std::map<std::string, std::vector<std::string>> compatMap;
+    if (root.contains("Compatibility") && root["Compatibility"].is_array()) {
+        for (auto& entry : root["Compatibility"].as_array()) {
+            if (!entry.is_object()) continue;
+            auto& obj = entry.as_object();
+            std::string newUid;
+            if (obj.contains("New") && obj["New"].is_string())
+                newUid = std::string(obj["New"].as_string());
+            if (obj.contains("Old") && obj["Old"].is_array()) {
+                for (auto& old : obj["Old"].as_array()) {
+                    if (old.is_string())
+                        compatMap[newUid].push_back(std::string(old.as_string()));
+                }
+            }
+        }
+    }
+
+    for (size_t i = 0; i < classes.size(); ++i) {
+        auto& obj = classes[i].as_object();
+        std::string prefix = "vst3_all_c" + std::to_string(i) + "_";
+
+        std::string cid = obj.contains("CID") ? obj["CID"].as_string().c_str() : "";
+        result.extraData[prefix + "cid"] = cid;
+        result.extraData[prefix + "name"] = obj.contains("Name") ? obj["Name"].as_string().c_str() : "";
+        result.extraData[prefix + "category"] = obj.contains("Category") ? obj["Category"].as_string().c_str() : "";
+
+        int64_t cardinality = 0x7FFFFFFF; // default kManyInstances
+        if (obj.contains("Cardinality") && obj["Cardinality"].is_int64())
+            cardinality = obj["Cardinality"].as_int64();
+        result.extraData[prefix + "cardinality"] = std::to_string(cardinality);
+
+        uint32_t classFlags = 0;
+        if (obj.contains("Class Flags") && obj["Class Flags"].is_int64())
+            classFlags = static_cast<uint32_t>(obj["Class Flags"].as_int64());
+        result.extraData[prefix + "classFlags"] = std::to_string(classFlags);
+
+        std::string subCats;
+        if (obj.contains("Sub Categories") && obj["Sub Categories"].is_array()) {
+            auto& subs = obj["Sub Categories"].as_array();
+            for (size_t j = 0; j < subs.size(); ++j) {
+                if (j > 0) subCats += "|";
+                subCats += subs[j].as_string().c_str();
+            }
+        }
+        result.extraData[prefix + "subCategories"] = subCats;
+
+        std::string cv = (obj.contains("Vendor") && !obj["Vendor"].as_string().empty())
+            ? std::string(obj["Vendor"].as_string().c_str()) : factoryVendor;
+        result.extraData[prefix + "vendor"] = cv;
+        result.extraData[prefix + "version"] = obj.contains("Version") ? obj["Version"].as_string().c_str() : "";
+        result.extraData[prefix + "sdkVersion"] = obj.contains("SDKVersion") ? obj["SDKVersion"].as_string().c_str() : "";
+
+        // Attach compatibility UIDs if this class's CID matches a compat entry
+        auto compatIt = compatMap.find(cid);
+        if (compatIt != compatMap.end()) {
+            int compatIdx = 0;
+            for (auto& oldUid : compatIt->second) {
+                std::string cPrefix = prefix + "compat_" + std::to_string(compatIdx) + "_";
+                result.extraData[cPrefix + "new"] = cid;
+                result.extraData[cPrefix + "old"] = oldUid;
+                compatIdx++;
+            }
+            result.extraData[prefix + "compat_count"] = std::to_string(compatIdx);
+        }
+    }
+    result.extraData["vst3_all_class_count"] = std::to_string(classes.size());
 
     progressCb(100, "Done (from moduleinfo.json).");
     return true;
@@ -767,9 +947,7 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
         if (!isProcessor) continue;
 
         // Convert 16-byte FUID to hex string
-        char uidBuf[33];
-        snprintf(uidBuf, sizeof(uidBuf), "%08X%08X%08X%08X",
-            classInfo.cid[0], classInfo.cid[1], classInfo.cid[2], classInfo.cid[3]);
+        std::string uidStr = tuidToHex(classInfo.cid);
 
         std::string classVendor = factoryVendor;
         std::string classVersion;
@@ -787,7 +965,7 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
         // Pack into extraData
         std::string prefix = "vst3_c" + std::to_string(processorCount) + "_";
         result.extraData[prefix + "name"] = classInfo.name;
-        result.extraData[prefix + "uid"] = uidBuf;
+        result.extraData[prefix + "uid"] = uidStr;
         result.extraData[prefix + "category"] = classCategory;
         result.extraData[prefix + "vendor"] = classVendor;
         result.extraData[prefix + "version"] = classVersion;
@@ -796,7 +974,7 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
         if (foundClassIndex < 0) {
             foundClassIndex = i;
             result.name = classInfo.name;
-            result.uid = uidBuf;
+            result.uid = uidStr;
             if (!classVendor.empty()) result.vendor = classVendor;
             if (!classVersion.empty()) result.version = classVersion;
             result.category = classCategory;
@@ -813,6 +991,121 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
     result.extraData["vst3_class_count"] = std::to_string(processorCount);
     logStage("Total processor classes: " + std::to_string(processorCount));
 
+    // -----------------------------------------------------------------------
+    // Store factory-level email and flags for vstscannermaster XML output
+    // -----------------------------------------------------------------------
+    result.extraData["vst3_factory_email"] = factoryInfo.email;
+    result.extraData["vst3_factory_flags"] = std::to_string(factoryInfo.flags);
+
+    // -----------------------------------------------------------------------
+    // Second pass: capture ALL classes (processors + controllers + compat + ARA)
+    // for the vstscannermaster XML output using vst3_all_c{N}_ prefix.
+    // -----------------------------------------------------------------------
+    logStage("Enumerating ALL classes for vstscannermaster...");
+
+    // Query IPluginFactory3 for PClassInfoW (sdkVersion, classFlags, unicode names)
+    Steinberg::IPluginFactory3* factory3 = nullptr;
+    bool hasFactory3 = (factory->queryInterface(Steinberg::IPluginFactory3::iid,
+        reinterpret_cast<void**>(&factory3)) == Steinberg::kResultOk && factory3);
+    if (hasFactory3) {
+        logStage("IPluginFactory3 supported.");
+    }
+
+    for (int32_t i = 0; i < numClasses; ++i) {
+        Steinberg::PClassInfo ci;
+        if (factory->getClassInfo(i, &ci) != Steinberg::kResultOk) continue;
+
+        std::string prefix = "vst3_all_c" + std::to_string(i) + "_";
+        result.extraData[prefix + "cid"] = tuidToHex(ci.cid);
+        result.extraData[prefix + "name"] = ci.name;
+        result.extraData[prefix + "category"] = ci.category;
+        result.extraData[prefix + "cardinality"] = std::to_string(ci.cardinality);
+
+        // Try to get extended info from Factory3 (best), Factory2 (fallback)
+        std::string classVendor, classVersion, sdkVersion, subCategories;
+        uint32_t classFlags = 0;
+
+        if (hasFactory3) {
+            Steinberg::PClassInfoW ciw;
+            if (factory3->getClassInfoUnicode(i, &ciw) == Steinberg::kResultOk) {
+                classVendor = utf16ToUtf8(ciw.vendor);
+                classVersion = utf16ToUtf8(ciw.version);
+                sdkVersion = utf16ToUtf8(ciw.sdkVersion);
+                subCategories = ciw.subCategories;
+                classFlags = ciw.classFlags;
+                // Prefer unicode name if available
+                std::string uniName = utf16ToUtf8(ciw.name);
+                if (!uniName.empty()) result.extraData[prefix + "name"] = uniName;
+            }
+        } else if (hasFactory2) {
+            Steinberg::PClassInfo2 ci2;
+            if (factory2->getClassInfo2(i, &ci2) == Steinberg::kResultOk) {
+                classVendor = ci2.vendor;
+                classVersion = ci2.version;
+                sdkVersion = ci2.sdkVersion;
+                subCategories = ci2.subCategories;
+                classFlags = ci2.classFlags;
+            }
+        }
+
+        result.extraData[prefix + "vendor"] = classVendor;
+        result.extraData[prefix + "version"] = classVersion;
+        result.extraData[prefix + "sdkVersion"] = sdkVersion;
+        result.extraData[prefix + "subCategories"] = subCategories;
+        result.extraData[prefix + "classFlags"] = std::to_string(classFlags);
+
+        // For "Plugin Compatibility Class" entries, extract compatibility UIDs
+        if (std::strcmp(ci.category, "Plugin Compatibility Class") == 0) {
+            logStage("Found Plugin Compatibility Class at index " + std::to_string(i) + ", querying compat UIDs...");
+            Steinberg::IPluginCompatibility* compat = nullptr;
+            Steinberg::tresult compatRes = factory->createInstance(
+                ci.cid,
+                Steinberg::IPluginCompatibility::iid.toTUID(),
+                reinterpret_cast<void**>(&compat));
+            if (compatRes == Steinberg::kResultOk && compat) {
+                MemoryStream stream;
+                if (compat->getCompatibilityJSON(&stream) == Steinberg::kResultTrue) {
+                    std::string json = stream.str();
+                    logStage("Compat JSON: " + json);
+                    // Parse the JSON array to extract Old UIDs
+                    // Format: [{"New":"HEXUID","Old":["HEXUID1","HEXUID2"]}]
+                    try {
+                        auto jv = boost::json::parse(json);
+                        if (jv.is_array()) {
+                            int compatIdx = 0;
+                            for (auto& entry : jv.as_array()) {
+                                if (!entry.is_object()) continue;
+                                auto& obj = entry.as_object();
+                                std::string newUid;
+                                if (obj.contains("New") && obj["New"].is_string())
+                                    newUid = std::string(obj["New"].as_string());
+                                if (obj.contains("Old") && obj["Old"].is_array()) {
+                                    for (auto& old : obj["Old"].as_array()) {
+                                        if (old.is_string()) {
+                                            std::string cPrefix = prefix + "compat_" + std::to_string(compatIdx) + "_";
+                                            result.extraData[cPrefix + "new"] = newUid;
+                                            result.extraData[cPrefix + "old"] = std::string(old.as_string());
+                                            compatIdx++;
+                                        }
+                                    }
+                                }
+                            }
+                            result.extraData[prefix + "compat_count"] = std::to_string(compatIdx);
+                        }
+                    } catch (const std::exception& e) {
+                        logStage("Failed to parse compat JSON: " + std::string(e.what()));
+                    }
+                }
+                compat->release();
+            }
+        }
+    }
+    result.extraData["vst3_all_class_count"] = std::to_string(numClasses);
+    logStage("Total ALL classes captured: " + std::to_string(numClasses));
+
+    if (hasFactory3) {
+        factory3->release();
+    }
     if (hasFactory2) {
         factory2->release();
     }

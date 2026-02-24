@@ -91,6 +91,7 @@ add_subdirectory(libs/rps-engine)
 add_subdirectory(apps/rps-standalone)
 add_subdirectory(apps/rps-pluginscanner)
 add_subdirectory(apps/rps-server)
+add_subdirectory(apps/rps-vstscannermaster)
 
 # Example clients
 add_subdirectory(examples/cpp)

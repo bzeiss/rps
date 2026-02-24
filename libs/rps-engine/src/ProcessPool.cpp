@@ -468,15 +468,17 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
 
             if (scannerProc.running()) {
                 logCleanup("process still running, terminating");
-                scannerProc.terminate();
+                try { scannerProc.terminate(); } catch (...) {}
                 logCleanup("terminate() returned");
             }
 
             logCleanup("calling wait()");
-            scannerProc.wait();
+            try { scannerProc.wait(); } catch (...) {}
             logCleanup("wait() returned");
         } catch (const std::exception& ex) {
-            std::cerr << "[Worker #" << workerId << " WARN] cleanup exception: " << ex.what() << "\n";
+            if (job.verbose) {
+                std::cerr << "[Worker #" << workerId << " DBG] cleanup exception: " << ex.what() << "\n";
+            }
         }
 
         // Always close the pipe and join the drainer, even if the above failed

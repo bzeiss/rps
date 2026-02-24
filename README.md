@@ -172,19 +172,21 @@ cmake --build build
 
 ### Build Output
 
-After a successful build, you will find four binaries in the `build/` directory:
+After a successful build, you will find five binaries in the `build/` directory:
 - `build/apps/rps-standalone/rps-standalone` (or `.exe`) — standalone CLI
 - `build/apps/rps-pluginscanner/rps-pluginscanner` (or `.exe`) — scanner worker
 - `build/apps/rps-server/rps-server` (or `.exe`) — gRPC server
+- `build/apps/rps-vstscannermaster/vstscannermaster` (or `.exe`) — Steinberg-compatible VST3 cache generator
 - `build/examples/cpp/rps-example-client` (or `.exe`) — C++ gRPC example client
 
-The standalone CLI and server both auto-locate `rps-pluginscanner` relative to their own path.
+The standalone CLI, server, and vstscannermaster all auto-locate `rps-pluginscanner` relative to their own path.
 
 ## Usage
 
-RPS can be used in two ways:
+RPS can be used in three ways:
 1. **Standalone CLI** (`rps-standalone`) — run scans directly from the command line.
 2. **gRPC Server** (`rps-server`) — a long-lived daemon that accepts scan requests from any language client. See [gRPC Server](#grpc-server) and [Python TUI Client](#python-tui-client) below.
+3. **VST3 Scanner Master** (`vstscannermaster`) — drop-in replacement for Steinberg's `vstscannermaster.exe` that produces Cubase/Nuendo/Dorico-compatible XML cache files. See [VST3 Scanner Master](#vst3-scanner-master) below.
 
 ### Standalone CLI
 
@@ -336,7 +338,46 @@ Scan results are stored in a SQLite database (default: `rps-plugins.db`) with WA
 | `aax_plugins` | AAX-specific variant data (1:N with `plugins`): manufacturer/product/plugin IDs (FourCC + numeric), effect ID, plugin type, stem formats (input/output/sidechain) |
 | `plugins_skipped` | Plugins that are not scannable (e.g., empty bundles, no loadable binary): `path`, `format`, `reason`, `file_mtime` |
 | `plugins_blocked` | Plugins that exhausted all retries or timed out: `path`, `format`, `reason`, `file_mtime` |
-| `vst3_classes` | VST3 multi-class entries (1:N with `plugins`): `class_index`, `name`, `uid`, `category`, `vendor`, `version` |
+| `vst3_classes` | VST3 multi-class entries (1:N with `plugins`): `class_index`, `name`, `uid`, `category`, `class_category`, `cardinality`, `class_flags`, `sub_categories`, `sdk_version`, `vendor`, `version` |
+| `vst3_compat_uids` | VST3 compatibility UIDs (1:N with `vst3_classes`): `class_id`, `new_uid`, `old_uid` |
+
+## VST3 Scanner Master
+
+`vstscannermaster` is a drop-in replacement for Steinberg's `vstscannermaster.exe`. It uses the rps crash-isolated scanning infrastructure to produce the same XML cache files that Cubase, Nuendo, and Dorico consume.
+
+### Command Line Arguments
+
+```text
+vstscannermaster -prefPath <dir> [options]
+
+  -prefPath <dir>       Cache output directory (required)
+  -licenceLevel <N>     Licence level (accepted but ignored)
+  -hostName <name>      Host name
+  -progress             Show progress output
+  -rescan               Force full rescan (default: incremental)
+  -timeout <secs>       Per-plugin timeout in seconds (default: 120)
+  -recheckPath <path>   Rescan a single plugin path
+  --scanner-bin <path>  Path to the scanner binary
+  -j [ --jobs ] <N>     Parallel scanner workers (default: 6)
+  -v [ --verbose ]      Verbose output
+```
+
+### Example
+
+```bash
+vstscannermaster -prefPath ./VST3Cache -licenceLevel 25000 -progress -rescan
+```
+
+### Output Files
+
+| File | Description |
+|---|---|
+| `vst3plugins.xml` | All successfully scanned VST3 plugins with full class metadata |
+| `vst3blocklist.xml` | Plugins that crashed or timed out during scanning |
+| `vst3allowlist.xml` | User-managed allow list (created empty, preserved on subsequent runs) |
+| `cacheVersion` | Cache format version |
+| `vstscannermaster.log` | Scan log with summary statistics |
+| `rps-cache.db` | Internal SQLite database (used for incremental scanning) |
 
 ## gRPC Server
 

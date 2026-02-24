@@ -59,6 +59,15 @@ int main(int argc, char* argv[]) {
     DWORD outMode = 0, errMode = 0;
     if (hOut != INVALID_HANDLE_VALUE) { GetConsoleMode(hOut, &outMode); SetConsoleMode(hOut, outMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING); }
     if (hErr != INVALID_HANDLE_VALUE) { GetConsoleMode(hErr, &errMode); SetConsoleMode(hErr, errMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING); }
+
+    // Kill all child scanner processes when this process exits (Ctrl+C, taskkill, etc.)
+    HANDLE hJob = CreateJobObject(nullptr, nullptr);
+    if (hJob) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli = {};
+        jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli));
+        AssignProcessToJobObject(hJob, GetCurrentProcess());
+    }
 #endif
 
     // --- Build ScanConfig from CLI args ---
