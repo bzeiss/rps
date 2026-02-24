@@ -22,6 +22,9 @@
 #ifdef RPS_VST2_ENABLED
 #include <rps/scanner/Vst2Scanner.hpp>
 #endif
+#ifdef __linux__
+#include <rps/scanner/Lv2Scanner.hpp>
+#endif
 #include <rps/core/FormatTraits.hpp>
 
 bool g_verbose = false;
@@ -35,7 +38,9 @@ std::vector<std::unique_ptr<IPluginFormatScanner>> ScannerFactory::createAllScan
 #ifdef RPS_VST2_ENABLED
     scanners.push_back(std::make_unique<Vst2Scanner>());
 #endif
-    // Add AU, LV2 here later
+#ifdef __linux__
+    scanners.push_back(std::make_unique<Lv2Scanner>());
+#endif
     return scanners;
 }
 }

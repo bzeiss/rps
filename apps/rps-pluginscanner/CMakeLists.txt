@@ -9,11 +9,16 @@ if(RPS_ENABLE_VST2)
     list(APPEND SCANNER_SOURCES src/scanners/Vst2Scanner.cpp)
 endif()
 
+if(UNIX AND NOT APPLE)
+    list(APPEND SCANNER_SOURCES src/scanners/Lv2Scanner.cpp)
+endif()
+
 add_executable(rps-pluginscanner ${SCANNER_SOURCES})
 
 target_include_directories(rps-pluginscanner PRIVATE 
     include
     ${CMAKE_SOURCE_DIR}/libs/rps-core/include/rps/core/vst3sdk
+    ${CMAKE_SOURCE_DIR}/libs/rps-core/include/lv2/include
 )
 
 if(RPS_ENABLE_VST2)

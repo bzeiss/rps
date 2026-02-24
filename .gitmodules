@@ -4,3 +4,6 @@
 [submodule "libs/rps-core/include/rps/core/vst3sdk"]
 	path = libs/rps-core/include/rps/core/vst3sdk
 	url = https://github.com/steinbergmedia/vst3sdk.git
+[submodule "libs/rps-core/include/lv2"]
+	path = libs/rps-core/include/lv2
+	url = https://github.com/lv2/lv2.git
