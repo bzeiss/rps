@@ -470,51 +470,51 @@ static void writePluginsXml(const fs::path& outputPath, const std::vector<Vst3Pl
     int archFlag = getArchitectureFlag();
 
     ofs << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-    ofs << "<plugins>\n";
+    ofs << "<plugins>";
 
     for (auto& plugin : plugins) {
-        ofs << "\t<plugin>\n";
+        ofs << "<plugin>";
         std::string displayPath = resolvePluginDisplayPath(plugin.path);
-        ofs << "\t\t<path>" << xmlEscape(displayPath) << "</path>\n";
-        ofs << "\t\t<vendor>" << xmlEscape(plugin.vendor) << "</vendor>\n";
-        ofs << "\t\t<url>" << xmlEscape(plugin.url) << "</url>\n";
-        ofs << "\t\t<email>" << xmlEscape(plugin.email) << "</email>\n";
-        ofs << "\t\t<flags>" << plugin.flags << "</flags>\n";
-        ofs << "\t\t<codesigned>false</codesigned>\n";
-        ofs << "\t\t<architectures>" << archFlag << "</architectures>\n";
+        ofs << "<path>" << xmlEscape(displayPath) << "</path>";
+        ofs << "<vendor>" << xmlEscape(plugin.vendor) << "</vendor>";
+        ofs << "<url>" << xmlEscape(plugin.url) << "</url>";
+        ofs << "<email>" << xmlEscape(plugin.email) << "</email>";
+        ofs << "<flags>" << plugin.flags << "</flags>";
+        ofs << "<codesigned>false</codesigned>";
+        ofs << "<architectures>" << archFlag << "</architectures>";
 
         std::string timestamp = getExecutableTimestamp(fs::path(plugin.path));
-        ofs << "\t\t<timestamps>\n";
-        ofs << "\t\t\t<executable>" << timestamp << "</executable>\n";
-        ofs << "\t\t</timestamps>\n";
+        ofs << "<timestamps>";
+        ofs << "<executable>" << timestamp << "</executable>";
+        ofs << "</timestamps>";
 
         for (auto& cls : plugin.classes) {
-            ofs << "\t\t<class>\n";
-            ofs << "\t\t\t" << xmlElement("cid", cls.uid) << "\n";
-            ofs << "\t\t\t<cardinality>" << cls.cardinality << "</cardinality>\n";
-            ofs << "\t\t\t" << xmlElement("category", cls.classCategory) << "\n";
-            ofs << "\t\t\t" << xmlElement("name", cls.name) << "\n";
-            ofs << "\t\t\t<classFlags>" << cls.classFlags << "</classFlags>\n";
-            ofs << "\t\t\t" << xmlElement("subCategories", cls.subCategories) << "\n";
-            ofs << "\t\t\t" << xmlElement("vendor", cls.vendor) << "\n";
-            ofs << "\t\t\t" << xmlElement("version", cls.version) << "\n";
-            ofs << "\t\t\t" << xmlElement("sdkVersion", cls.sdkVersion) << "\n";
+            ofs << "<class>";
+            ofs << xmlElement("cid", cls.uid);
+            ofs << "<cardinality>" << cls.cardinality << "</cardinality>";
+            ofs << xmlElement("category", cls.classCategory);
+            ofs << xmlElement("name", cls.name);
+            ofs << "<classFlags>" << cls.classFlags << "</classFlags>";
+            ofs << xmlElement("subCategories", cls.subCategories);
+            ofs << xmlElement("vendor", cls.vendor);
+            ofs << xmlElement("version", cls.version);
+            ofs << xmlElement("sdkVersion", cls.sdkVersion);
 
             if (!cls.compatUids.empty()) {
-                ofs << "\t\t\t<compatibility>\n";
+                ofs << "<compatibility>";
                 for (auto& uid : cls.compatUids) {
-                    ofs << "\t\t\t\t<compatUID>" << xmlEscape(uid) << "</compatUID>\n";
+                    ofs << "<compatUID>" << xmlEscape(uid) << "</compatUID>";
                 }
-                ofs << "\t\t\t</compatibility>\n";
+                ofs << "</compatibility>";
             }
 
-            ofs << "\t\t</class>\n";
+            ofs << "</class>";
         }
 
-        ofs << "\t</plugin>\n";
+        ofs << "</plugin>";
     }
 
-    ofs << "</plugins>\n";
+    ofs << "</plugins>";
 }
 
 // ---------------------------------------------------------------------------
@@ -528,13 +528,13 @@ static void writeBlocklistXml(const fs::path& outputPath, const std::vector<std:
     }
 
     ofs << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-    ofs << "<plugins>\n";
+    ofs << "<plugins>";
     for (auto& path : blockedPaths) {
-        ofs << "\t<plugin>\n";
-        ofs << "\t\t<path>" << xmlEscape(path) << "</path>\n";
-        ofs << "\t</plugin>\n";
+        ofs << "<plugin>";
+        ofs << "<path>" << xmlEscape(path) << "</path>";
+        ofs << "</plugin>";
     }
-    ofs << "</plugins>\n";
+    ofs << "</plugins>";
 }
 
 // ---------------------------------------------------------------------------
@@ -545,7 +545,7 @@ static void writeAllowlistXml(const fs::path& outputPath) {
     std::ofstream ofs(outputPath.string());
     if (!ofs) return;
     ofs << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-    ofs << "<pluginpaths />\n";
+    ofs << "<pluginpaths />";
 }
 
 // ---------------------------------------------------------------------------
