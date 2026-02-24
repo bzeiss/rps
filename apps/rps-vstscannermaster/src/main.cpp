@@ -560,6 +560,7 @@ int main(int argc, char* argv[]) {
         ("help,h", "Show help")
         ("prefPath", po::value<std::string>(), "Cache output directory (required)")
         ("licenceLevel", po::value<int>()->default_value(0), "Licence level (accepted but ignored)")
+        ("licenseLevel", po::value<int>(), "Alias for licenceLevel")
         ("hostName", po::value<std::string>()->default_value(""), "Host name")
         ("progress", "Show progress output")
         ("rescan", "Force full rescan")
