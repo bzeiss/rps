@@ -243,6 +243,45 @@ static std::string resolvePluginDisplayPath(const std::string& pluginPath) {
 }
 
 // ---------------------------------------------------------------------------
+// Get executable timestamp as string (platform-specific)
+// On Windows: FILETIME (100-ns intervals since 1601-01-01)
+// On other platforms: seconds since epoch
+// ---------------------------------------------------------------------------
+static std::string getExecutableTimestamp(const fs::path& pluginPath) {
+    fs::path execPath = pluginPath;
+    if (fs::is_directory(pluginPath)) {
+#ifdef _WIN32
+        fs::path candidate = pluginPath / "Contents" / "x86_64-win" / (pluginPath.stem().string() + ".vst3");
+        if (fs::exists(candidate)) execPath = candidate;
+#elif defined(__APPLE__)
+        fs::path candidate = pluginPath / "Contents" / "MacOS" / pluginPath.stem().string();
+        if (fs::exists(candidate)) execPath = candidate;
+#else
+        fs::path candidate = pluginPath / "Contents" / "x86_64-linux" / (pluginPath.stem().string() + ".so");
+        if (fs::exists(candidate)) execPath = candidate;
+#endif
+    }
+    if (!fs::exists(execPath) || !fs::is_regular_file(execPath)) {
+        execPath = pluginPath;
+    }
+
+#ifdef _WIN32
+    WIN32_FILE_ATTRIBUTE_DATA fad;
+    if (GetFileAttributesExW(execPath.wstring().c_str(), GetFileExInfoStandard, &fad)) {
+        ULARGE_INTEGER uli;
+        uli.LowPart = fad.ftLastWriteTime.dwLowDateTime;
+        uli.HighPart = fad.ftLastWriteTime.dwHighDateTime;
+        return std::to_string(uli.QuadPart);
+    }
+#endif
+    try {
+        auto mtime = fs::last_write_time(execPath);
+        return std::to_string(static_cast<int64_t>(mtime));
+    } catch (...) {}
+    return "0";
+}
+
+// ---------------------------------------------------------------------------
 // Get architecture flag
 // ---------------------------------------------------------------------------
 static int getArchitectureFlag() {
@@ -440,6 +479,11 @@ static void writePluginsXml(const fs::path& outputPath, const std::vector<Vst3Pl
         ofs << "<codesigned>false</codesigned>";
         ofs << "<architectures>" << archFlag << "</architectures>";
 
+        std::string timestamp = getExecutableTimestamp(fs::path(plugin.path));
+        ofs << "<timestamps>";
+        ofs << "<executable>" << timestamp << "</executable>";
+        ofs << "</timestamps>";
+
         for (auto& cls : plugin.classes) {
             ofs << "<class>";
             ofs << xmlElement("cid", cls.uid);
@@ -452,7 +496,8 @@ static void writePluginsXml(const fs::path& outputPath, const std::vector<Vst3Pl
             ofs << xmlElement("version", cls.version);
             ofs << xmlElement("sdkVersion", cls.sdkVersion);
 
-            if (!cls.compatUids.empty()) {
+            // Only add compatibility UIDs to the Audio Module Class
+            if (cls.classCategory == "Audio Module Class" && !cls.compatUids.empty()) {
                 ofs << "<compatibility>";
                 for (auto& uid : cls.compatUids) {
                     ofs << "<compatUID>" << xmlEscape(uid) << "</compatUID>";

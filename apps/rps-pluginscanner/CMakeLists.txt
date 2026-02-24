@@ -18,7 +18,7 @@ add_executable(rps-pluginscanner ${SCANNER_SOURCES})
 target_include_directories(rps-pluginscanner PRIVATE 
     include
     ${CMAKE_SOURCE_DIR}/libs/rps-core/include/rps/core/vst3sdk
-    ${CMAKE_SOURCE_DIR}/libs/rps-core/include/lv2/include
+    ${CMAKE_SOURCE_DIR}/libs/rps-core/include/rps/core/lv2/include
 )
 
 if(RPS_ENABLE_VST2)
