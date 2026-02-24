@@ -112,11 +112,11 @@ cmake -G "Visual Studio 17 2022" -A x64 -B build
 cmake --build build --config Release
 ```
 
-#### macOS
+#### macOS (Homebrew)
 
 Install build tools via Homebrew:
 ```bash
-brew install cmake ninja sqlite grpc spdlog
+brew install cmake ninja sqlite pkg-config grpc protobuf spdlog
 ```
 
 Configure and build:
