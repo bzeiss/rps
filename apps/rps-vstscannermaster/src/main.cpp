@@ -62,6 +62,7 @@ public:
     ProgressObserver(bool showProgress, std::ostream& logStream,
                      size_t totalAllPlugins, size_t cachedOffset)
         : m_out(showProgress, logStream)
+        , m_log(logStream)
         , m_totalAll(totalAllPlugins)
         , m_offset(cachedOffset) {}
 
@@ -81,7 +82,7 @@ public:
     void onPluginCompleted(size_t /*workerId*/, const std::string& pluginPath,
                             rps::engine::ScanOutcome outcome, int64_t elapsedMs,
                             const rps::ipc::ScanResult* result,
-                            const std::string* /*errorMessage*/) override {
+                            const std::string* errorMessage) override {
         std::lock_guard<std::mutex> lock(m_mutex);
         // Use result->name if available, otherwise path stem
         std::string name = (result && !result->name.empty())
@@ -97,13 +98,16 @@ public:
                 break;
             case rps::engine::ScanOutcome::Fail:
                 m_out << "Scanning: " << name << " FAILED" << std::endl;
+                if (errorMessage) m_log << "  Detail: " << *errorMessage << std::endl;
                 break;
             case rps::engine::ScanOutcome::Crash:
                 m_out << "Scanning: " << name << " CRASHED" << std::endl;
+                if (errorMessage) m_log << "  Detail: " << *errorMessage << std::endl;
                 m_blockedPaths.push_back(resolveDisplayPath(pluginPath));
                 break;
             case rps::engine::ScanOutcome::Timeout:
                 m_out << "Scanning: " << name << " TIMEOUT" << std::endl;
+                if (errorMessage) m_log << "  Detail: " << *errorMessage << std::endl;
                 m_blockedPaths.push_back(resolveDisplayPath(pluginPath));
                 break;
             case rps::engine::ScanOutcome::Skipped:
@@ -112,9 +116,23 @@ public:
     }
 
     void onWorkerStderrLine(size_t, const std::string&, const std::string&) override {}
-    void onWorkerStderrDump(size_t, const std::string&, const std::vector<std::string>&) override {}
+    void onWorkerStderrDump(size_t /*workerId*/, const std::string& pluginPath,
+                            const std::vector<std::string>& lines) override {
+        if (lines.empty()) return;
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto name = fs::path(pluginPath).stem().string();
+        m_log << "  stderr [" << name << "]:" << std::endl;
+        for (const auto& line : lines)
+            m_log << "    " << line << std::endl;
+    }
     void onWorkerForceKill(size_t, const std::string&) override {}
-    void onPluginRetry(size_t, const std::string&, size_t, size_t, const std::string&) override {}
+    void onPluginRetry(size_t /*workerId*/, const std::string& pluginPath,
+                       size_t attempt, size_t /*maxAttempts*/,
+                       const std::string& reason) override {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto name = fs::path(pluginPath).stem().string();
+        m_log << "  Retry #" << attempt << " for " << name << ": " << reason << std::endl;
+    }
     void onMonitorReport(const std::vector<std::pair<size_t, std::pair<std::string, int64_t>>>&) override {}
     void onScanCompleted(size_t, size_t, size_t, size_t, size_t, int64_t,
                           const std::vector<std::pair<std::string, std::string>>&) override {}
@@ -144,6 +162,7 @@ private:
     }
 
     DualOut m_out;
+    std::ostream& m_log;
     size_t m_totalAll;
     size_t m_offset;
     std::mutex m_mutex;
