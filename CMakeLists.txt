@@ -19,6 +19,10 @@ if(MSVC)
     target_compile_options(rps_warnings INTERFACE /W4 /WX /permissive-)
 else()
     target_compile_options(rps_warnings INTERFACE -Wall -Wextra -Wpedantic -Werror)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        # Boost.WinAPI/Interprocess uses nested anonymous types — suppress Clang warning
+        target_compile_options(rps_warnings INTERFACE -Wno-nested-anon-types)
+    endif()
 endif()
 
 # Force static linking
