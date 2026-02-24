@@ -60,6 +60,5 @@ target_link_libraries(rps-server
         PkgConfig::PROTOBUF
         spdlog::spdlog
         Boost::program_options
-        Boost::filesystem
         Boost::dll
 )

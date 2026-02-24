@@ -7,5 +7,4 @@ target_link_libraries(rps-standalone
         rps-engine
         rps_warnings
         Boost::program_options
-        Boost::filesystem
 )
