@@ -32,6 +32,10 @@ public:
     // Called by main to set the server pointer for shutdown
     void setServer(grpc::Server* server);
 
+    // Stop the current scan immediately (kills scanner children).
+    // Safe to call from a signal handler context.
+    void stopScan();
+
 private:
     rps::engine::ScanEngine m_engine;
     std::string m_dbPath;

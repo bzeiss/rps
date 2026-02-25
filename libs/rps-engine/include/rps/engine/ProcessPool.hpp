@@ -1,5 +1,14 @@
 #pragma once
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/types.h>
+#endif
+
 #include <string>
 #include <vector>
 #include <map>
@@ -82,6 +91,18 @@ private:
 
     void recordFailure(const std::string& pluginPath, const std::string& reason);
     bool enqueueRetry(const ScanJob& job, const std::string& reason, size_t workerId);
+
+    // Active scanner child processes — used by stop() to SIGKILL/TerminateProcess
+    void deregisterChildProcess(size_t workerId);
+    void killAllChildren();
+#ifdef _WIN32
+    void registerChildProcess(size_t workerId, HANDLE handle);
+    std::map<size_t, HANDLE> m_activeChildHandles;
+#else
+    void registerChildProcess(size_t workerId, pid_t pid);
+    std::map<size_t, pid_t> m_activeChildPids;
+#endif
+    std::mutex m_activeChildMutex;
 };
 
 } // namespace rps::engine

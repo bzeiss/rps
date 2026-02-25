@@ -16,15 +16,19 @@
 #endif
 
 static std::atomic<grpc::Server*> g_server{nullptr};
+static std::atomic<rps::server::RpsServiceImpl*> g_service{nullptr};
 
 static void signalHandler(int sig) {
     spdlog::info("Received signal {}, shutting down...", sig);
+    // Stop scan engine FIRST — kills all scanner children immediately
+    auto* svc = g_service.load();
+    if (svc) svc->stopScan();
+    // Then shut down gRPC with a deadline so it doesn't block forever
     auto* srv = g_server.load();
     if (srv) {
-        // Shutdown must not be called from within a signal handler 
-        // if the main thread is blocking on srv->Wait(), as it can deadlock.
         std::thread([srv]() {
-            srv->Shutdown();
+            auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(2);
+            srv->Shutdown(deadline);
         }).detach();
     }
 }
@@ -131,6 +135,7 @@ int main(int argc, char* argv[]) {
 
     service.setServer(server.get());
     g_server.store(server.get());
+    g_service.store(&service);
 
     // Handle SIGINT/SIGTERM for graceful shutdown
     std::signal(SIGINT, signalHandler);

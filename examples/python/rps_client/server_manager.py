@@ -98,21 +98,31 @@ class ServerManager:
         if self._process is None:
             return
 
-        # Try graceful shutdown via gRPC first (unless in a hurry)
-        if not in_hurry:
+        if in_hurry:
+            # Kill immediately — server's signal handler will clean up children
+            self._process.terminate()  # SIGTERM
             try:
-                from rps_client.proto import rps_pb2, rps_pb2_grpc
+                self._process.wait(timeout=3.0)
+            except subprocess.TimeoutExpired:
+                self._process.kill()  # SIGKILL
+                self._process.wait()
+            self._process = None
+            return
 
-                channel = grpc.insecure_channel(f"localhost:{self.port}")
-                stub = rps_pb2_grpc.RpsServiceStub(channel)
-                stub.Shutdown(rps_pb2.ShutdownRequest(), timeout=2)
-                channel.close()
-            except Exception:
-                pass
-
-        # Wait briefly for graceful exit
+        # Try graceful shutdown via gRPC first
         try:
-            self._process.wait(timeout=1.0 if in_hurry else 5.0)
+            from rps_client.proto import rps_pb2, rps_pb2_grpc
+
+            channel = grpc.insecure_channel(f"localhost:{self.port}")
+            stub = rps_pb2_grpc.RpsServiceStub(channel)
+            stub.Shutdown(rps_pb2.ShutdownRequest(), timeout=2)
+            channel.close()
+        except Exception:
+            pass
+
+        # Wait for graceful exit
+        try:
+            self._process.wait(timeout=5.0)
         except subprocess.TimeoutExpired:
             # Force kill
             self._process.terminate()

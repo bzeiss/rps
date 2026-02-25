@@ -8,10 +8,18 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <csignal>
 #include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
 #include <rps/engine/ScanEngine.hpp>
 #include <rps/engine/ConsoleScanObserver.hpp>
+
+static std::atomic<rps::engine::ScanEngine*> g_engine{nullptr};
+
+static void signalHandler(int /*sig*/) {
+    auto* e = g_engine.load();
+    if (e) e->stop();
+}
 
 int main(int argc, char* argv[]) {
     namespace po = boost::program_options;
@@ -103,6 +111,9 @@ int main(int argc, char* argv[]) {
 
     rps::engine::ConsoleScanObserver observer(config.verbose);
     rps::engine::ScanEngine engine;
+    g_engine.store(&engine);
+    std::signal(SIGINT, signalHandler);
+    std::signal(SIGTERM, signalHandler);
 
     auto summary = engine.runScan(config, &observer);
 

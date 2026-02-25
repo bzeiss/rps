@@ -67,6 +67,14 @@ namespace ansi {
 }
 
 // ---------------------------------------------------------------------------
+// Signal handling for clean Ctrl+C
+// ---------------------------------------------------------------------------
+static std::atomic<bool> g_interrupted{false};
+
+// Forward-declare — defined after ServerManager
+static void installSignalHandlers();
+
+// ---------------------------------------------------------------------------
 // Server process manager
 // ---------------------------------------------------------------------------
 class ServerManager {
@@ -131,37 +139,45 @@ public:
         return false;
     }
 
-    void stop() {
+    void stop(bool inHurry = false) {
         if (!m_running) return;
         m_running = false;
 
-        // Try graceful shutdown via gRPC
-        try {
-            auto channel = grpc::CreateChannel(address(), grpc::InsecureChannelCredentials());
-            auto stub = rps::v1::RpsService::NewStub(channel);
-            grpc::ClientContext ctx;
-            ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
-            rps::v1::ShutdownRequest req;
-            rps::v1::ShutdownResponse resp;
-            stub->Shutdown(&ctx, req, &resp);
-        } catch (...) {}
+        if (!inHurry) {
+            // Try graceful shutdown via gRPC
+            try {
+                auto channel = grpc::CreateChannel(address(), grpc::InsecureChannelCredentials());
+                auto stub = rps::v1::RpsService::NewStub(channel);
+                grpc::ClientContext ctx;
+                ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
+                rps::v1::ShutdownRequest req;
+                rps::v1::ShutdownResponse resp;
+                stub->Shutdown(&ctx, req, &resp);
+            } catch (...) {}
+        }
 
 #ifdef _WIN32
         if (m_processHandle) {
-            WaitForSingleObject(m_processHandle, 5000);
-            TerminateProcess(m_processHandle, 0);
+            if (inHurry) {
+                TerminateProcess(m_processHandle, 0);
+            } else {
+                WaitForSingleObject(m_processHandle, 3000);
+                TerminateProcess(m_processHandle, 0);
+            }
             CloseHandle(m_processHandle);
             m_processHandle = nullptr;
         }
 #else
         if (m_pid > 0) {
             int status;
-            auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            kill(m_pid, SIGTERM);
+            auto deadline = std::chrono::steady_clock::now()
+                + std::chrono::seconds(inHurry ? 1 : 3);
             while (std::chrono::steady_clock::now() < deadline) {
                 if (waitpid(m_pid, &status, WNOHANG) != 0) { m_pid = -1; return; }
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
             }
-            kill(m_pid, SIGTERM);
+            kill(m_pid, SIGKILL);
             waitpid(m_pid, &status, 0);
             m_pid = -1;
         }
@@ -184,6 +200,15 @@ private:
     pid_t m_pid = -1;
 #endif
 };
+
+static void signalHandlerFunc(int /*sig*/) {
+    g_interrupted = true;
+}
+
+static void installSignalHandlers() {
+    std::signal(SIGINT, signalHandlerFunc);
+    std::signal(SIGTERM, signalHandlerFunc);
+}
 
 // ---------------------------------------------------------------------------
 // Console TUI state
@@ -493,6 +518,10 @@ int cmdScan(const std::string& serverAddr, const po::variables_map& vm,
             std::lock_guard<std::mutex> lock(state.mtx);
             if (state.finished) break;
         }
+        if (g_interrupted) {
+            ctx.TryCancel();
+            break;
+        }
         render(state);
         std::this_thread::sleep_for(std::chrono::milliseconds(150));
     }
@@ -677,6 +706,9 @@ int main(int argc, char* argv[]) {
         }
         serverAddr = mgr->address();
     }
+
+    // Install signal handlers so Ctrl+C triggers fast server shutdown
+    installSignalHandlers();
 
     int rc = 0;
     if (command == "scan") {

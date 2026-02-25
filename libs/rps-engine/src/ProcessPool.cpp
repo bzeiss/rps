@@ -3,6 +3,8 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#else
+#include <csignal>
 #endif
 
 #include <rps/engine/ProcessPool.hpp>
@@ -83,7 +85,7 @@ std::vector<std::pair<std::string, std::string>> ProcessPool::failures() const {
 }
 
 ProcessPool::~ProcessPool() {
-    m_stop = true;
+    stop();
     for (auto& t : m_threads) {
         if (t.joinable()) t.join();
     }
@@ -135,6 +137,48 @@ void ProcessPool::runJobs(const std::vector<ScanJob>& jobs) {
 
 void ProcessPool::stop() {
     m_stop = true;
+    killAllChildren();
+}
+
+#ifdef _WIN32
+void ProcessPool::registerChildProcess(size_t workerId, HANDLE handle) {
+    HANDLE dup = nullptr;
+    DuplicateHandle(GetCurrentProcess(), handle, GetCurrentProcess(), &dup,
+                    0, FALSE, DUPLICATE_SAME_ACCESS);
+    std::lock_guard<std::mutex> lock(m_activeChildMutex);
+    m_activeChildHandles[workerId] = dup;
+}
+#else
+void ProcessPool::registerChildProcess(size_t workerId, pid_t pid) {
+    std::lock_guard<std::mutex> lock(m_activeChildMutex);
+    m_activeChildPids[workerId] = pid;
+}
+#endif
+
+void ProcessPool::deregisterChildProcess(size_t workerId) {
+    std::lock_guard<std::mutex> lock(m_activeChildMutex);
+#ifdef _WIN32
+    auto it = m_activeChildHandles.find(workerId);
+    if (it != m_activeChildHandles.end()) {
+        CloseHandle(it->second);
+        m_activeChildHandles.erase(it);
+    }
+#else
+    m_activeChildPids.erase(workerId);
+#endif
+}
+
+void ProcessPool::killAllChildren() {
+    std::lock_guard<std::mutex> lock(m_activeChildMutex);
+#ifdef _WIN32
+    for (auto& [id, handle] : m_activeChildHandles) {
+        TerminateProcess(handle, 1);
+    }
+#else
+    for (auto& [id, pid] : m_activeChildPids) {
+        ::kill(pid, SIGKILL);
+    }
+#endif
 }
 
 std::string ProcessPool::formatDuration(int64_t ms) {
@@ -249,6 +293,13 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
         bp::ipstream errStream;
         bp::ipstream outStream;
         bp::child scannerProc(job.scannerBin, bp::args(scanArgs), bp::std_err > errStream, bp::std_out > outStream);
+
+        // Register child PID so stop() can kill it instantly
+#ifdef _WIN32
+        registerChildProcess(workerId, scannerProc.native_handle());
+#else
+        registerChildProcess(workerId, scannerProc.id());
+#endif
 
 #ifdef _WIN32
         // Restrict scanner child process from showing Win32 UI (dialogs, message boxes).
@@ -521,6 +572,7 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
 
             logCleanup("calling wait()");
             try { scannerProc.wait(); } catch (...) {}
+            deregisterChildProcess(workerId);
             logCleanup("wait() returned");
         } catch (const std::exception& ex) {
             if (job.verbose) {
