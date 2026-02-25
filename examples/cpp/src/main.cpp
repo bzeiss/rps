@@ -6,9 +6,10 @@
 #else
 #include <unistd.h>
 #include <sys/wait.h>
-#include <csignal>
 #include <fcntl.h>
 #endif
+
+#include <csignal>
 
 #include <iostream>
 #include <string>

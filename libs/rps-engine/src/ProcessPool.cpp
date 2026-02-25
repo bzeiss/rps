@@ -292,7 +292,9 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
 
         bp::ipstream errStream;
         bp::ipstream outStream;
-        bp::child scannerProc(job.scannerBin, bp::args(scanArgs), bp::std_err > errStream, bp::std_out > outStream);
+        bp::child scannerProc(job.scannerBin, bp::args(scanArgs),
+                              bp::start_dir(fs::temp_directory_path().string()),
+                              bp::std_err > errStream, bp::std_out > outStream);
 
         // Register child PID so stop() can kill it instantly
 #ifdef _WIN32
