@@ -32,7 +32,6 @@ std::vector<fs::path> PluginDiscovery::findPlugins(
     for (const auto& dirStr : directories) {
         fs::path dirPath(dirStr);
         if (!fs::exists(dirPath) || !fs::is_directory(dirPath)) {
-            std::cerr << "Warning: Directory does not exist or is not a directory: " << dirStr << "\n";
             continue;
         }
 
