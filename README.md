@@ -146,8 +146,7 @@ same as macOS
 #### Linux (Ubuntu / Debian)
 
 ```bash
-sudo apt install cmake ninja-build g++ clang libsqlite3-dev git \
-     libgrpc++-dev protobuf-compiler-grpc libspdlog-dev
+sudo apt install cmake ninja-build g++ clang libsqlite3-dev git libgrpc++-dev protobuf-compiler-grpc libspdlog-dev
 ```
 
 Configure and build:
