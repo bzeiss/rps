@@ -1,0 +1,96 @@
+name: Build RPS
+
+on:
+  push:
+    branches: [ "master", "main", "0.2", "0.1" ]
+  pull_request:
+    branches: [ "master", "main", "0.2", "0.1" ]
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: Linux x64
+          - os: macos-14
+            name: macOS Apple Silicon
+          - os: windows-latest
+            name: Windows MSYS2
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Dependencies (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake ninja-build g++ clang libsqlite3-dev git libgrpc++-dev protobuf-compiler-grpc libspdlog-dev
+
+    - name: Install Dependencies (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        brew install cmake ninja sqlite pkg-config grpc protobuf spdlog
+
+    - name: Setup MSYS2 (Windows)
+      if: runner.os == 'Windows'
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: CLANG64
+        update: true
+        install: >-
+          mingw-w64-clang-x86_64-cmake
+          mingw-w64-clang-x86_64-ninja
+          mingw-w64-clang-x86_64-clang
+          mingw-w64-clang-x86_64-sqlite3
+          mingw-w64-clang-x86_64-grpc
+          mingw-w64-clang-x86_64-spdlog
+
+    - name: Cache Boost
+      id: cache-boost
+      uses: actions/cache@v4
+      with:
+        path: third_party/boost
+        key: boost-1.90.0-${{ runner.os }}
+
+    - name: Clone Boost
+      if: steps.cache-boost.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        mkdir -p third_party
+        git clone --branch boost-1.90.0 https://github.com/boostorg/boost.git third_party/boost
+        cd third_party/boost
+        git submodule update --init --recursive
+
+    - name: Configure CMake (Unix)
+      if: runner.os != 'Windows'
+      run: cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build (Unix)
+      if: runner.os != 'Windows'
+      run: cmake --build build --config Release
+
+    - name: Configure CMake (Windows)
+      if: runner.os == 'Windows'
+      shell: msys2 {0}
+      run: cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build (Windows)
+      if: runner.os == 'Windows'
+      shell: msys2 {0}
+      run: cmake --build build --config Release
+
+    - name: Test Run Standalone (Unix)
+      if: runner.os != 'Windows'
+      run: ./build/apps/rps-standalone/rps-standalone --help
+
+    - name: Test Run Standalone (Windows)
+      if: runner.os == 'Windows'
+      shell: msys2 {0}
+      run: ./build/apps/rps-standalone/rps-standalone.exe --help
