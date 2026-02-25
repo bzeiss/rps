@@ -141,6 +141,7 @@ sudo dnf install cmake ninja-build gcc-c++ clang sqlite-devel git grpc-devel grp
 ```
 
 Configure and build:
+
 same as macOS
 
 #### Linux (Ubuntu / Debian)
@@ -151,6 +152,7 @@ sudo apt install cmake ninja-build g++ clang libsqlite3-dev git \
 ```
 
 Configure and build:
+
 same as macOS
 
 ### Build Output
