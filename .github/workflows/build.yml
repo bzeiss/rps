@@ -13,7 +13,7 @@ jobs:
         include:
           - os: ubuntu-latest
             name: Linux x64
-          - os: macos-14
+          - os: macos-15
             name: macOS Apple Silicon
           - os: windows-latest
             name: Windows MSYS2
