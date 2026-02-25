@@ -60,21 +60,6 @@ git submodule update --init --recursive
 
 This will take several minutes (~180 sub-repos). Once done, the directory will contain a `CMakeLists.txt` at the top level.
 
-Then tell CMake where it is using either method:
-
-```bash
-# Via CMake flag:
-cmake -G Ninja -DBOOST_SOURCE_DIR=/path/to/boost -B build
-cmake --build build
-
-# Via environment variable:
-export BOOST_SOURCE_DIR=/path/to/boost
-cmake -G Ninja -B build
-cmake --build build
-```
-
-The `-D` flag takes priority over the environment variable. If neither is set, CMake looks for `third_party/boost` as a fallback.
-
 ### Step 2: Configure and Build
 
 #### Windows (MSVC + vcpkg - Recommended for Static Builds)
@@ -98,7 +83,6 @@ To avoid DLL dependencies and build a single, standalone executable on Windows, 
    # Configure CMake to use vcpkg and static linking
    # leave out the VST2 parameters to build without it
    # leave out the boost source dir if you have the environment variable set
-   
    cmake -G "Visual Studio 17 2022" -A x64 -B build -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static -DRPS_MSVC_STATIC_RUNTIME=ON -DBOOST_SOURCE_DIR=C:/dev/boost -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=c:/dev/vstsdk2.4
          
    # Build the project
@@ -128,7 +112,6 @@ export BOOST_SOURCE_DIR=/c/develop/boost
 
 # leave out the VST2 parameters to build without it
 # leave out the boost source dir if you have the environment variable set
-
 cmake -G Ninja -DBOOST_SOURCE_DIR=/c/dev/boost -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=/c/dev/vstsdk2.4 -B build
 cmake --build build
 ```
@@ -142,13 +125,9 @@ brew install cmake ninja sqlite pkg-config grpc protobuf spdlog
 
 Configure and build:
 ```bash
-# Option 1: Pass Boost path via CMake flag
-cmake -G Ninja -DBOOST_SOURCE_DIR=/usr/local/src/boost -B build
-cmake --build build
-
-# Option 2: Set as environment variable
-export BOOST_SOURCE_DIR=/usr/local/src/boost
-cmake -G Ninja -B build
+# leave out the VST2 parameters to build without it
+# leave out the boost source dir if you have the environment variable set
+cmake -G Ninja -DBOOST_SOURCE_DIR=~/dev/boost -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=~/dev/vstsdk2.4 -B build
 cmake --build build
 ```
 
@@ -159,16 +138,7 @@ sudo dnf install cmake ninja-build gcc-c++ clang sqlite-devel git grpc-devel grp
 ```
 
 Configure and build:
-```bash
-# Option 1: Pass Boost path via CMake flag
-cmake -G Ninja -DBOOST_SOURCE_DIR=/home/user/boost -B build
-cmake --build build
-
-# Option 2: Set as environment variable
-export BOOST_SOURCE_DIR=/home/user/boost
-cmake -G Ninja -B build
-cmake --build build
-```
+same as macOS
 
 #### Linux (Ubuntu / Debian)
 
@@ -178,18 +148,7 @@ sudo apt install cmake ninja-build g++ clang libsqlite3-dev git \
 ```
 
 Configure and build:
-```bash
-# Option 1: Pass Boost path via CMake flag
-cmake -G Ninja -DBOOST_SOURCE_DIR=/home/user/boost -B build
-cmake --build build
-
-# Option 2: Set as environment variable
-export BOOST_SOURCE_DIR=/home/user/boost
-cmake -G Ninja -B build
-cmake --build build
-```
-
-> **Note:** Boost is no longer needed as a system package on any platform. It is built from source as part of the CMake configure step.
+same as macOS
 
 ### Build Output
 
@@ -318,29 +277,6 @@ If no paths are provided, RPS will automatically search the following directorie
 - `/usr/lib/vst`, `/usr/local/lib/vst`, `~/.vst`
 - `/usr/lib/ladspa`, `/usr/lib64/ladspa`, `/usr/local/lib/ladspa`, `/usr/local/lib64/ladspa`, `~/.ladspa`
 
-## Optional: VST2.4 Support
-
-VST2 scanning is an **opt-in compile-time feature** because the VST2.4 SDK is proprietary and cannot be redistributed. It is disabled by default.
-
-### Enabling VST2
-
-1. **Obtain the VST2.4 SDK** from Steinberg (no longer publicly available — you must have a prior license agreement).
-2. **Place the SDK** so that `pluginterfaces/vst2.x/aeffect.h` exists at:
-   ```
-   libs/rps-core/include/rps/core/vstsdk2.4/pluginterfaces/vst2.x/aeffect.h
-   ```
-3. **Enable the feature** at configure time:
-   ```bash
-   # Via CMake flag:
-   cmake -G Ninja -DRPS_ENABLE_VST2=ON -B build
-
-   # Or with a custom SDK path:
-   cmake -G Ninja -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=/path/to/vstsdk2.4 -B build
-   ```
-4. **Build normally**: `cmake --build build`
-
-When `RPS_ENABLE_VST2` is OFF (the default), no VST2 SDK code is compiled or linked. The `--formats all` flag **never** includes VST2 — you must explicitly pass `--formats vst2`.
-
 ## Scan Modes
 
 RPS supports two scan modes via `--mode`:
@@ -440,59 +376,9 @@ Only one scan at a time is allowed. `StartScan` returns `ALREADY_EXISTS` if a sc
 ./rps-server --port 50051 --db my-plugins.db --log-level debug
 ```
 
-## Python TUI Client
+## Example Clients
 
-A fully functional example client lives in `examples/python/`. It auto-spawns and kills `rps-server`, and displays rich per-worker progress bars using the `rich` library.
-
-### Setup
-
-```bash
-cd examples/python
-python -m venv .venv
-source .venv/bin/activate   # or .venv\Scripts\activate on Windows
-pip install -e .
-
-# Generate gRPC stubs (generates and patches imports)
-python generate_proto.py
-```
-
-### Usage
-
-```bash
-# Scan with TUI (auto-spawns server)
-python -m rps_client scan --formats vst3,clap --limit 50
-
-# Connect to an already-running server
-python -m rps_client --server localhost:50051 scan
-python -m rps_client --server localhost:50051 status
-```
-
-See `examples/python/README.md` for full documentation.
-
-## C++ Example Client
-
-A C++ gRPC client with an ANSI terminal TUI is built alongside the project as `rps-example-client`.
-
-### Usage
-
-```bash
-# Scan with TUI (auto-spawns server)
-./rps-example-client scan --formats vst3,clap --limit 50
-
-# Full scan of all formats
-./rps-example-client scan --mode full
-
-# Connect to an already-running server
-./rps-example-client --server localhost:50051 scan --formats vst3
-
-# Query server status
-./rps-example-client --server localhost:50051 status
-
-# Shut down server
-./rps-example-client --server localhost:50051 shutdown
-```
-
-The binary auto-locates `rps-server` relative to its own build directory. Use `--server-bin` to override.
+Each example client has its own README.md in its directory.
 
 ## Documentation
 
