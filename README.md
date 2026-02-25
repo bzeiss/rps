@@ -96,10 +96,10 @@ To avoid DLL dependencies and build a single, standalone executable on Windows, 
    set BOOST_SOURCE_DIR=C:\develop\boost
    
    # Configure CMake to use vcpkg and static linking
-   cmake -G "Visual Studio 17 2022" -A x64 -B build ^
-         -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake ^
-         -DVCPKG_TARGET_TRIPLET=x64-windows-static ^
-         -DRPS_MSVC_STATIC_RUNTIME=ON
+   # leave out the VST2 parameters to build without it
+   # leave out the boost source dir if you have the environment variable set
+   
+   cmake -G "Visual Studio 17 2022" -A x64 -B build -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static -DRPS_MSVC_STATIC_RUNTIME=ON -DBOOST_SOURCE_DIR=C:/dev/boost -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=c:/dev/vstsdk2.4
          
    # Build the project
    cmake --build build --config Release
@@ -115,13 +115,7 @@ The MSYS2 Clang64 environment can be used, but note that it produces dynamically
 1. Install MSYS2 and launch the **MSYS2 Clang64** terminal.
 2. Install the toolchain and dependencies:
    ```bash
-   pacman -S mingw-w64-clang-x86_64-toolchain \
-             mingw-w64-clang-x86_64-cmake \
-             mingw-w64-clang-x86_64-ninja \
-             mingw-w64-clang-x86_64-sqlite3 \
-             mingw-w64-clang-x86_64-grpc \
-             mingw-w64-clang-x86_64-protobuf \
-             mingw-w64-clang-x86_64-spdlog
+   pacman -S mingw-w64-clang-x86_64-toolchain mingw-w64-clang-x86_64-cmake mingw-w64-clang-x86_64-ninja mingw-w64-clang-x86_64-sqlite3 mingw-w64-clang-x86_64-grpc mingw-w64-clang-x86_64-protobuf mingw-w64-clang-x86_64-spdlog
    ```
 
 > **Note on running MSYS2 executables:**
@@ -129,9 +123,13 @@ The MSYS2 Clang64 environment can be used, but note that it produces dynamically
 
 Configure and build:
 ```bash
-# Set as environment variable
+# Optionally set as environment variable
 export BOOST_SOURCE_DIR=/c/develop/boost
-cmake -G Ninja -B build
+
+# leave out the VST2 parameters to build without it
+# leave out the boost source dir if you have the environment variable set
+
+cmake -G Ninja -DBOOST_SOURCE_DIR=/c/dev/boost -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=/c/dev/vstsdk2.4 -B build
 cmake --build build
 ```
 
