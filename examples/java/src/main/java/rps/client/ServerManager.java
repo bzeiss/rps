@@ -33,9 +33,8 @@ public class ServerManager implements AutoCloseable {
         cmd.add(logLevel);
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
-        // Redirect logs to file so we can debug if it fails
-        pb.redirectError(ProcessBuilder.Redirect.appendTo(new File("rps-server-java.log")));
-        pb.redirectOutput(ProcessBuilder.Redirect.appendTo(new File("rps-server-java.log")));
+        pb.redirectError(ProcessBuilder.Redirect.DISCARD);
+        pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
 
         System.out.println("Spawning server: " + String.join(" ", cmd));
         this.process = pb.start();
@@ -45,7 +44,7 @@ public class ServerManager implements AutoCloseable {
         while (System.currentTimeMillis() < deadline) {
             if (!process.isAlive()) {
                 throw new IOException("rps-server exited immediately with code " + process.exitValue() + 
-                                     ". Check rps-server-java.log for details.");
+                                     ". Check rps-server.log for details.");
             }
             try (Socket socket = new Socket()) {
                 socket.connect(new InetSocketAddress("127.0.0.1", port), 500);
@@ -89,13 +88,13 @@ public class ServerManager implements AutoCloseable {
     @Override
     public void close() {
         if (process != null && process.isAlive()) {
-            process.destroy();
+            // Kill the entire process tree (server + any scanner workers)
+            process.descendants().forEach(ProcessHandle::destroyForcibly);
+            process.destroyForcibly();
             try {
-                if (!process.waitFor(5, TimeUnit.SECONDS)) {
-                    process.destroyForcibly();
-                }
+                process.waitFor(5, TimeUnit.SECONDS);
             } catch (InterruptedException e) {
-                process.destroyForcibly();
+                // already force-killed
             }
         }
     }

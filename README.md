@@ -77,39 +77,62 @@ The `-D` flag takes priority over the environment variable. If neither is set, C
 
 ### Step 2: Configure and Build
 
-#### Windows (MSYS2 / Clang) — Recommended
+#### Windows (MSVC + vcpkg - Recommended for Static Builds)
 
-Open the **MSYS2 CLANG64** shell and install build tools:
+To avoid DLL dependencies and build a single, standalone executable on Windows, it is highly recommended to use Visual Studio (MSVC) with `vcpkg` for dependency management. This allows for fully static linking.
+
+1. **Install Visual Studio 2022** with the "Desktop development with C++" workload.
+2. **Install vcpkg** and the required libraries:
+   ```cmd
+   git clone https://github.com/microsoft/vcpkg.git c:\vcpkg
+   cd c:\vcpkg
+   bootstrap-vcpkg.bat
+   vcpkg.exe install grpc protobuf spdlog sqlite3 --triplet x64-windows-static
+   ```
+
+3. **Configure and Build** (using Developer Command Prompt for VS 2022):
+   ```cmd
+   # Set the Boost source directory
+   set BOOST_SOURCE_DIR=C:\develop\boost
+   
+   # Configure CMake to use vcpkg and static linking
+   cmake -G "Visual Studio 17 2022" -A x64 -B build ^
+         -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake ^
+         -DVCPKG_TARGET_TRIPLET=x64-windows-static ^
+         -DRPS_MSVC_STATIC_RUNTIME=ON
+         
+   # Build the project
+   cmake --build build --config Release
+   ```
+   *Note: Ensure your `C:\vcpkg` path matches where you cloned it.*
+
+> **Important Note regarding process termination on Windows:**
+> When using the example Java or C++ clients on Windows, it is highly recommended to run them from PowerShell rather than MSYS2/MinTTY terminals. MSYS2 terminals do not always translate `Ctrl+C` into proper Windows console control events, which can cause the client to abruptly terminate without running shutdown hooks, leaving the `rps-server.exe` running in the background as an orphaned process. Running from PowerShell or standard Command Prompt ensures proper process termination.
+
+#### Windows (MSYS2/Clang - Alternative)
+The MSYS2 Clang64 environment can be used, but note that it produces dynamically linked executables.
+
+1. Install MSYS2 and launch the **MSYS2 Clang64** terminal.
+2. Install the toolchain and dependencies:
+   ```bash
+   pacman -S mingw-w64-clang-x86_64-toolchain \
+             mingw-w64-clang-x86_64-cmake \
+             mingw-w64-clang-x86_64-ninja \
+             mingw-w64-clang-x86_64-sqlite3 \
+             mingw-w64-clang-x86_64-grpc \
+             mingw-w64-clang-x86_64-protobuf \
+             mingw-w64-clang-x86_64-spdlog
+   ```
+
+> **Note on running MSYS2 executables:**
+> If you build with MSYS2, you must run the resulting executables from within the MSYS2 terminal, or add the MSYS2 `bin` folder (`C:\msys64\clang64\bin`) to your Windows PATH. Otherwise, Windows will fail to find the required MSYS2 DLLs (`libgrpc++`, `libprotobuf`, `libspdlog`, etc.) and the executable will exit with code `0xC0000135`.
+
+Configure and build:
 ```bash
-pacman -S mingw-w64-clang-x86_64-cmake mingw-w64-clang-x86_64-ninja \
-          mingw-w64-clang-x86_64-clang mingw-w64-clang-x86_64-sqlite3 \
-          mingw-w64-clang-x86_64-grpc mingw-w64-clang-x86_64-spdlog
-```
-
-Configure and build (see [Boost Source Tree](#boost-source-tree) for how to obtain Boost):
-```bash
-# Option 1: Pass Boost path via CMake flag
-cmake -G Ninja -DBOOST_SOURCE_DIR=/c/develop/boost -B build
-cmake --build build
-
-# Option 2: Set as environment variable
+# Set as environment variable
 export BOOST_SOURCE_DIR=/c/develop/boost
 cmake -G Ninja -B build
 cmake --build build
-```
-
-#### Windows (MSVC / Visual Studio 2022)
-
-Install SQLite3 via [vcpkg](https://vcpkg.io) or manually, then:
-```bash
-# Option 1: Pass Boost path via CMake flag
-cmake -G "Visual Studio 17 2022" -A x64 -DBOOST_SOURCE_DIR=C:/develop/boost -B build
-cmake --build build --config Release
-
-# Option 2: Set as environment variable
-set BOOST_SOURCE_DIR=C:\develop\boost
-cmake -G "Visual Studio 17 2022" -A x64 -B build
-cmake --build build --config Release
 ```
 
 #### macOS (Homebrew)

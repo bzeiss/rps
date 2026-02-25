@@ -39,10 +39,11 @@ public class RpsClientMain {
             // Attempt to build a system terminal, fallback to dumb if needed
             terminal = TerminalBuilder.builder()
                     .system(true)
+                    .encoding(java.nio.charset.StandardCharsets.UTF_8)
                     .build();
         } catch (Exception e) {
             try {
-                terminal = TerminalBuilder.builder().dumb(true).build();
+                terminal = TerminalBuilder.builder().dumb(true).encoding(java.nio.charset.StandardCharsets.UTF_8).build();
             } catch (Exception e2) {
                 System.err.println("Critical error: Could not even initialize dumb terminal.");
                 return;
@@ -54,6 +55,9 @@ public class RpsClientMain {
         String serverBin = ServerManager.findServerBinary();
         try (ServerManager server = (serverBin != null) ? new ServerManager(serverBin, port, dbPath, "info") : null) {
             if (server != null) {
+                Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                    try { server.close(); } catch (Exception e) {}
+                }));
                 server.start();
             }
 
@@ -134,17 +138,17 @@ public class RpsClientMain {
         
         // Header
         out.print("\033[2K"); // Clear line
-        out.println("\033[1;34mRPS Java Scanner\033[0m");
+        out.println("RPS Java Scanner");
         lines++;
 
         // Overall progress
         int pct = totalPlugins > 0 ? (completedPlugins * 100 / totalPlugins) : 0;
         int barWidth = 40;
         int filled = (pct * barWidth) / 100;
-        String bar = "━".repeat(filled) + "╌".repeat(barWidth - filled);
+        String bar = "#".repeat(filled) + "-".repeat(barWidth - filled);
         
         out.print("\033[2K");
-        out.println(String.format(" %s %3d%% (%d/%d)  \033[32m✓%d\033[0m \033[31m✗%d\033[0m \033[31m💥%d\033[0m \033[33m⏱%d\033[0m \033[2m⊘%d\033[0m", 
+        out.println(String.format(" [%s] %3d%% (%d/%d)  ok:%d fail:%d crash:%d timeout:%d skip:%d", 
                 bar, pct, completedPlugins, totalPlugins, successCount, failCount, crashCount, timeoutCount, skippedCount));
         lines++;
 
@@ -158,13 +162,13 @@ public class RpsClientMain {
             if (wi.active) {
                 int wBarWidth = 10;
                 int wFilled = (wi.percentage * wBarWidth) / 100;
-                String wBar = "━".repeat(wFilled) + "╌".repeat(wBarWidth - wFilled);
+                String wBar = "#".repeat(wFilled) + "-".repeat(wBarWidth - wFilled);
                 
-                out.println(String.format("  \033[1m#%d\033[0m [%s] %3d%%  %-25s \033[2m(%s)\033[0m", 
+                out.println(String.format("  #%d [%s] %3d%%  %-25s (%s)", 
                         entry.getKey(), wBar, wi.percentage, 
                         truncate(wi.filename, 25), wi.stage));
             } else {
-                out.println(String.format("  \033[2m#%d  idle\033[0m", entry.getKey()));
+                out.println(String.format("  #%d  idle", entry.getKey()));
             }
             lines++;
         }
