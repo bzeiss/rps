@@ -66,7 +66,7 @@ This will take several minutes (~180 sub-repos). Once done, the directory will c
 
 To avoid DLL dependencies and build a single, standalone executable on Windows, it is highly recommended to use Visual Studio (MSVC) with `vcpkg` for dependency management. This allows for fully static linking.
 
-1. **Install Visual Studio 2022** with the "Desktop development with C++" workload.
+1. **Install Visual Studio 2022** (or later) with the "Desktop development with C++" workload.
 2. **Install vcpkg** and the required libraries:
    ```cmd
    git clone https://github.com/microsoft/vcpkg.git c:\vcpkg
