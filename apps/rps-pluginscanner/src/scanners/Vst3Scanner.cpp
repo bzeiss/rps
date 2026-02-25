@@ -29,6 +29,11 @@
 #endif
 #endif
 
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4996) // Unsafe C functions
+#endif
+
 // Include minimum VST3 COM interfaces needed to parse the factory
 #include <pluginterfaces/base/ipluginbase.h>
 #include <pluginterfaces/vst/ivstcomponent.h>
@@ -52,6 +57,10 @@
 #include <pluginterfaces/base/funknown.cpp>
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop
+#endif
+
+#ifdef _MSC_VER
+#pragma warning(pop)
 #endif
 
 namespace Steinberg {
@@ -258,12 +267,12 @@ boost::filesystem::path resolveBinaryPath(const boost::filesystem::path& vst3Pat
 #else
         const std::vector<std::string> validExts = {".so"};
 #endif
-        for (const auto& entry : fs::directory_iterator(archPath)) {
-            if (!fs::is_regular_file(entry.path())) continue;
-            auto ext = entry.path().extension().string();
-            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-            for (const auto& valid : validExts) {
-                if (ext == valid) return entry.path();
+                for (const auto& entry : fs::directory_iterator(archPath)) {
+                    if (!fs::is_regular_file(entry.path())) continue;
+                    auto ext = entry.path().extension().string();
+                    std::transform(ext.begin(), ext.end(), ext.begin(),
+                                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                    for (const auto& valid : validExts) {                if (ext == valid) return entry.path();
             }
         }
     }
@@ -391,7 +400,8 @@ boost::filesystem::path detectLoaderStubDll(const boost::filesystem::path& plugi
     for (const auto& entry : fs::directory_iterator(resourcesDir)) {
         if (!fs::is_regular_file(entry.path())) continue;
         auto ext = entry.path().extension().string();
-        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        std::transform(ext.begin(), ext.end(), ext.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         if (ext != ".txt") continue;
 
         std::ifstream txt(entry.path().string());
@@ -705,7 +715,8 @@ bool tryLoadModuleInfo(
 
 bool Vst3Scanner::canHandle(const boost::filesystem::path& pluginPath) const {
     auto ext = pluginPath.extension().string();
-    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return ext == ".vst3";
 }
 
@@ -1076,11 +1087,11 @@ rps::ipc::ScanResult Vst3Scanner::scan(const boost::filesystem::path& pluginPath
                         std::string cleaned;
                         cleaned.reserve(json.size());
                         bool inStr = false;
-                        for (size_t ci = 0; ci < json.size(); ++ci) {
-                            char ch = json[ci];
-                            if (ch == '"' && (ci == 0 || json[ci - 1] != '\\')) inStr = !inStr;
+                        for (size_t charIdx = 0; charIdx < json.size(); ++charIdx) {
+                            char ch = json[charIdx];
+                            if (ch == '"' && (charIdx == 0 || json[charIdx - 1] != '\\')) inStr = !inStr;
                             if (!inStr && ch == ',') {
-                                size_t nj = ci + 1;
+                                size_t nj = charIdx + 1;
                                 while (nj < json.size() && (json[nj] == ' ' || json[nj] == '\t' ||
                                        json[nj] == '\n' || json[nj] == '\r')) ++nj;
                                 if (nj < json.size() && (json[nj] == '}' || json[nj] == ']'))

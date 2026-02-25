@@ -51,9 +51,15 @@ add_custom_command(
 )
 
 # Suppress warnings on generated code
-set_source_files_properties(${PROTO_SRCS} ${GRPC_SRCS} PROPERTIES
-    COMPILE_FLAGS "-Wno-error -w"
-)
+if(MSVC)
+    set_source_files_properties(${PROTO_SRCS} ${GRPC_SRCS} PROPERTIES
+        COMPILE_FLAGS "/W0"
+    )
+else()
+    set_source_files_properties(${PROTO_SRCS} ${GRPC_SRCS} PROPERTIES
+        COMPILE_FLAGS "-w"
+    )
+endif()
 
 add_executable(rps-example-client
     src/main.cpp

@@ -24,6 +24,14 @@
 #pragma clang diagnostic ignored "-Wunused-variable"
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 #endif
+
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4100) // unreferenced formal parameter
+#pragma warning(disable: 4244) // conversion from 'type1' to 'type2', possible loss of data
+#pragma warning(disable: 4245) // conversion from 'type1' to 'type2', signed/unsigned mismatch
+#endif
+
 #include <rps/ipc/Connection.hpp>
 #include <boost/process.hpp>
 #include <boost/filesystem.hpp>
@@ -32,6 +40,11 @@
 #include <boost/process/v1/args.hpp>
 #include <boost/process/v1/io.hpp>
 #include <boost/process/v1/start_dir.hpp>
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif

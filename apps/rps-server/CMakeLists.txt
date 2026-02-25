@@ -53,9 +53,11 @@ add_custom_command(
 
 # Generated protobuf/gRPC sources use abseil macros that trigger Clang warnings
 # (_Nullable, _Nonnull extensions). Disable warnings on machine-generated code.
-set_source_files_properties(${PROTO_SRCS} ${GRPC_SRCS} PROPERTIES
-    COMPILE_FLAGS "-Wno-error -w"
-)
+if(MSVC)
+    set_source_files_properties(${PROTO_SRCS} ${GRPC_SRCS} PROPERTIES COMPILE_FLAGS "/W0")
+else()
+    set_source_files_properties(${PROTO_SRCS} ${GRPC_SRCS} PROPERTIES COMPILE_FLAGS "-Wno-error -w")
+endif()
 
 add_executable(rps-server
     src/main.cpp

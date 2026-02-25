@@ -73,7 +73,8 @@ public:
 
     bool isPluginPath(const fs::path& path) const override {
         std::string ext = path.extension().string();
-        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        std::transform(ext.begin(), ext.end(), ext.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         if (ext != ".vst3") return false;
         // Accept either a bundle directory OR a standalone .vst3 file (legacy single-file plugins)
         // but NOT a file inside a bundle (those have the same extension but live under Contents/).
@@ -115,7 +116,8 @@ public:
 
     bool isPluginPath(const fs::path& path) const override {
         std::string ext = path.extension().string();
-        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        std::transform(ext.begin(), ext.end(), ext.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         return ext == ".clap" && (isBundleDirectory() ? fs::is_directory(path) : fs::is_regular_file(path));
     }
 };
@@ -162,7 +164,8 @@ public:
 
     bool isPluginPath(const fs::path& path) const override {
         std::string ext = path.extension().string();
-        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        std::transform(ext.begin(), ext.end(), ext.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         return ext == getExtension() && (isBundleDirectory() ? fs::is_directory(path) : fs::is_regular_file(path));
     }
 };
@@ -188,7 +191,8 @@ public:
     bool isPluginPath(const fs::path& path) const override {
 #if defined(__APPLE__)
         std::string ext = path.extension().string();
-        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        std::transform(ext.begin(), ext.end(), ext.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         return ext == ".component" && fs::is_directory(path);
 #else
         (void)path;
@@ -218,7 +222,8 @@ public:
 
     bool isPluginPath(const fs::path& path) const override {
         std::string ext = path.extension().string();
-        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        std::transform(ext.begin(), ext.end(), ext.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         return ext == ".aaxplugin" && fs::is_directory(path);
     }
 };
@@ -244,7 +249,8 @@ public:
 
     bool isPluginPath(const fs::path& path) const override {
         std::string ext = path.extension().string();
-        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        std::transform(ext.begin(), ext.end(), ext.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         return ext == ".lv2" && fs::is_directory(path);
     }
 };
@@ -273,7 +279,8 @@ public:
     bool isPluginPath(const fs::path& path) const override {
 #if defined(__linux__)
         std::string ext = path.extension().string();
-        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        std::transform(ext.begin(), ext.end(), ext.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         return ext == ".so" && fs::is_regular_file(path);
 #else
         (void)path;
@@ -309,7 +316,8 @@ const IFormatTraits* FormatRegistry::getTraits(PluginFormat format) const {
 
 const IFormatTraits* FormatRegistry::getTraits(const std::string& formatName) const {
     std::string lowerName = formatName;
-    std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), ::tolower);
+    std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     for (const auto& t : m_traits) {
         if (t->getName() == lowerName) {
             return t.get();

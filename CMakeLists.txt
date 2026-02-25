@@ -13,10 +13,16 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Force static MSVC runtime to match static vcpkg dependencies (e.g. gRPC)
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 # Strict warnings — applied only to our own targets, not third-party code
 add_library(rps_warnings INTERFACE)
 if(MSVC)
     target_compile_options(rps_warnings INTERFACE /W4 /WX /permissive-)
+    target_compile_definitions(rps_warnings INTERFACE NOMINMAX WIN32_LEAN_AND_MEAN)    
 else()
     target_compile_options(rps_warnings INTERFACE -Wall -Wextra -Wpedantic -Werror)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")

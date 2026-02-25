@@ -526,7 +526,8 @@ namespace rps::scanner {
 
 bool Lv2Scanner::canHandle(const boost::filesystem::path& pluginPath) const {
     std::string ext = pluginPath.extension().string();
-    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return ext == ".lv2" && fs::is_directory(pluginPath);
 }
 
