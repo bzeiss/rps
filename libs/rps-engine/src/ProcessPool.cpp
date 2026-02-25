@@ -25,11 +25,18 @@
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 #endif
 #include <rps/ipc/Connection.hpp>
-#include <boost/process/v1.hpp>
+#include <boost/process.hpp>
+#include <boost/filesystem.hpp>
 #include <boost/process/v1/pipe.hpp>
+#include <boost/process/v1/child.hpp>
+#include <boost/process/v1/args.hpp>
+#include <boost/process/v1/io.hpp>
+#include <boost/process/v1/start_dir.hpp>
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
+
+namespace fs = boost::filesystem;
 
 namespace {
 
