@@ -14,7 +14,6 @@ from rich.progress import (
     TaskProgressColumn,
     TimeElapsedColumn,
     SpinnerColumn,
-    TaskID,
 )
 from rich.table import Table
 from rich.text import Text

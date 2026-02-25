@@ -20,7 +20,13 @@ static std::atomic<grpc::Server*> g_server{nullptr};
 static void signalHandler(int sig) {
     spdlog::info("Received signal {}, shutting down...", sig);
     auto* srv = g_server.load();
-    if (srv) srv->Shutdown();
+    if (srv) {
+        // Shutdown must not be called from within a signal handler 
+        // if the main thread is blocking on srv->Wait(), as it can deadlock.
+        std::thread([srv]() {
+            srv->Shutdown();
+        }).detach();
+    }
 }
 
 int main(int argc, char* argv[]) {

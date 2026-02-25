@@ -33,6 +33,7 @@ public:
     ~ProcessPool();
 
     void runJobs(const std::vector<ScanJob>& jobs);
+    void stop();
 
     static std::string formatDuration(int64_t ms);
 

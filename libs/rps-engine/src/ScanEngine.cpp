@@ -229,26 +229,42 @@ ScanSummary ScanEngine::runScan(const ScanConfig& config, ScanObserver* observer
     }
 
     // --- Run ---
-    ProcessPool pool(config.jobs, &db, observer);
-    pool.runJobs(jobs);
+    {
+        std::lock_guard<std::mutex> lock(m_poolMutex);
+        m_pool = std::make_unique<ProcessPool>(config.jobs, &db, observer);
+    }
+    
+    m_pool->runJobs(jobs);
 
     auto endTime = std::chrono::steady_clock::now();
     summary.totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
 
-    auto s = pool.stats();
+    auto s = m_pool->stats();
     summary.success = s.success;
     summary.fail = s.fail;
     summary.crash = s.crash;
     summary.timeout = s.timeout;
     summary.skipped += s.skipped;
-    summary.failures = pool.failures();
+    summary.failures = m_pool->failures();
 
     if (observer) {
         observer->onScanCompleted(s.success, s.fail, s.crash, s.timeout, s.skipped,
                                    summary.totalMs, summary.failures);
     }
 
+    {
+        std::lock_guard<std::mutex> lock(m_poolMutex);
+        m_pool.reset();
+    }
+
     return summary;
+}
+
+void ScanEngine::stop() {
+    std::lock_guard<std::mutex> lock(m_poolMutex);
+    if (m_pool) {
+        m_pool->stop();
+    }
 }
 
 } // namespace rps::engine

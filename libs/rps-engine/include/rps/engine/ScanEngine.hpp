@@ -52,8 +52,13 @@ public:
     // Check if a scan is currently running
     bool isScanning() const;
 
+    // Stop current scan
+    void stop();
+
 private:
     std::atomic<bool> m_scanning{false};
+    std::mutex m_poolMutex;
+    std::unique_ptr<ProcessPool> m_pool;
 };
 
 } // namespace rps::engine

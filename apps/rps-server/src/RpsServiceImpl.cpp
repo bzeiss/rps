@@ -54,7 +54,9 @@ grpc::Status RpsServiceImpl::StopScan(grpc::ServerContext* /*context*/,
                                        rps::v1::StopScanResponse* response) {
     bool wasRunning = m_engine.isScanning();
     response->set_was_running(wasRunning);
-    // TODO: implement cancellation flag in ScanEngine/ProcessPool
+    if (wasRunning) {
+        m_engine.stop();
+    }
     spdlog::info("StopScan requested (was_running={})", wasRunning);
     return grpc::Status::OK;
 }
@@ -77,6 +79,7 @@ grpc::Status RpsServiceImpl::Shutdown(grpc::ServerContext* /*context*/,
                                        const rps::v1::ShutdownRequest* /*request*/,
                                        rps::v1::ShutdownResponse* /*response*/) {
     spdlog::info("Shutdown requested");
+    m_engine.stop();
     std::lock_guard<std::mutex> lock(m_serverMutex);
     if (m_server) {
         // Shutdown asynchronously so we can return the response first

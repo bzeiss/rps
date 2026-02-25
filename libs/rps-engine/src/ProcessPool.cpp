@@ -90,6 +90,7 @@ ProcessPool::~ProcessPool() {
 }
 
 void ProcessPool::runJobs(const std::vector<ScanJob>& jobs) {
+    m_stop = false;
     {
         std::lock_guard<std::mutex> lock(m_queueMutex);
         m_jobQueue = jobs;
@@ -105,10 +106,10 @@ void ProcessPool::runJobs(const std::vector<ScanJob>& jobs) {
     // Monitor thread: periodically report still-active workers
     std::atomic<bool> monitorStop{false};
     std::thread monitor([this, &monitorStop]() {
-        while (!monitorStop) {
-            for (int i = 0; i < 300 && !monitorStop; ++i)  // 30s in 100ms ticks
+        while (!monitorStop && !m_stop) {
+            for (int i = 0; i < 300 && !monitorStop && !m_stop; ++i)  // 30s in 100ms ticks
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            if (monitorStop) break;
+            if (monitorStop || m_stop) break;
 
             std::lock_guard<std::mutex> aLock(m_activeMutex);
             if (!m_activeWorkers.empty() && m_observer) {
@@ -130,6 +131,10 @@ void ProcessPool::runJobs(const std::vector<ScanJob>& jobs) {
     monitorStop = true;
     monitor.join();
     m_threads.clear();
+}
+
+void ProcessPool::stop() {
+    m_stop = true;
 }
 
 std::string ProcessPool::formatDuration(int64_t ms) {

@@ -11,7 +11,6 @@ rps-plugins.db-journal
 esp_jit.log
 
 libs/rps-core/include/rps/core/vstsdk2.4
-
 MIOConsole3d.log
 rps-plugins.db-shm
 rps-plugins.db-wal
@@ -26,3 +25,10 @@ rps-server.log
 # Private overlays
 _private/
 GEMINI.md
+
+# Java artifacts
+examples/java/src/main/proto/rps.proto
+examples/java/target/
+examples/java/rps-server-java.log
+examples/python/kiloHearts.log
+kiloHearts.log
