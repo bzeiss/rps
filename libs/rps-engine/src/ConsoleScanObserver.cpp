@@ -97,10 +97,28 @@ void ConsoleScanObserver::onWorkerStderrLine(size_t workerId, const std::string&
 
 void ConsoleScanObserver::onWorkerStderrDump(size_t workerId, const std::string& /*pluginPath*/,
                                               const std::vector<std::string>& lines) {
-    if (!m_verbose) {
+    if (m_verbose) {
         std::lock_guard<std::mutex> lock(m_mutex);
         for (const auto& l : lines) {
             std::cerr << "  [Worker #" << workerId << " stderr] " << l << "\n";
+        }
+    }
+}
+
+void ConsoleScanObserver::onWorkerStdoutLine(size_t workerId, const std::string& /*pluginPath*/,
+                                              const std::string& line) {
+    if (m_verbose) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        std::cerr << "[Worker #" << workerId << " LOG] " << line << "\n";
+    }
+}
+
+void ConsoleScanObserver::onWorkerStdoutDump(size_t workerId, const std::string& /*pluginPath*/,
+                                              const std::vector<std::string>& lines) {
+    if (m_verbose) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto& l : lines) {
+            std::cerr << "  [Worker #" << workerId << " stdout] " << l << "\n";
         }
     }
 }

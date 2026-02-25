@@ -131,6 +131,16 @@ public:
         for (const auto& line : lines)
             m_log << "    " << line << std::endl;
     }
+    void onWorkerStdoutLine(size_t, const std::string&, const std::string&) override {}
+    void onWorkerStdoutDump(size_t /*workerId*/, const std::string& pluginPath,
+                            const std::vector<std::string>& lines) override {
+        if (lines.empty()) return;
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto name = fs::path(pluginPath).stem().string();
+        m_log << "  stdout [" << name << "]:" << std::endl;
+        for (const auto& line : lines)
+            m_log << "    " << line << std::endl;
+    }
     void onWorkerForceKill(size_t /*workerId*/, const std::string& pluginPath) override {
         std::lock_guard<std::mutex> lock(m_mutex);
         auto name = fs::path(pluginPath).stem().string();

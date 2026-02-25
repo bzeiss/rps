@@ -242,7 +242,8 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
         if (job.verbose) scanArgs.push_back("--verbose");
 
         bp::ipstream errStream;
-        bp::child scannerProc(job.scannerBin, bp::args(scanArgs), bp::std_err > errStream);
+        bp::ipstream outStream;
+        bp::child scannerProc(job.scannerBin, bp::args(scanArgs), bp::std_err > errStream, bp::std_out > outStream);
 
 #ifdef _WIN32
         // Restrict scanner child process from showing Win32 UI (dialogs, message boxes).
@@ -285,11 +286,29 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
             }
         });
 
-        // Helper: safely join the stderr drainer. Must be called before
-        // stderrDrainer goes out of scope, or std::terminate() is triggered.
+        std::vector<std::string> stdoutLines;
+        std::mutex stdoutMutex;
+        std::thread stdoutDrainer([&outStream, &stdoutLines, &stdoutMutex, workerId, &pluginFullPath, this]() {
+            std::string line;
+            while (std::getline(outStream, line)) {
+                std::string cleaned = stripAnsiCodes(line);
+                {
+                    std::lock_guard<std::mutex> lock(stdoutMutex);
+                    stdoutLines.push_back(cleaned);
+                }
+                if (m_observer) {
+                    m_observer->onWorkerStdoutLine(workerId, pluginFullPath, cleaned);
+                }
+            }
+        });
+
+        // Helper: safely join the stderr/stdout drainers. Must be called before
+        // the threads go out of scope, or std::terminate() is triggered.
         auto safeJoinDrainer = [&]() {
             try { errStream.pipe().close(); } catch (...) {}
+            try { outStream.pipe().close(); } catch (...) {}
             if (stderrDrainer.joinable()) stderrDrainer.join();
+            if (stdoutDrainer.joinable()) stdoutDrainer.join();
         };
 
         // Everything from here until safeJoinDrainer() is wrapped in a try-catch
@@ -390,7 +409,9 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                         if (m_observer) {
                             m_observer->onPluginCompleted(workerId, pluginFullPath, ScanOutcome::Fail, elapsedMs, nullptr, &errMsg);
                             std::lock_guard<std::mutex> slock(stderrMutex);
+                            std::lock_guard<std::mutex> solock(stdoutMutex);
                             m_observer->onWorkerStderrDump(workerId, pluginFullPath, stderrLines);
+                            m_observer->onWorkerStdoutDump(workerId, pluginFullPath, stdoutLines);
                         }
                         if (m_db) {
                             m_db->recordPluginFailure(job.pluginPath, errMsg, elapsedMs, fileMtime, fileHash);
@@ -417,7 +438,9 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                         if (m_observer) {
                             m_observer->onPluginCompleted(workerId, pluginFullPath, outcome, elapsedMs, nullptr, &errMsg);
                             std::lock_guard<std::mutex> slock(stderrMutex);
+                            std::lock_guard<std::mutex> solock(stdoutMutex);
                             m_observer->onWorkerStderrDump(workerId, pluginFullPath, stderrLines);
+                            m_observer->onWorkerStdoutDump(workerId, pluginFullPath, stdoutLines);
                         }
                         if (m_db) {
                             m_db->recordPluginFailure(job.pluginPath, errMsg, elapsedMs, fileMtime, fileHash);
@@ -435,7 +458,9 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                     if (m_observer) {
                         m_observer->onPluginCompleted(workerId, pluginFullPath, ScanOutcome::Timeout, elapsedMs, nullptr, &errMsg);
                         std::lock_guard<std::mutex> slock(stderrMutex);
+                        std::lock_guard<std::mutex> solock(stdoutMutex);
                         m_observer->onWorkerStderrDump(workerId, pluginFullPath, stderrLines);
+                        m_observer->onWorkerStdoutDump(workerId, pluginFullPath, stdoutLines);
                     }
                     if (m_db) {
                         m_db->recordPluginFailure(job.pluginPath, errMsg, elapsedMs, fileMtime, fileHash);
