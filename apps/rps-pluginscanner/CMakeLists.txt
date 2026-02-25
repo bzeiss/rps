@@ -11,6 +11,7 @@ endif()
 
 if(UNIX AND NOT APPLE)
     list(APPEND SCANNER_SOURCES src/scanners/Lv2Scanner.cpp)
+    list(APPEND SCANNER_SOURCES src/scanners/LadspaScanner.cpp)
 endif()
 
 add_executable(rps-pluginscanner ${SCANNER_SOURCES})

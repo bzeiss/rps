@@ -14,6 +14,7 @@ enum class PluginFormat {
     AAX,
     AU,
     LV2,
+    LADSPA,
     Unknown
 };
 

@@ -1,6 +1,6 @@
 # RPS - Reliable Plugin Scanner
 
-RPS is a modern, cross-platform audio plugin scanner designed from the ground up for extreme robustness and reliability. It supports scanning VST2, VST3, CLAP, AAX, AU, and LV2 formats on Windows, macOS, and Linux.
+RPS is a modern, cross-platform audio plugin scanner designed from the ground up for extreme robustness and reliability. It supports scanning VST2, VST3, CLAP, AAX, AU, LV2, and LADSPA formats on Windows, macOS, and Linux.
 
 RPS exposes a **gRPC API** so it can be driven from any language. A Python TUI example client is included.
 
@@ -295,6 +295,7 @@ If no paths are provided, RPS will automatically search the following directorie
 - `/usr/lib/clap`, `/usr/local/lib/clap`, `~/.clap`
 - `/usr/lib/lv2`, `/usr/local/lib/lv2`, `~/.lv2`
 - `/usr/lib/vst`, `/usr/local/lib/vst`, `~/.vst`
+- `/usr/lib/ladspa`, `/usr/lib64/ladspa`, `/usr/local/lib/ladspa`, `/usr/local/lib64/ladspa`, `~/.ladspa`
 
 ## Optional: VST2.4 Support
 

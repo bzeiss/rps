@@ -300,7 +300,7 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
 
         rps::ipc::Message reqMsg;
         reqMsg.type = rps::ipc::MessageType::ScanRequest;
-        reqMsg.payload = rps::ipc::ScanRequest{ job.pluginPath.string(), "unknown", false };
+        reqMsg.payload = rps::ipc::ScanRequest{ job.pluginPath.string(), job.format, false };
         
         if (!connection->sendMessage(reqMsg)) {
             std::string errMsg = "Failed to send ScanRequest";

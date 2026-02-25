@@ -249,6 +249,39 @@ public:
     }
 };
 
+// --- LADSPA Traits ---
+class LadspaTraits : public IFormatTraits {
+public:
+    PluginFormat getFormat() const override { return PluginFormat::LADSPA; }
+    std::string getName() const override { return "ladspa"; }
+    std::string getExtension() const override { return ".so"; }
+
+    std::vector<fs::path> getDefaultPaths() const override {
+        std::vector<fs::path> paths;
+#if defined(__linux__)
+        paths.push_back("/usr/lib/ladspa");
+        paths.push_back("/usr/lib64/ladspa");
+        paths.push_back("/usr/local/lib/ladspa");
+        paths.push_back("/usr/local/lib64/ladspa");
+        paths.push_back(getHomeDir() / ".ladspa");
+#endif
+        return paths;
+    }
+
+    bool isBundleDirectory() const override { return false; }
+
+    bool isPluginPath(const fs::path& path) const override {
+#if defined(__linux__)
+        std::string ext = path.extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        return ext == ".so" && fs::is_regular_file(path);
+#else
+        (void)path;
+        return false;
+#endif
+    }
+};
+
 // --- Format Registry Implementation ---
 
 FormatRegistry::FormatRegistry() {
@@ -258,6 +291,7 @@ FormatRegistry::FormatRegistry() {
     m_traits.push_back(std::make_unique<AuTraits>());
     m_traits.push_back(std::make_unique<AaxTraits>());
     m_traits.push_back(std::make_unique<Lv2Traits>());
+    m_traits.push_back(std::make_unique<LadspaTraits>());
 }
 
 const std::vector<std::unique_ptr<IFormatTraits>>& FormatRegistry::getAllTraits() const {
