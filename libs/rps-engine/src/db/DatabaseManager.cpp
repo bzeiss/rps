@@ -14,6 +14,9 @@ DatabaseManager::DatabaseManager(const boost::filesystem::path& dbPath) {
     if (sqlite3_open(dbPath.string().c_str(), &m_db) != SQLITE_OK) {
         throw std::runtime_error("Failed to open SQLite database: " + std::string(sqlite3_errmsg(m_db)));
     }
+    // Retry on SQLITE_BUSY for up to 5 seconds instead of failing immediately.
+    // Multiple worker threads and external processes may write concurrently.
+    sqlite3_busy_timeout(m_db, 5000);
 }
 
 DatabaseManager::~DatabaseManager() {

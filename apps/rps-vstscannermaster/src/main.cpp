@@ -16,6 +16,7 @@
 #include <cstring>
 #include <chrono>
 #include <mutex>
+#include <csignal>
 #include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
 #include <rps/engine/ScanEngine.hpp>
@@ -28,6 +29,13 @@
 #include <set>
 
 namespace fs = boost::filesystem;
+
+static std::atomic<rps::engine::ScanEngine*> g_engine{nullptr};
+
+static void signalHandler(int /*sig*/) {
+    auto* e = g_engine.load();
+    if (e) e->stop();
+}
 
 // ---------------------------------------------------------------------------
 // Dual-output helper: writes to both an ostream (stdout) and a log stream.
@@ -781,6 +789,10 @@ int main(int argc, char* argv[]) {
 
     ProgressObserver observer(showProgress, logFile, totalPlugins, cachedCount);
     rps::engine::ScanEngine engine;
+    g_engine.store(&engine);
+    std::signal(SIGINT, signalHandler);
+    std::signal(SIGTERM, signalHandler);
+
     auto summary = engine.runScan(config, &observer);
 
     auto overallEnd = std::chrono::steady_clock::now();
