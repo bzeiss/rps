@@ -84,7 +84,6 @@ To avoid DLL dependencies and build a single, standalone executable on Windows, 
    # leave out the VST2 parameters to build without it
    # leave out the boost source dir if you have the environment variable set
    # use -G "Visual Studio 18 2026" if you use the latest one - VS 18 requires at least cmake 4.2!
-
    
    cmake -G "Visual Studio 17 2022" -A x64 -B build -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static -DRPS_MSVC_STATIC_RUNTIME=ON -DBOOST_SOURCE_DIR=C:/dev/boost -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=c:/dev/vstsdk2.4
          
