@@ -7,6 +7,8 @@ build/CMakeFiles/CMakeConfigureLog.yaml
 # Build artifacts in examples
 examples/**/rps-server
 examples/**/rps-server.exe
+examples/**/rps-pluginscanner
+examples/**/rps-pluginscanner.exe
 
 vst3_full_scan.log
 

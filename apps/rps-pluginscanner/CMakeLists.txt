@@ -37,7 +37,7 @@ target_link_libraries(rps-pluginscanner
         Boost::filesystem
 )
 
-# After build, copy rps-pluginscanner into server and vstscannermaster directories
+# After build, copy rps-pluginscanner into server, vstscannermaster, and example directories
 add_custom_command(
     TARGET rps-pluginscanner POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -46,7 +46,13 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:rps-pluginscanner>
         "${CMAKE_BINARY_DIR}/apps/rps-vstscannermaster/$<TARGET_FILE_NAME:rps-pluginscanner>"
-    COMMENT "Copying rps-pluginscanner to server and vstscannermaster directories"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:rps-pluginscanner>
+        "${CMAKE_SOURCE_DIR}/examples/python/$<TARGET_FILE_NAME:rps-pluginscanner>"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:rps-pluginscanner>
+        "${CMAKE_SOURCE_DIR}/examples/java/$<TARGET_FILE_NAME:rps-pluginscanner>"
+    COMMENT "Copying rps-pluginscanner to server, master, and example directories"
 )
 
 if(WIN32)
