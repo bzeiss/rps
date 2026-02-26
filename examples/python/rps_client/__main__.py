@@ -130,23 +130,30 @@ def shutdown(ctx):
 
 
 def _find_server_bin() -> str | None:
-    """Try to locate rps-server binary relative to this script or on PATH."""
-    # Check common build output locations relative to project root
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.abspath(os.path.join(script_dir, "..", "..", ".."))
+    """Try to locate rps-server binary next to this script or in CWD."""
+    # Check common binary names
+    names = ["rps-server", "rps-server.exe"]
 
-    candidates = [
-        os.path.join(project_root, "build", "apps", "rps-server", "rps-server.exe"),
-        os.path.join(project_root, "build", "apps", "rps-server", "rps-server"),
-    ]
-    for c in candidates:
-        if os.path.isfile(c):
-            return c
+    # Check directories: CWD and script dir
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # Also check the parent of the package (where __main__.py lives)
+    pkg_dir = os.path.dirname(script_dir)
+    
+    dirs = [os.getcwd(), pkg_dir]
+    
+    for d in dirs:
+        for name in names:
+            path = os.path.join(d, name)
+            if os.path.isfile(path):
+                return path
 
     # Check PATH
     import shutil
-    found = shutil.which("rps-server") or shutil.which("rps-server.exe")
-    return found
+    for name in names:
+        found = shutil.which(name)
+        if found:
+            return found
+    return None
 
 
 def main():

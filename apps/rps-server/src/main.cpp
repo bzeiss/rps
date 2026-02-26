@@ -112,10 +112,24 @@ int main(int argc, char* argv[]) {
     std::string scannerBin = vm["scanner-bin"].as<std::string>();
     fs::path scannerPath(scannerBin);
     if (!scannerPath.is_absolute()) {
-        fs::path exePath = boost::dll::program_location();
-        scannerPath = exePath.parent_path() / scannerPath;
-        if (!fs::exists(scannerPath)) {
-            scannerPath = exePath.parent_path().parent_path() / "rps-pluginscanner" / scannerPath.filename();
+        fs::path exeDir = boost::dll::program_location().parent_path();
+        std::vector<fs::path> candidates = {
+            fs::current_path() / scannerPath,
+            exeDir / scannerPath
+        };
+
+        bool found = false;
+        for (auto& c : candidates) {
+            if (fs::exists(c) && fs::is_regular_file(c)) {
+                scannerPath = fs::canonical(c);
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            spdlog::error("Cannot find rps-pluginscanner binary: {}. Use --scanner-bin.", scannerBin);
+            return 1;
         }
     }
 

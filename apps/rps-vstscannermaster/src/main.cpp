@@ -707,6 +707,31 @@ int main(int argc, char* argv[]) {
 
     auto overallStart = std::chrono::steady_clock::now();
 
+    // --- Resolve scanner binary ---
+    std::string scannerBin = vm["scanner-bin"].as<std::string>();
+    fs::path scannerPath(scannerBin);
+    if (!scannerPath.is_absolute()) {
+        fs::path exeDir = boost::dll::program_location().parent_path();
+        std::vector<fs::path> candidates = {
+            fs::current_path() / scannerPath,
+            exeDir / scannerPath
+        };
+
+        bool found = false;
+        for (auto& c : candidates) {
+            if (fs::exists(c) && fs::is_regular_file(c)) {
+                scannerPath = fs::canonical(c);
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            std::cerr << "Error: Cannot find rps-pluginscanner binary: " << scannerBin << ". Use -scanner-bin." << std::endl;
+            return 1;
+        }
+    }
+
     // --- Discover all VST3 plugins (same logic ScanEngine uses) ---
     rps::core::FormatRegistry formatRegistry;
     auto vst3Traits = formatRegistry.getTraits("vst3");
@@ -790,7 +815,7 @@ int main(int argc, char* argv[]) {
     config.timeoutMs = timeoutSecs * 1000;
     config.jobs = jobs;
     config.verbose = verbose;
-    config.scannerBin = vm["scanner-bin"].as<std::string>();
+    config.scannerBin = scannerPath.string();
 
     if (vm.count("recheckPath")) {
         config.singlePlugin = vm["recheckPath"].as<std::string>();

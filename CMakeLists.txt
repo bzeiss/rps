@@ -14,9 +14,22 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Force static MSVC runtime to match static vcpkg dependencies (e.g. gRPC)
-if(MSVC)
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+# We auto-enable this if we detect a static vcpkg triplet
+if(VCPKG_TARGET_TRIPLET MATCHES "-static$" AND NOT DEFINED RPS_MSVC_STATIC_RUNTIME)
+    set(RPS_MSVC_STATIC_RUNTIME ON CACHE BOOL "Use static MSVC runtime (/MT)" FORCE)
+else()
+    option(RPS_MSVC_STATIC_RUNTIME "Use static MSVC runtime (/MT)" OFF)
 endif()
+
+if(MSVC AND RPS_MSVC_STATIC_RUNTIME)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    # Resolve LNK4098 by ignoring the runtime we're not using for each config
+    set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /NODEFAULTLIB:LIBCMTD")
+    set(CMAKE_EXE_LINKER_FLAGS_DEBUG "${CMAKE_EXE_LINKER_FLAGS_DEBUG} /NODEFAULTLIB:LIBCMT")
+endif()
+
+# Disable Boost Auto-Linking on Windows (CMake handles libraries explicitly)
+add_definitions(-DBOOST_ALL_NO_LIB)
 
 # Strict warnings — applied only to our own targets, not third-party code
 add_library(rps_warnings INTERFACE)

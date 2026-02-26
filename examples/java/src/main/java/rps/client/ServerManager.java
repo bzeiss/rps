@@ -57,29 +57,35 @@ public class ServerManager implements AutoCloseable {
     }
 
     public static String findServerBinary() {
-        // Try standard build locations relative to CWD
-        String[] candidates = {
-            "../../build/apps/rps-server/rps-server",
-            "../../build/apps/rps-server/rps-server.exe",
-            "build/apps/rps-server/rps-server",
-            "../apps/rps-server/rps-server"
+        // Only check CWD and the directory of the running class/JAR
+        String[] names = {"rps-server", "rps-server.exe"};
+        String[] locations = {
+            System.getProperty("user.dir"),
+            new File(ServerManager.class.getProtectionDomain().getCodeSource().getLocation().getPath()).getParent()
         };
 
-        for (String c : candidates) {
-            File f = new File(c);
-            if (f.exists() && f.canExecute()) {
-                return f.getAbsolutePath();
+        for (String loc : locations) {
+            if (loc == null) continue;
+            for (String name : names) {
+                File f = new File(loc, name);
+                if (f.exists() && f.canExecute() && !f.isDirectory()) {
+                    return f.getAbsolutePath();
+                }
             }
         }
 
         // Try PATH
-        String path = System.getenv("PATH");
-        String sep = System.getProperty("path.separator");
-        for (String p : path.split(sep)) {
-            File f = new File(p, "rps-server");
-            if (f.exists() && f.canExecute()) return f.getAbsolutePath();
-            f = new File(p, "rps-server.exe");
-            if (f.exists() && f.canExecute()) return f.getAbsolutePath();
+        String pathEnv = System.getenv("PATH");
+        if (pathEnv != null) {
+            String sep = System.getProperty("path.separator");
+            for (String p : pathEnv.split(sep)) {
+                for (String name : names) {
+                    File f = new File(p, name);
+                    if (f.exists() && f.canExecute() && !f.isDirectory()) {
+                        return f.getAbsolutePath();
+                    }
+                }
+            }
         }
 
         return null;

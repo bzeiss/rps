@@ -681,19 +681,19 @@ int main(int argc, char* argv[]) {
         if (vm.count("server-bin")) {
             serverBin = vm["server-bin"].as<std::string>();
         } else {
-            // rps-example-client is at build/examples/cpp/
-            // rps-server is at build/apps/rps-server/
-            auto exe = fs::canonical(fs::path(argv[0])).parent_path();
+            // Predictable lookup: check CWD and the executable's own directory
+            std::string binaryName = "rps-server";
+#ifdef _WIN32
+            binaryName += ".exe";
+#endif
+            fs::path exeDir = fs::canonical(fs::path(argv[0])).parent_path();
             std::vector<fs::path> candidates = {
-                exe / ".." / ".." / "apps" / "rps-server" / "rps-server.exe",
-                exe / ".." / ".." / "apps" / "rps-server" / "rps-server",
-                exe / ".." / "rps-server" / "rps-server.exe",
-                exe / ".." / "rps-server" / "rps-server",
-                exe / "rps-server.exe",
-                exe / "rps-server",
+                fs::current_path() / binaryName,
+                exeDir / binaryName
             };
+
             for (auto& c : candidates) {
-                if (fs::exists(c)) {
+                if (fs::exists(c) && fs::is_regular_file(c)) {
                     serverBin = fs::canonical(c).string();
                     break;
                 }

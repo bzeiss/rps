@@ -37,6 +37,18 @@ target_link_libraries(rps-pluginscanner
         Boost::filesystem
 )
 
+# After build, copy rps-pluginscanner into server and vstscannermaster directories
+add_custom_command(
+    TARGET rps-pluginscanner POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:rps-pluginscanner>
+        "${CMAKE_BINARY_DIR}/apps/rps-server/$<TARGET_FILE_NAME:rps-pluginscanner>"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:rps-pluginscanner>
+        "${CMAKE_BINARY_DIR}/apps/rps-vstscannermaster/$<TARGET_FILE_NAME:rps-pluginscanner>"
+    COMMENT "Copying rps-pluginscanner to server and vstscannermaster directories"
+)
+
 if(WIN32)
     target_link_libraries(rps-pluginscanner PRIVATE ws2_32 ole32)
 elseif(APPLE)

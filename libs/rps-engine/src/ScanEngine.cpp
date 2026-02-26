@@ -119,11 +119,21 @@ ScanSummary ScanEngine::runScan(const ScanConfig& config, ScanObserver* observer
     // --- Resolve scanner binary ---
     fs::path scannerPath(config.scannerBin);
     if (!scannerPath.is_absolute()) {
-        fs::path exePath = boost::dll::program_location();
-        scannerPath = exePath.parent_path() / scannerPath;
-        if (!fs::exists(scannerPath)) {
-            scannerPath = exePath.parent_path().parent_path() / "rps-pluginscanner" / scannerPath.filename();
+        fs::path exeDir = boost::dll::program_location().parent_path();
+        std::vector<fs::path> candidates = {
+            fs::current_path() / scannerPath,
+            exeDir / scannerPath
+        };
+
+        bool found = false;
+        for (auto& c : candidates) {
+            if (fs::exists(c) && fs::is_regular_file(c)) {
+                scannerPath = fs::canonical(c);
+                found = true;
+                break;
+            }
         }
+        // If not found, we keep original scannerPath and let ProcessPool fail
     }
 
     // --- Database setup ---

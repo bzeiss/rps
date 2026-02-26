@@ -83,3 +83,19 @@ target_link_libraries(rps-server
         Boost::program_options
         Boost::dll
 )
+
+# After build, copy rps-server binary into all example directories
+# This allows example clients to find it easily next to their scripts/executables
+add_custom_command(
+    TARGET rps-server POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:rps-server>
+        "${CMAKE_BINARY_DIR}/examples/cpp/$<TARGET_FILE_NAME:rps-server>"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:rps-server>
+        "${CMAKE_SOURCE_DIR}/examples/python/$<TARGET_FILE_NAME:rps-server>"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:rps-server>
+        "${CMAKE_SOURCE_DIR}/examples/java/$<TARGET_FILE_NAME:rps-server>"
+    COMMENT "Copying rps-server to all example directories"
+)
