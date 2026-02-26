@@ -25,6 +25,7 @@
 #endif
 #include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
+#include <boost/dll/runtime_symbol_info.hpp>
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif

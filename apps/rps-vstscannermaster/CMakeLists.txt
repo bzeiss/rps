@@ -4,4 +4,5 @@ target_link_libraries(vstscannermaster
         rps-engine
         rps_warnings
         Boost::program_options
+        Boost::dll
 )
