@@ -16,22 +16,33 @@ if(MINGW OR MSYS)
 else()
     # 1. Find Libraries (vcpkg / MSVC / Native CMake)
     find_package(gRPC CONFIG REQUIRED)
-    find_package(protobuf CONFIG REQUIRED)
     set(RPS_GRPC_LIB gRPC::grpc++)
+
+    # Try protobuf config (vcpkg) first, then fallback to FindProtobuf module
+    find_package(protobuf CONFIG QUIET)
+    if(NOT protobuf_FOUND)
+        find_package(Protobuf REQUIRED)
+    endif()
     set(RPS_PROTO_LIB protobuf::libprotobuf)
 
-    # 2. Find Tools (vcpkg Native Targets)
-    set(PROTOC_EXECUTABLE protobuf::protoc)
-    set(GRPC_CPP_PLUGIN $<TARGET_FILE:gRPC::grpc_cpp_plugin>)
+    # 2. Find Tools
+    if(TARGET protobuf::protoc)
+        set(PROTOC_EXECUTABLE protobuf::protoc)
+    else()
+        find_program(PROTOC_EXECUTABLE protoc REQUIRED)
+    endif()
+
+    if(TARGET gRPC::grpc_cpp_plugin)
+        set(GRPC_CPP_PLUGIN $<TARGET_FILE:gRPC::grpc_cpp_plugin>)
+    else()
+        find_program(GRPC_CPP_PLUGIN grpc_cpp_plugin REQUIRED)
+    endif()
 endif()
 
 # Proto codegen — generate into our own build directory
 set(PROTO_FILE "${CMAKE_SOURCE_DIR}/proto/rps.proto")
 set(PROTO_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 file(MAKE_DIRECTORY ${PROTO_OUT_DIR})
-
-find_program(PROTOC_EXECUTABLE protoc REQUIRED)
-find_program(GRPC_CPP_PLUGIN grpc_cpp_plugin REQUIRED)
 
 set(PROTO_SRCS "${PROTO_OUT_DIR}/rps.pb.cc")
 set(PROTO_HDRS "${PROTO_OUT_DIR}/rps.pb.h")
