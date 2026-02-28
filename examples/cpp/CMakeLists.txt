@@ -1,31 +1,15 @@
-# C++ gRPC example client for RPS
-# Reuses the same pkg-config / proto codegen approach as rps-server.
+# C++ gRPC example client for RPS.
 
 # --- Cross-platform gRPC / Protobuf resolution ---
-if(MINGW OR MSYS)
-    # 1. Find Libraries (MSYS2 Workaround)
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(GRPCPP REQUIRED IMPORTED_TARGET grpc++)
-    pkg_check_modules(PROTOBUF REQUIRED IMPORTED_TARGET protobuf)
-    set(RPS_GRPC_LIB PkgConfig::GRPCPP)
-    set(RPS_PROTO_LIB PkgConfig::PROTOBUF)
+# Prefer CMake config packages (works with vcpkg on all platforms, including MinGW).
+# Fall back to pkg-config only when config packages are unavailable.
+find_package(gRPC CONFIG QUIET)
+find_package(protobuf CONFIG QUIET)
 
-    # 2. Find Tools (MSYS2 Standard Path)
-    find_program(PROTOC_EXECUTABLE protoc REQUIRED)
-    find_program(GRPC_CPP_PLUGIN grpc_cpp_plugin REQUIRED)
-else()
-    # 1. Find Libraries (vcpkg / MSVC / Native CMake)
-    find_package(gRPC CONFIG REQUIRED)
+if(gRPC_FOUND AND protobuf_FOUND)
     set(RPS_GRPC_LIB gRPC::grpc++)
-
-    # Try protobuf config (vcpkg) first, then fallback to FindProtobuf module
-    find_package(protobuf CONFIG QUIET)
-    if(NOT protobuf_FOUND)
-        find_package(Protobuf REQUIRED)
-    endif()
     set(RPS_PROTO_LIB protobuf::libprotobuf)
 
-    # 2. Find Tools
     if(TARGET protobuf::protoc)
         set(PROTOC_EXECUTABLE protobuf::protoc)
     else()
@@ -37,6 +21,15 @@ else()
     else()
         find_program(GRPC_CPP_PLUGIN grpc_cpp_plugin REQUIRED)
     endif()
+else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(GRPCPP REQUIRED IMPORTED_TARGET grpc++)
+    pkg_check_modules(PROTOBUF REQUIRED IMPORTED_TARGET protobuf)
+    set(RPS_GRPC_LIB PkgConfig::GRPCPP)
+    set(RPS_PROTO_LIB PkgConfig::PROTOBUF)
+
+    find_program(PROTOC_EXECUTABLE protoc REQUIRED)
+    find_program(GRPC_CPP_PLUGIN grpc_cpp_plugin REQUIRED)
 endif()
 
 # Proto codegen — generate into our own build directory
