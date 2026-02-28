@@ -16,7 +16,7 @@ jobs:
           - os: macos-15
             name: macOS Apple Silicon
           - os: windows-latest
-            name: Windows MSYS2
+            name: Windows MSVC
 
     steps:
     - name: Checkout repository
@@ -35,26 +35,27 @@ jobs:
       run: |
         brew install cmake ninja sqlite pkg-config grpc protobuf spdlog
 
-    - name: Setup MSYS2 (Windows)
-      if: runner.os == 'Windows'
-      uses: msys2/setup-msys2@v2
-      with:
-        msystem: CLANG64
-        update: true
-        install: >-
-          mingw-w64-clang-x86_64-cmake
-          mingw-w64-clang-x86_64-ninja
-          mingw-w64-clang-x86_64-clang
-          mingw-w64-clang-x86_64-sqlite3
-          mingw-w64-clang-x86_64-grpc
-          mingw-w64-clang-x86_64-spdlog
-
     - name: Cache Boost
       id: cache-boost
       uses: actions/cache@v4
       with:
         path: third_party/boost
         key: boost-1.90.0-${{ runner.os }}
+
+    - name: Setup ccache
+      if: runner.os != 'Windows'
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: ${{ runner.os }}-ccache
+
+    - name: Cache vcpkg dependencies
+      if: runner.os == 'Windows'
+      uses: actions/cache@v4
+      with:
+        path: build/vcpkg_installed
+        key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+        restore-keys: |
+          vcpkg-${{ runner.os }}-
 
     - name: Clone Boost
       if: steps.cache-boost.outputs.cache-hit != 'true'
@@ -67,7 +68,7 @@ jobs:
 
     - name: Configure CMake (Unix)
       if: runner.os != 'Windows'
-      run: cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release
+      run: cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DBOOST_SOURCE_DIR=${{ github.workspace }}/third_party/boost
 
     - name: Build (Unix)
       if: runner.os != 'Windows'
@@ -75,19 +76,38 @@ jobs:
 
     - name: Configure CMake (Windows)
       if: runner.os == 'Windows'
-      shell: msys2 {0}
-      run: cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release
+      run: cmake -B build -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DRPS_MSVC_STATIC_RUNTIME=ON -DBOOST_SOURCE_DIR="${{ github.workspace }}/third_party/boost"
 
     - name: Build (Windows)
       if: runner.os == 'Windows'
-      shell: msys2 {0}
       run: cmake --build build --config Release
 
-    - name: Test Run Standalone (Unix)
+    - name: Stage & Zip Binaries (Unix)
       if: runner.os != 'Windows'
-      run: ./build/apps/rps-standalone/rps-standalone --help
+      run: |
+        mkdir -p release_stage
+        cp build/apps/rps-server/rps-server release_stage/
+        cp build/apps/rps-standalone/rps-standalone release_stage/
+        cp build/apps/rps-pluginscanner/rps-pluginscanner release_stage/
+        cp build/apps/rps-vstscannermaster/vstscannermaster release_stage/
+        cp build/examples/cpp/rps-example-client release_stage/
+        cd release_stage
+        zip -r ../rps-binaries-${{ matrix.os }}.zip ./*
 
-    - name: Test Run Standalone (Windows)
+    - name: Stage & Zip Binaries (Windows)
       if: runner.os == 'Windows'
-      shell: msys2 {0}
-      run: ./build/apps/rps-standalone/rps-standalone.exe --help
+      run: |
+        New-Item -ItemType Directory -Force -Path release_stage
+        Copy-Item build\apps\rps-server\Release\rps-server.exe release_stage\
+        Copy-Item build\apps\rps-standalone\Release\rps-standalone.exe release_stage\
+        Copy-Item build\apps\rps-pluginscanner\Release\rps-pluginscanner.exe release_stage\
+        Copy-Item build\apps\rps-vstscannermaster\Release\vstscannermaster.exe release_stage\
+        Copy-Item build\examples\cpp\Release\rps-example-client.exe release_stage\
+        Compress-Archive -Path release_stage\* -DestinationPath rps-binaries-${{ matrix.os }}.zip
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: rps-binaries-${{ matrix.os }}
+        path: rps-binaries-${{ matrix.os }}.zip
+        retention-days: 7
