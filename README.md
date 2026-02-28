@@ -38,7 +38,7 @@ All dependencies (`boost`, `grpc`, `protobuf`, `spdlog`, `sqlite3`) are managed 
 ### Step 1: Clone the Repository
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/bzeiss/rps.git
 cd rps
 git submodule update --init --recursive
 ```
