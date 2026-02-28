@@ -50,27 +50,8 @@ if(WIN32 AND NOT MSVC)
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
 endif()
 
-# Boost: build from local source tree via add_subdirectory
-# Override with: cmake -DBOOST_SOURCE_DIR=/path/to/boost
-#            or: export BOOST_SOURCE_DIR=/path/to/boost && cmake -B build
-if(DEFINED ENV{BOOST_SOURCE_DIR} AND NOT DEFINED BOOST_SOURCE_DIR)
-    set(BOOST_SOURCE_DIR "$ENV{BOOST_SOURCE_DIR}" CACHE PATH "Path to Boost source tree (requires Boost 1.90+)")
-else()
-    set(BOOST_SOURCE_DIR "${CMAKE_SOURCE_DIR}/third_party/boost" CACHE PATH "Path to Boost source tree (requires Boost 1.90+)")
-endif()
-if(NOT EXISTS "${BOOST_SOURCE_DIR}/CMakeLists.txt")
-    message(FATAL_ERROR
-        "Boost CMake source tree not found at: ${BOOST_SOURCE_DIR}\n"
-        "Note: The official boost.org tarball does NOT include CMake support.\n"
-        "You must clone Boost from GitHub:\n"
-        "  git clone https://github.com/boostorg/boost.git /path/to/boost\n"
-        "  cd /path/to/boost && git checkout boost-1.90.0\n"
-        "  git submodule update --init --recursive\n"
-        "Then pass: cmake -DBOOST_SOURCE_DIR=/path/to/boost\n"
-    )
-endif()
-set(BOOST_INCLUDE_LIBRARIES json program_options filesystem process interprocess uuid dll date_time)
-add_subdirectory(${BOOST_SOURCE_DIR} ${CMAKE_BINARY_DIR}/_deps/boost EXCLUDE_FROM_ALL)
+# Boost: managed entirely by vcpkg
+find_package(Boost REQUIRED COMPONENTS json program_options filesystem process interprocess uuid dll date_time)
 
 # Find SQLite3
 # Prefer the static library; fall back to shared via find_package

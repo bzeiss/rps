@@ -27,18 +27,15 @@ RPS solves this by using a **multi-process architecture**:
 
 | Dependency   | Minimum Version | Notes                                              |
 |--------------|-----------------|----------------------------------------------------|
-| CMake        | 3.25            | Build system                                       |
+| CMake        | 3.25            | Build system (4.2+ required for VS 2026)           |
 | C++ Compiler | C++23 capable   | Clang 16+ (macOS+Linux), MSVC 2022 17.5+ (Windows) |
-| Ninja        | 1.11+           | Build backend (macOS+Linux)                        |
-| vcpkg        | Latest          | C/C++ package manager (Windows)                    |
-| SQLite3      | 3.x             | For the plugin database                            |
-| gRPC         | 1.60+           | For the `rps-server` gRPC API                      |
-| spdlog       | 1.12+           | Structured logging for `rps-server`                |
+| Ninja        | 1.11+           | Build backend (Recommended)                        |
+| vcpkg        | Latest          | C/C++ package manager (Used on ALL platforms)      |
 | Git          | 2.x             | For version management                             |
 
-**Boost 1.90** is built from source. You must provide a path to a Boost source tree (see Step 1).
+All dependencies (`boost`, `grpc`, `protobuf`, `spdlog`, `sqlite3`) are managed automatically by `vcpkg` during the CMake configure step.
 
-### Step 1: Clone and Set Up Dependencies
+### Step 1: Clone the Repository
 
 ```bash
 git clone <your-repo-url>
@@ -48,109 +45,76 @@ git submodule update --init --recursive
 
 The submodule init will download the plugin SDK headers (CLAP, VST3).
 
-#### Boost Source Tree
-
-RPS requires the **Boost 1.90 source tree** cloned from GitHub. The official boost.org tarball does **not** include CMake support and will not work.
-
-```bash
-git clone https://github.com/boostorg/boost.git /path/to/boost
-cd /path/to/boost
-git checkout boost-1.90.0
-git submodule update --init --recursive
-```
-
-This will take several minutes (~180 sub-repos). Once done, the directory will contain a `CMakeLists.txt` at the top level.
-
 ### Step 2: Configure and Build
 
-#### Windows (MSVC + vcpkg - Recommended for Static Builds)
+RPS uses `vcpkg` across **all platforms** (Windows, macOS, and Linux) to ensure that the resulting executables are completely self-contained and statically linked. This prevents runtime crashes due to missing `.dll`, `.so`, or `.dylib` files.
 
-To avoid DLL dependencies and build a single, standalone executable on Windows, it is recommended to use Visual Studio (MSVC) with `vcpkg` for dependency management.
-
-1. **Install Visual Studio 2022** (or later) with the "Desktop development with C++" workload.
-2. **Install vcpkg** and the required libraries:
-   ```cmd
-   git clone https://github.com/microsoft/vcpkg.git c:\vcpkg
-   cd c:\vcpkg
+1. **Install vcpkg** if you haven't already:
+   ```bash
+   git clone https://github.com/microsoft/vcpkg.git /path/to/vcpkg
+   cd /path/to/vcpkg
+   # Windows:
    bootstrap-vcpkg.bat
-   vcpkg.exe install grpc protobuf spdlog sqlite3 --triplet x64-windows-static
+   # Linux/macOS:
+   ./bootstrap-vcpkg.sh
    ```
 
-3. **Configure and Build** (using Developer Command Prompt for VS 2022):
-   ```cmd
-   # Set the Boost source directory (or use the cmake parameter like in the example below)
-   set BOOST_SOURCE_DIR=C:\develop\boost
+#### Windows (MSVC)
 
-   # Configure CMake to use vcpkg and static linking
-   # * leave out the VST2 parameters to build without it
-   # * leave out the boost source dir if you have the environment variable set
-   # * use -G "Visual Studio 18 2026" if you use the latest one - VS 18 requires at least cmake 4.2!
-   # * adapt the paths
+```cmd
+# Configure CMake to use vcpkg and static linking
+# * leave out the VST2 parameters to build without it
+# * use -G "Visual Studio 18 2026" if you use the latest one - VS 18 requires at least cmake 4.2!
+# * adapt the paths
 
-   cmake -G "Visual Studio 17 2022" -A x64 -B build -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static -DRPS_MSVC_STATIC_RUNTIME=ON -DBOOST_SOURCE_DIR=C:/dev/boost -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=c:/dev/vstsdk2.4
-         
-   # Build the project
-   cmake --build build --config Release
-   ```
-   *Note: Ensure your `C:\vcpkg` path matches where you cloned it.*
+cmake -G "Visual Studio 17 2022" -A x64 -B build -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static -DRPS_MSVC_STATIC_RUNTIME=ON -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=c:/dev/vstsdk2.4
+      
+# Build the project
+cmake --build build --config Release
+```
 
 > **Important Note regarding process termination on Windows:**
 > When using the example Java or C++ clients on Windows, it is recommended to run them from PowerShell rather than MSYS2/MinTTY terminals. MSYS2 terminals do not always translate `Ctrl+C` into proper Windows console control events, which can cause the client to abruptly terminate without running shutdown hooks, leaving the `rps-server.exe` running in the background as an orphaned process. Running from PowerShell or standard Command Prompt ensures proper process termination.
 
-#### Windows (MSYS2/Clang - Alternative)
-The MSYS2 Clang64 environment can be used, but note that it produces dynamically linked executables.
+#### Windows (Clang)
 
-1. Install MSYS2 and launch the **MSYS2 Clang64** terminal.
-2. Install the toolchain and dependencies:
-   ```bash
-   pacman -S mingw-w64-clang-x86_64-toolchain mingw-w64-clang-x86_64-cmake mingw-w64-clang-x86_64-ninja mingw-w64-clang-x86_64-sqlite3 mingw-w64-clang-x86_64-grpc mingw-w64-clang-x86_64-protobuf mingw-w64-clang-x86_64-spdlog
-   ```
-
-> **Note on running MSYS2 executables:**
-> If you build with MSYS2, you must run the resulting executables from within the MSYS2 terminal, or add the MSYS2 `bin` folder (`C:\msys64\clang64\bin`) to your Windows PATH. Otherwise, Windows will fail to find the required MSYS2 DLLs (`libgrpc++`, `libprotobuf`, `libspdlog`, etc.) and the executable will exit with code `0xC0000135`.
-
-Configure and build:
-```bash
-# Set the Boost source directory (or use the cmake parameter like in the example below)
-export BOOST_SOURCE_DIR=/c/develop/boost
-
-# * leave out the VST2 parameters to build without it
-# * leave out the boost source dir if you have the environment variable set
-# * adapt the paths
-cmake -G Ninja -DBOOST_SOURCE_DIR=/c/dev/boost -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=/c/dev/vstsdk2.4 -B build
-cmake --build build
+```cmd
+cmake -G Ninja -B build -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static
+cmake --build build --config Release
 ```
 
-#### macOS (Homebrew)
-
-Install build tools via Homebrew:
-```bash
-brew install cmake ninja sqlite pkg-config grpc protobuf spdlog
-```
-
-Configure and build:
-
-Same as Windows MSYS2.
-
-#### Linux (Fedora)
+#### macOS (Apple Silicon)
 
 ```bash
-sudo dnf install cmake ninja-build gcc-c++ clang sqlite-devel git grpc-devel grpc-plugins spdlog-devel
+# Enable VST2 with custom SDK path if needed: -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=/path/to/vstsdk2.4
+cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=arm64-osx-static
+cmake --build build --config Release
 ```
 
-Configure and build:
+#### Linux (Ubuntu/Debian/Fedora)
 
-Same as Windows MSYS2.
-
-#### Linux (Ubuntu / Debian)
-
+*Note: The default `x64-linux` triplet in vcpkg automatically builds static libraries.*
 ```bash
-sudo apt install cmake ninja-build g++ clang libsqlite3-dev git libgrpc++-dev protobuf-compiler-grpc libspdlog-dev
+# Ensure you have build tools installed:
+# Ubuntu: sudo apt install build-essential cmake ninja-build pkg-config curl zip unzip tar
+# Fedora: sudo dnf install gcc-c++ cmake ninja-build pkgconf-pkg-config curl zip unzip tar
+
+cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux
+cmake --build build --config Release
 ```
 
-Configure and build:
+#### Vcpkg Triplet Reference
 
-Same as Windows MSYS2.
+| OS | Architecture | Compiler | Recommended `VCPKG_TARGET_TRIPLET` | CMake Flags Required |
+|---|---|---|---|---|
+| **Windows** | x64 | MSVC | `x64-windows-static` | `-DRPS_MSVC_STATIC_RUNTIME=ON` |
+| **Windows** | x64 | Clang | `x64-windows-static` | `-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++` |
+| **macOS** | arm64 (M1/M2) | Apple Clang | `arm64-osx-static` | |
+| **macOS** | x64 (Intel) | Apple Clang | `x64-osx-static` | |
+| **Linux** | x64 | GCC / Clang | `x64-linux` | |
+| **Linux** | arm64 | GCC / Clang | `arm64-linux` | |
+
+---
 
 ### Build Output
 

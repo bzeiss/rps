@@ -1,14 +1,69 @@
 {
   "name": "rps-plugin-scanner",
   "version-string": "0.2.0",
+  "builtin-baseline": "383fc51480f2747372cf9009df34469ce00d604b",
   "dependencies": [
     "boost-program-options",
     "boost-json",
     "boost-process",
     "boost-interprocess",
+    "boost-filesystem",
+    "boost-uuid",
+    "boost-dll",
+    "boost-date-time",
     "sqlite3",
     "grpc",
     "protobuf",
-    "spdlog"    
+    "spdlog"
+  ],
+  "overrides": [
+    {
+      "name": "boost-program-options",
+      "version": "1.90.0"
+    },
+    {
+      "name": "boost-json",
+      "version": "1.90.0"
+    },
+    {
+      "name": "boost-process",
+      "version": "1.90.0"
+    },
+    {
+      "name": "boost-interprocess",
+      "version": "1.90.0"
+    },
+    {
+      "name": "boost-filesystem",
+      "version": "1.90.0"
+    },
+    {
+      "name": "boost-uuid",
+      "version": "1.90.0"
+    },
+    {
+      "name": "boost-dll",
+      "version": "1.90.0"
+    },
+    {
+      "name": "boost-date-time",
+      "version": "1.90.0"
+    },
+    {
+      "name": "grpc",
+      "version": "1.76.0"
+    },
+    {
+      "name": "protobuf",
+      "version": "6.33.4"
+    },
+    {
+      "name": "spdlog",
+      "version": "1.17.0"
+    },
+    {
+      "name": "sqlite3",
+      "version": "3.51.2"
+    }
   ]
 }

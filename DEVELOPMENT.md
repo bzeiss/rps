@@ -53,18 +53,13 @@ We adhere to a set of strict constraints to ensure maximum compatibility, adopti
 
 ### 2.1 Dependency Management
 
-To avoid platform-specific packaging issues (missing static libs on Linux, DLL mismatches on Windows, version conflicts), **Boost is built from source** as part of the CMake build. The developer must provide a Boost 1.90 source tree (cloned separately) and point CMake at it via `BOOST_SOURCE_DIR`.
+To guarantee binary portability (creating self-contained executables without DLL/shared object dependencies), RPS relies on **`vcpkg`** across all platforms for resolving its dependencies (`boost`, `grpc`, `protobuf`, `spdlog`, and `sqlite3`) as **static libraries**.
 
-The CMake variable `BOOST_SOURCE_DIR` controls where Boost source is located:
-- **Default fallback**: `${CMAKE_SOURCE_DIR}/third_party/boost`
-- **Override via CMake flag**: `cmake -DBOOST_SOURCE_DIR=/path/to/boost -B build`
-- **Override via environment variable**: `export BOOST_SOURCE_DIR=/path/to/boost && cmake -B build`
+- **Windows**: Built with MSVC using the `x64-windows-static` vcpkg triplet and `-DRPS_MSVC_STATIC_RUNTIME=ON`. Can also be built with Clang.
+- **macOS**: Built with Apple Clang using the `arm64-osx-static` vcpkg triplet.
+- **Linux**: Built with GCC using the `x64-linux` vcpkg triplet (which defaults to static linking).
 
-The `-D` flag takes priority over the environment variable. If neither is set, CMake falls back to `third_party/boost`.
-
-Only the required Boost libraries are compiled (via `BOOST_INCLUDE_LIBRARIES`), keeping build times reasonable.
-
-On **Windows** (non-MSVC), the C/C++ runtimes are statically linked (`-static -static-libgcc -static-libstdc++`) to produce standalone executables with no DLL dependencies beyond the Windows system libraries.
+Because all dependencies are managed via `vcpkg.json` (Manifest Mode), the CMake configure step will automatically download and build the exact requested versions of Boost (1.90.0) and other libraries before compiling RPS.
 
 ### 2.2 Optional: VST2.4 SDK
 
@@ -225,18 +220,9 @@ Client (Python/C++/etc.)  ──gRPC──▶  RpsServiceImpl  ──▶  ScanEn
 - **Shutdown**: `Shutdown` RPC triggers `grpc::Server::Shutdown()` asynchronously (after returning the response). Signal handlers (SIGINT/SIGTERM) also trigger graceful shutdown.
 - **Lifecycle**: Designed to be spawned and killed by a parent application. The Python example client demonstrates this pattern.
 
-### 3.13 Build System: gRPC/Protobuf on MSYS2
-
-The MSYS2 gRPC package has a known issue where `protobuf-targets.cmake` references missing UPB targets. To work around this, `apps/rps-server/CMakeLists.txt` uses **pkg-config** (`pkg_check_modules`) instead of `find_package(gRPC CONFIG)` for finding gRPC and protobuf. Proto codegen uses `protoc` and `grpc_cpp_plugin` found via `find_program()`.
-
-Required MSYS2 packages:
-```bash
-pacman -S mingw-w64-clang-x86_64-grpc mingw-w64-clang-x86_64-spdlog
-```
-
 ---
 
-### 3.14 Python TUI Client
+### 3.13 Python TUI Client
 
 The example Python client (`examples/python/`) demonstrates the full gRPC workflow:
 
