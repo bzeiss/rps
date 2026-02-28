@@ -7,6 +7,9 @@ find_package(protobuf CONFIG QUIET)
 if(gRPC_FOUND AND protobuf_FOUND)
     set(RPS_GRPC_LIB gRPC::grpc++)
     set(RPS_PROTO_LIB protobuf::libprotobuf)
+    if(TARGET protobuf::libprotobuf-lite)
+        list(APPEND RPS_PROTO_LIB protobuf::libprotobuf-lite)
+    endif()
 
     if(TARGET protobuf::protoc)
         set(PROTOC_EXECUTABLE protobuf::protoc)
@@ -67,6 +70,7 @@ add_executable(rps-server
     src/main.cpp
     src/RpsServiceImpl.cpp
     src/GrpcScanObserver.cpp
+    src/ProtobufCompat.cpp
     ${PROTO_SRCS}
     ${GRPC_SRCS}
 )
@@ -76,6 +80,7 @@ target_include_directories(rps-server
         include
         ${PROTO_OUT_DIR}
 )
+
 
 target_link_libraries(rps-server
     PRIVATE

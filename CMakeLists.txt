@@ -38,11 +38,17 @@ else()
     option(RPS_MSVC_STATIC_RUNTIME "Use static MSVC runtime (/MT)" OFF)
 endif()
 
-if(MSVC AND RPS_MSVC_STATIC_RUNTIME)
+if(WIN32
+   AND RPS_MSVC_STATIC_RUNTIME
+   AND (MSVC OR CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC"))
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    # Resolve LNK4098 by ignoring the runtime we're not using for each config
-    set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /NODEFAULTLIB:LIBCMTD")
-    set(CMAKE_EXE_LINKER_FLAGS_DEBUG "${CMAKE_EXE_LINKER_FLAGS_DEBUG} /NODEFAULTLIB:LIBCMT")
+    # Resolve LNK4098 by ignoring the runtime we're not using for each config.
+    # Keep this only for cl.exe-style drivers; clang++ (MSVC target) does not
+    # accept raw '/NODEFAULTLIB:...' in CMAKE_EXE_LINKER_FLAGS.
+    if(MSVC)
+        set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /NODEFAULTLIB:LIBCMTD")
+        set(CMAKE_EXE_LINKER_FLAGS_DEBUG "${CMAKE_EXE_LINKER_FLAGS_DEBUG} /NODEFAULTLIB:LIBCMT")
+    endif()
 endif()
 
 # Disable Boost Auto-Linking on Windows (CMake handles libraries explicitly)
@@ -52,7 +58,6 @@ add_definitions(-DBOOST_ALL_NO_LIB)
 add_library(rps_warnings INTERFACE)
 if(MSVC)
     target_compile_options(rps_warnings INTERFACE /W4 /WX /permissive-)
-    target_compile_definitions(rps_warnings INTERFACE NOMINMAX WIN32_LEAN_AND_MEAN)    
 else()
     target_compile_options(rps_warnings INTERFACE -Wall -Wextra -Wpedantic -Werror)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -61,8 +66,16 @@ else()
     endif()
 endif()
 
+if(WIN32)
+    target_compile_definitions(rps_warnings INTERFACE
+        NOMINMAX
+        WIN32_LEAN_AND_MEAN
+        _CRT_SECURE_NO_WARNINGS
+    )
+endif()
+
 # Force static linking
-if(WIN32 AND NOT MSVC)
+if(WIN32 AND NOT MSVC AND NOT CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
 endif()
