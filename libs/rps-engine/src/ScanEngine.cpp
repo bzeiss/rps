@@ -125,13 +125,18 @@ ScanSummary ScanEngine::runScan(const ScanConfig& config, ScanObserver* observer
             exeDir / scannerPath
         };
 
+        bool found = false;
         for (auto& c : candidates) {
             if (fs::exists(c) && fs::is_regular_file(c)) {
                 scannerPath = fs::canonical(c);
+                found = true;
                 break;
             }
         }
-        // If not found, we keep original scannerPath and let ProcessPool fail
+        
+        if (!found) {
+            throw std::runtime_error("Cannot find scanner binary: " + config.scannerBin);
+        }
     }
 
     // --- Database setup ---

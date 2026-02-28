@@ -1,6 +1,6 @@
 # RPS
 
-RPS is a modern, cross-platform audio plugin scanner designed from the ground up for extreme robustness and reliability. It supports scanning VST2, VST3, CLAP, AAX, LV2, and LADSPA formats on Windows, macOS, and Linux.
+RPS is a modern, cross-platform audio plugin scanner designed from the ground up for extreme robustness and reliability. It supports scanning VST2, VST3, CLAP, AU, AAX, LV2, and LADSPA formats on Windows, macOS, and Linux.
 
 RPS exposes a **gRPC API** so it can be driven from any language. Example clients in C++, Python and Java (possibly others) are included.
 

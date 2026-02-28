@@ -705,6 +705,16 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
+        std::string scannerName = "rps-pluginscanner";
+#ifdef _WIN32
+        scannerName += ".exe";
+#endif
+        fs::path scannerBin = fs::path(serverBin).parent_path() / scannerName;
+        if (!fs::exists(scannerBin) || !fs::is_regular_file(scannerBin)) {
+            std::cerr << "Error: Cannot find " << scannerName << " alongside rps-server (" << serverBin << ").\n";
+            return 1;
+        }
+
         std::string logLevel = vm.count("verbose") ? "debug" : "info";
         mgr = std::make_unique<ServerManager>(
             serverBin, vm["port"].as<int>(), vm["db"].as<std::string>(), logLevel);

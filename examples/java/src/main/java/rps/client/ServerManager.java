@@ -1,6 +1,7 @@
 package rps.client;
 
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.Socket;
@@ -23,6 +24,18 @@ public class ServerManager implements AutoCloseable {
     }
 
     public void start() throws IOException, InterruptedException {
+        File serverFile = new File(binPath);
+        if (!serverFile.exists() || !serverFile.isFile()) {
+            throw new FileNotFoundException("Cannot find rps-server binary at: " + binPath);
+        }
+
+        String os = System.getProperty("os.name").toLowerCase();
+        String scannerName = os.contains("win") ? "rps-pluginscanner.exe" : "rps-pluginscanner";
+        File scannerFile = new File(serverFile.getParentFile(), scannerName);
+        if (!scannerFile.exists() || !scannerFile.isFile()) {
+            throw new FileNotFoundException("Cannot find " + scannerName + " alongside rps-server at: " + scannerFile.getAbsolutePath());
+        }
+
         List<String> cmd = new ArrayList<>();
         cmd.add(binPath);
         cmd.add("--port");

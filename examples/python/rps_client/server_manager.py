@@ -6,6 +6,7 @@ import socket
 import os
 import sys
 import signal
+from pathlib import Path
 
 import grpc
 
@@ -42,6 +43,16 @@ class ServerManager:
 
     def start(self, timeout: float = 10.0) -> None:
         """Start the server subprocess and wait for it to accept connections."""
+        # Precondition checks for binaries
+        server_path = Path(self.server_bin)
+        if not server_path.exists() or not server_path.is_file():
+            raise FileNotFoundError(f"Cannot find rps-server binary at: {self.server_bin}")
+
+        scanner_name = "rps-pluginscanner.exe" if sys.platform == "win32" else "rps-pluginscanner"
+        scanner_path = server_path.with_name(scanner_name)
+        if not scanner_path.exists() or not scanner_path.is_file():
+            raise FileNotFoundError(f"Cannot find {scanner_name} alongside rps-server at: {scanner_path}")
+
         # Register signal handlers for cleanup
         self._old_sigint_handler = signal.getsignal(signal.SIGINT)
         self._old_sigterm_handler = signal.getsignal(signal.SIGTERM)
