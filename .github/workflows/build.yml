@@ -17,6 +17,10 @@ jobs:
             name: macOS Apple Silicon
           - os: windows-latest
             name: Windows MSVC
+            toolchain: msvc
+          - os: windows-latest
+            name: Windows Clang
+            toolchain: clang
 
     steps:
     - name: Checkout repository
@@ -24,16 +28,16 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Install Dependencies (Linux)
+    - name: Install Build Tools (Linux)
       if: runner.os == 'Linux'
       run: |
         sudo apt-get update
-        sudo apt-get install -y cmake ninja-build g++ clang libsqlite3-dev git libgrpc++-dev protobuf-compiler-grpc libspdlog-dev
+        sudo apt-get install -y cmake ninja-build g++ clang pkg-config
 
-    - name: Install Dependencies (macOS)
+    - name: Install Build Tools (macOS)
       if: runner.os == 'macOS'
       run: |
-        brew install cmake ninja sqlite pkg-config grpc protobuf spdlog
+        brew install cmake ninja pkg-config
 
     - name: Cache Boost
       id: cache-boost
@@ -43,19 +47,17 @@ jobs:
         key: boost-1.90.0-${{ runner.os }}
 
     - name: Setup ccache
-      if: runner.os != 'Windows'
       uses: hendrikmuhs/ccache-action@v1.2
       with:
-        key: ${{ runner.os }}-ccache
+        key: ${{ runner.os }}-${{ matrix.toolchain }}-ccache
 
     - name: Cache vcpkg dependencies
-      if: runner.os == 'Windows'
       uses: actions/cache@v4
       with:
         path: build/vcpkg_installed
-        key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+        key: vcpkg-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('vcpkg.json') }}
         restore-keys: |
-          vcpkg-${{ runner.os }}-
+          vcpkg-${{ runner.os }}-${{ matrix.toolchain }}-
 
     - name: Clone Boost
       if: steps.cache-boost.outputs.cache-hit != 'true'
@@ -68,15 +70,32 @@ jobs:
 
     - name: Configure CMake (Unix)
       if: runner.os != 'Windows'
-      run: cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DBOOST_SOURCE_DIR=${{ github.workspace }}/third_party/boost
+      run: |
+        if [ "$RUNNER_OS" == "Linux" ]; then
+          TRIPLET="x64-linux" # vcpkg's x64-linux defaults to static libraries
+        else
+          TRIPLET="arm64-osx-static" # Force static linking on macOS
+        fi
+
+        cmake -G Ninja -B build \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+          -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
+          -DVCPKG_TARGET_TRIPLET=$TRIPLET \
+          -DBOOST_SOURCE_DIR=${{ github.workspace }}/third_party/boost
 
     - name: Build (Unix)
       if: runner.os != 'Windows'
       run: cmake --build build --config Release
 
-    - name: Configure CMake (Windows)
-      if: runner.os == 'Windows'
-      run: cmake -B build -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DRPS_MSVC_STATIC_RUNTIME=ON -DBOOST_SOURCE_DIR="${{ github.workspace }}/third_party/boost"
+    - name: Configure CMake (Windows MSVC)
+      if: runner.os == 'Windows' && matrix.toolchain == 'msvc'
+      run: cmake -B build -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DRPS_MSVC_STATIC_RUNTIME=ON -DBOOST_SOURCE_DIR="${{ github.workspace }}/third_party/boost"
+
+    - name: Configure CMake (Windows Clang)
+      if: runner.os == 'Windows' && matrix.toolchain == 'clang'
+      run: cmake -G Ninja -B build -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DBOOST_SOURCE_DIR="${{ github.workspace }}/third_party/boost"
 
     - name: Build (Windows)
       if: runner.os == 'Windows'
@@ -94,8 +113,8 @@ jobs:
         cd release_stage
         zip -r ../rps-binaries-${{ matrix.os }}.zip ./*
 
-    - name: Stage & Zip Binaries (Windows)
-      if: runner.os == 'Windows'
+    - name: Stage & Zip Binaries (Windows MSVC)
+      if: runner.os == 'Windows' && matrix.toolchain == 'msvc'
       run: |
         New-Item -ItemType Directory -Force -Path release_stage
         Copy-Item build\apps\rps-server\Release\rps-server.exe release_stage\
@@ -103,11 +122,22 @@ jobs:
         Copy-Item build\apps\rps-pluginscanner\Release\rps-pluginscanner.exe release_stage\
         Copy-Item build\apps\rps-vstscannermaster\Release\vstscannermaster.exe release_stage\
         Copy-Item build\examples\cpp\Release\rps-example-client.exe release_stage\
-        Compress-Archive -Path release_stage\* -DestinationPath rps-binaries-${{ matrix.os }}.zip
+        Compress-Archive -Path release_stage\* -DestinationPath rps-binaries-${{ matrix.name }}.zip
+
+    - name: Stage & Zip Binaries (Windows Clang)
+      if: runner.os == 'Windows' && matrix.toolchain == 'clang'
+      run: |
+        New-Item -ItemType Directory -Force -Path release_stage
+        Copy-Item build\apps\rps-server\rps-server.exe release_stage\
+        Copy-Item build\apps\rps-standalone\rps-standalone.exe release_stage\
+        Copy-Item build\apps\rps-pluginscanner\rps-pluginscanner.exe release_stage\
+        Copy-Item build\apps\rps-vstscannermaster\vstscannermaster.exe release_stage\
+        Copy-Item build\examples\cpp\rps-example-client.exe release_stage\
+        Compress-Archive -Path release_stage\* -DestinationPath rps-binaries-${{ matrix.name }}.zip
 
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: rps-binaries-${{ matrix.os }}
-        path: rps-binaries-${{ matrix.os }}.zip
+        name: rps-binaries-${{ matrix.name }}
+        path: rps-binaries-${{ matrix.name }}.zip
         retention-days: 7
