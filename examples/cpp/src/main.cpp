@@ -114,6 +114,13 @@ public:
         }
         m_processHandle = pi.hProcess;
         CloseHandle(pi.hThread);
+        if (!setupWindowsJobObject(m_processHandle)) {
+            TerminateProcess(m_processHandle, 1);
+            CloseHandle(m_processHandle);
+            m_processHandle = nullptr;
+            cleanupWindowsJobObject();
+            return false;
+        }
 #else
         // Fork + exec on POSIX
         m_pid = fork();
@@ -177,6 +184,7 @@ public:
             CloseHandle(m_processHandle);
             m_processHandle = nullptr;
         }
+        cleanupWindowsJobObject();
 #else
         if (m_pid > 0) {
             int status;
@@ -199,6 +207,42 @@ public:
     }
 
 private:
+#ifdef _WIN32
+    bool setupWindowsJobObject(HANDLE processHandle) {
+        cleanupWindowsJobObject();
+
+        m_jobHandle = CreateJobObjectA(nullptr, nullptr);
+        if (!m_jobHandle) {
+            return false;
+        }
+
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION info{};
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (!SetInformationJobObject(
+                m_jobHandle,
+                JobObjectExtendedLimitInformation,
+                &info,
+                sizeof(info))) {
+            cleanupWindowsJobObject();
+            return false;
+        }
+
+        if (!AssignProcessToJobObject(m_jobHandle, processHandle)) {
+            cleanupWindowsJobObject();
+            return false;
+        }
+
+        return true;
+    }
+
+    void cleanupWindowsJobObject() {
+        if (m_jobHandle) {
+            CloseHandle(m_jobHandle);
+            m_jobHandle = nullptr;
+        }
+    }
+#endif
+
     std::string m_bin;
     int m_port;
     std::string m_db;
@@ -206,6 +250,7 @@ private:
     bool m_running = false;
 #ifdef _WIN32
     HANDLE m_processHandle = nullptr;
+    HANDLE m_jobHandle = nullptr;
 #else
     pid_t m_pid = -1;
 #endif
