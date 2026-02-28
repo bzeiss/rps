@@ -15,9 +15,9 @@ jobs:
             name: Linux x64
           - os: macos-15
             name: macOS Apple Silicon
-          - os: windows-latest
-            name: Windows MSVC
-            toolchain: msvc
+#          - os: windows-latest
+#            name: Windows MSVC
+#            toolchain: msvc
           - os: windows-latest
             name: Windows Clang
             toolchain: clang

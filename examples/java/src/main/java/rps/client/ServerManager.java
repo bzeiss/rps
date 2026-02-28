@@ -15,6 +15,7 @@ public class ServerManager implements AutoCloseable {
     private final String dbPath;
     private final String logLevel;
     private Process process;
+    private WindowsJobObject windowsJob;
 
     public ServerManager(String binPath, int port, String dbPath, String logLevel) {
         this.binPath = binPath;
@@ -51,6 +52,9 @@ public class ServerManager implements AutoCloseable {
 
         System.out.println("Spawning server: " + String.join(" ", cmd));
         this.process = pb.start();
+        if (isWindows()) {
+            this.windowsJob = WindowsJobObject.createAndAssign(process.pid());
+        }
 
         // Wait for server to be ready
         long deadline = System.currentTimeMillis() + 10000;
@@ -106,15 +110,34 @@ public class ServerManager implements AutoCloseable {
 
     @Override
     public void close() {
-        if (process != null && process.isAlive()) {
-            // Kill the entire process tree (server + any scanner workers)
-            process.descendants().forEach(ProcessHandle::destroyForcibly);
-            process.destroyForcibly();
-            try {
-                process.waitFor(5, TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                // already force-killed
+        try {
+            if (process != null) {
+                process.destroy();
+                try {
+                    process.waitFor(2, TimeUnit.SECONDS);
+                } catch (InterruptedException ignored) {
+                }
+
+                // If graceful stop didn't finish quickly, force-kill child tree.
+                if (process.isAlive()) {
+                    process.descendants().forEach(ProcessHandle::destroyForcibly);
+                    process.destroyForcibly();
+                    try {
+                        process.waitFor(5, TimeUnit.SECONDS);
+                    } catch (InterruptedException ignored) {
+                    }
+                }
             }
+        } finally {
+            if (windowsJob != null) {
+                windowsJob.close();
+                windowsJob = null;
+            }
+            process = null;
         }
+    }
+
+    private static boolean isWindows() {
+        return System.getProperty("os.name").toLowerCase().contains("win");
     }
 }
