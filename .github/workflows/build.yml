@@ -44,6 +44,10 @@ jobs:
       with:
         key: ${{ runner.os }}-${{ matrix.toolchain }}-ccache
 
+    - name: Setup MSVC Developer Command Prompt
+      if: runner.os == 'Windows' && matrix.toolchain == 'msvc'
+      uses: ilammy/msvc-dev-cmd@v1
+
     - name: Cache vcpkg dependencies
       uses: actions/cache@v4
       with:
@@ -74,7 +78,7 @@ jobs:
 
     - name: Configure CMake (Windows MSVC)
       if: runner.os == 'Windows' && matrix.toolchain == 'msvc'
-      run: cmake -B build -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DRPS_MSVC_STATIC_RUNTIME=ON
+      run: cmake -G Ninja -B build -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DRPS_MSVC_STATIC_RUNTIME=ON
 
     - name: Configure CMake (Windows Clang)
       if: runner.os == 'Windows' && matrix.toolchain == 'clang'
@@ -100,11 +104,11 @@ jobs:
       if: runner.os == 'Windows' && matrix.toolchain == 'msvc'
       run: |
         New-Item -ItemType Directory -Force -Path release_stage
-        Copy-Item build\apps\rps-server\Release\rps-server.exe release_stage\
-        Copy-Item build\apps\rps-standalone\Release\rps-standalone.exe release_stage\
-        Copy-Item build\apps\rps-pluginscanner\Release\rps-pluginscanner.exe release_stage\
-        Copy-Item build\apps\rps-vstscannermaster\Release\vstscannermaster.exe release_stage\
-        Copy-Item build\examples\cpp\Release\rps-example-client.exe release_stage\
+        Copy-Item build\apps\rps-server\rps-server.exe release_stage\
+        Copy-Item build\apps\rps-standalone\rps-standalone.exe release_stage\
+        Copy-Item build\apps\rps-pluginscanner\rps-pluginscanner.exe release_stage\
+        Copy-Item build\apps\rps-vstscannermaster\vstscannermaster.exe release_stage\
+        Copy-Item build\examples\cpp\rps-example-client.exe release_stage\
         Compress-Archive -Path release_stage\* -DestinationPath rps-binaries-${{ matrix.name }}.zip
 
     - name: Stage & Zip Binaries (Windows Clang)

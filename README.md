@@ -59,15 +59,22 @@ RPS uses `vcpkg` across **all platforms** (Windows, macOS, and Linux) to ensure 
    ./bootstrap-vcpkg.sh
    ```
 
+2. **Install Ninja** (Windows):
+   The Windows builds are configured to use the Ninja generator for significantly faster and more consistent compilation.
+   ```cmd
+   winget install Ninja-build.Ninja
+   ```
+
 #### Windows (MSVC)
 
 ```cmd
 # Configure CMake to use vcpkg and static linking
 # * leave out the VST2 parameters to build without it
-# * use -G "Visual Studio 18 2026" if you use the latest one - VS 18 requires at least cmake 4.2!
+# * use Ninja for faster builds, but it requires running from Developer Command Prompt
+# * if using the MSBuild generator (e.g. -G "Visual Studio 18 2026"), CMake 4.2+ is required
 # * adapt the paths
 
-cmake -G "Visual Studio 17 2022" -A x64 -B build -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static -DRPS_MSVC_STATIC_RUNTIME=ON -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=c:/dev/vstsdk2.4
+cmake -G Ninja -B build -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static -DRPS_MSVC_STATIC_RUNTIME=ON -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=c:/dev/vstsdk2.4
       
 # Build the project
 cmake --build build --config Release

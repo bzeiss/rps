@@ -55,7 +55,7 @@ We adhere to a set of strict constraints to ensure maximum compatibility, adopti
 
 To guarantee binary portability (creating self-contained executables without DLL/shared object dependencies), RPS relies on **`vcpkg`** across all platforms for resolving its dependencies (`boost`, `grpc`, `protobuf`, `spdlog`, and `sqlite3`) as **static libraries**.
 
-- **Windows**: Built with MSVC using the `x64-windows-static` vcpkg triplet and `-DRPS_MSVC_STATIC_RUNTIME=ON`. Can also be built with Clang.
+- **Windows**: Built with MSVC (`cl.exe`) or Clang via the Ninja generator, using the `x64-windows-static` vcpkg triplet and `-DRPS_MSVC_STATIC_RUNTIME=ON`.
 - **macOS**: Built with Apple Clang using the `arm64-osx-static` vcpkg triplet.
 - **Linux**: Built with GCC using the `x64-linux` vcpkg triplet (which defaults to static linking).
 
