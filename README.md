@@ -41,7 +41,7 @@ RPS solves this by using a **multi-process architecture**:
 ### Step 1: Clone and Set Up Dependencies
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/bzeiss/rps.git
 cd rps
 git submodule update --init --recursive
 ```
