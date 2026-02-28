@@ -13,8 +13,10 @@ jobs:
         include:
           - os: ubuntu-latest
             name: Linux x64
+            toolchain: clang
           - os: macos-15
             name: macOS Apple Silicon
+            toolchain: clang
 #          - os: windows-latest
 #            name: Windows MSVC
 #            toolchain: msvc
@@ -48,18 +50,20 @@ jobs:
       if: runner.os == 'Windows'
       uses: ilammy/msvc-dev-cmd@v1
 
-    - name: Cache vcpkg binary archives (Unix)
+    - name: Restore vcpkg binary archives (Unix)
       if: runner.os != 'Windows'
-      uses: actions/cache@v4
+      id: vcpkg_cache_restore_unix
+      uses: actions/cache/restore@v4
       with:
         path: ~/.cache/vcpkg/archives
         key: vcpkg-archives-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
         restore-keys: |
           vcpkg-archives-${{ runner.os }}-${{ matrix.toolchain }}-
 
-    - name: Cache vcpkg binary archives (Windows)
+    - name: Restore vcpkg binary archives (Windows)
       if: runner.os == 'Windows'
-      uses: actions/cache@v4
+      id: vcpkg_cache_restore_windows
+      uses: actions/cache/restore@v4
       with:
         path: ${{ env.LOCALAPPDATA }}\vcpkg\archives
         key: vcpkg-archives-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
@@ -95,10 +99,19 @@ jobs:
 
         cmake -G Ninja -B build \
           -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_C_COMPILER=clang \
+          -DCMAKE_CXX_COMPILER=clang++ \
           -DCMAKE_C_COMPILER_LAUNCHER=ccache \
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
           -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
           -DVCPKG_TARGET_TRIPLET=$TRIPLET
+
+    - name: Save vcpkg binary archives (Unix)
+      if: ${{ runner.os != 'Windows' && always() && steps.vcpkg_cache_restore_unix.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.cache/vcpkg/archives
+        key: vcpkg-archives-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
 
     - name: Build (Unix)
       if: runner.os != 'Windows'
@@ -111,6 +124,13 @@ jobs:
     - name: Configure CMake (Windows Clang)
       if: runner.os == 'Windows' && matrix.toolchain == 'clang'
       run: cmake -G Ninja -B build -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DRPS_MSVC_STATIC_RUNTIME=ON
+
+    - name: Save vcpkg binary archives (Windows)
+      if: ${{ runner.os == 'Windows' && always() && steps.vcpkg_cache_restore_windows.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ env.LOCALAPPDATA }}\vcpkg\archives
+        key: vcpkg-archives-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
 
     - name: Build (Windows)
       if: runner.os == 'Windows'
