@@ -50,9 +50,13 @@ The submodule init will download the plugin SDK headers (CLAP, VST3).
 RPS uses `vcpkg` across **all platforms** (Windows, macOS, and Linux) to ensure that the resulting executables are completely self-contained and statically linked. This prevents runtime crashes due to missing `.dll`, `.so`, or `.dylib` files.
 
 1. **Install vcpkg** if you haven't already:
+   Because we use `vcpkg` in manifest mode with specific dependency version overrides, vcpkg requires its repository to be checked out at the exact `builtin-baseline` specified in `vcpkg.json`.
    ```bash
    git clone https://github.com/microsoft/vcpkg.git /path/to/vcpkg
    cd /path/to/vcpkg
+   # Checkout the specific baseline commit required by rps/vcpkg.json
+   git checkout 62159a45e18f3a9ac0548628dcaf74fcb60c6ff9
+   
    # Windows:
    bootstrap-vcpkg.bat
    # Linux/macOS:
