@@ -14,6 +14,11 @@ if(UNIX AND NOT APPLE)
     list(APPEND SCANNER_SOURCES src/scanners/LadspaScanner.cpp)
 endif()
 
+if(APPLE)
+    enable_language(OBJCXX)
+    list(APPEND SCANNER_SOURCES src/scanners/AuScanner.mm)
+endif()
+
 add_executable(rps-pluginscanner ${SCANNER_SOURCES})
 
 target_include_directories(rps-pluginscanner PRIVATE 
@@ -58,7 +63,7 @@ add_custom_command(
 if(WIN32)
     target_link_libraries(rps-pluginscanner PRIVATE ws2_32 ole32)
 elseif(APPLE)
-    target_link_libraries(rps-pluginscanner PRIVATE dl "-framework CoreFoundation")
+    target_link_libraries(rps-pluginscanner PRIVATE dl "-framework CoreFoundation" "-framework Foundation" "-framework AudioToolbox" "-framework AVFoundation")
 else()
     target_link_libraries(rps-pluginscanner PRIVATE dl)
 endif()

@@ -153,11 +153,24 @@ void DatabaseManager::initializeSchema() {
         );
     )";
 
+    const std::string createTableAuPlugins = R"(
+        CREATE TABLE IF NOT EXISTS au_plugins (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            plugin_id INTEGER NOT NULL,
+            au_type TEXT,
+            au_subtype TEXT,
+            au_manufacturer TEXT,
+            au_flags INTEGER DEFAULT 0,
+            FOREIGN KEY (plugin_id) REFERENCES plugins(id) ON DELETE CASCADE
+        );
+    )";
+
     executeQuery(createTablePlugins);
     executeQuery(createTableParameters);
     executeQuery(createTableAaxPlugins);
     executeQuery(createTableVst3Classes);
     executeQuery(createTableVst3CompatUids);
+    executeQuery(createTableAuPlugins);
     executeQuery(createTablePluginsSkipped);
     executeQuery(createTablePluginsBlocked);
 
@@ -312,6 +325,11 @@ void DatabaseManager::upsertPluginResult(const boost::filesystem::path& pluginPa
     // If this is a VST3 plugin, store class entries in vst3_classes table
     if (result.format == "vst3" && !result.extraData.empty()) {
         upsertVst3Classes(pluginId, result);
+    }
+
+    // If this is an AU plugin, store data in au_plugins table
+    if (result.format == "au" && !result.extraData.empty()) {
+        upsertAuPlugins(pluginId, result);
     }
 
     executeQuery("COMMIT;");
@@ -524,6 +542,55 @@ void DatabaseManager::upsertVst3Classes(int64_t pluginId, const rps::ipc::ScanRe
     sqlite3_finalize(stmt);
 }
 
+void DatabaseManager::upsertAuPlugins(int64_t pluginId, const rps::ipc::ScanResult& result) {
+    sqlite3_stmt* stmt = nullptr;
+    const std::string deleteOldSql = "DELETE FROM au_plugins WHERE plugin_id = ?";
+    if (sqlite3_prepare_v2(m_db, deleteOldSql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_int64(stmt, 1, pluginId);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+
+    const std::string insertSql = R"(
+        INSERT INTO au_plugins (plugin_id, au_type, au_subtype, au_manufacturer, au_flags)
+        VALUES (?, ?, ?, ?, ?)
+    )";
+
+    if (sqlite3_prepare_v2(m_db, insertSql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "Failed to prepare AU insert.\n";
+        return;
+    }
+
+    auto getStr = [&](const std::string& key) -> std::string {
+        auto found = result.extraData.find(key);
+        return (found != result.extraData.end()) ? found->second : "";
+    };
+
+    auto getInt = [&](const std::string& key) -> int64_t {
+        auto found = result.extraData.find(key);
+        if (found != result.extraData.end() && !found->second.empty()) {
+            try { return std::stoll(found->second); } catch (...) {}
+        }
+        return 0;
+    };
+
+    sqlite3_bind_int64(stmt, 1, pluginId);
+    
+    std::string auType = getStr("au_type");
+    sqlite3_bind_text(stmt, 2, auType.c_str(), -1, SQLITE_TRANSIENT);
+    
+    std::string auSubtype = getStr("au_subtype");
+    sqlite3_bind_text(stmt, 3, auSubtype.c_str(), -1, SQLITE_TRANSIENT);
+    
+    std::string auManufacturer = getStr("au_manufacturer");
+    sqlite3_bind_text(stmt, 4, auManufacturer.c_str(), -1, SQLITE_TRANSIENT);
+    
+    sqlite3_bind_int64(stmt, 5, getInt("au_flags"));
+
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
 void DatabaseManager::recordPluginFailure(const boost::filesystem::path& pluginPath, const std::string& errorMsg,
                                            int64_t scanTimeMs, const std::string& fileMtime, const std::string& fileHash) {
     std::lock_guard<std::mutex> lock(m_dbMutex);
@@ -731,6 +798,7 @@ void DatabaseManager::clearPluginsByFormats(const std::vector<std::string>& form
     // Delete child rows for matching plugins first (FK)
     executeQuery("DELETE FROM aax_plugins WHERE plugin_id IN (SELECT id FROM plugins WHERE format IN (" + inClause + "));");
     executeQuery("DELETE FROM vst3_classes WHERE plugin_id IN (SELECT id FROM plugins WHERE format IN (" + inClause + "));");
+    executeQuery("DELETE FROM au_plugins WHERE plugin_id IN (SELECT id FROM plugins WHERE format IN (" + inClause + "));");
     executeQuery("DELETE FROM parameters WHERE plugin_id IN (SELECT id FROM plugins WHERE format IN (" + inClause + "));");
     executeQuery("DELETE FROM plugins WHERE format IN (" + inClause + ");");
     executeQuery("DELETE FROM plugins_skipped WHERE format IN (" + inClause + ");");
@@ -791,8 +859,10 @@ size_t DatabaseManager::removeStaleEntries(const std::set<std::string>& validPat
     sqlite3_stmt* stmtDelSkip = nullptr;
     sqlite3_stmt* stmtDelBlock = nullptr;
     sqlite3_stmt* stmtDelVst3 = nullptr;
+    sqlite3_stmt* stmtDelAu = nullptr;
     sqlite3_prepare_v2(m_db, "DELETE FROM aax_plugins WHERE plugin_id IN (SELECT id FROM plugins WHERE path = ?)", -1, &stmtDelAax, nullptr);
     sqlite3_prepare_v2(m_db, "DELETE FROM vst3_classes WHERE plugin_id IN (SELECT id FROM plugins WHERE path = ?)", -1, &stmtDelVst3, nullptr);
+    sqlite3_prepare_v2(m_db, "DELETE FROM au_plugins WHERE plugin_id IN (SELECT id FROM plugins WHERE path = ?)", -1, &stmtDelAu, nullptr);
     sqlite3_prepare_v2(m_db, "DELETE FROM parameters WHERE plugin_id IN (SELECT id FROM plugins WHERE path = ?)", -1, &stmtDelParams, nullptr);
     sqlite3_prepare_v2(m_db, "DELETE FROM plugins WHERE path = ?", -1, &stmtDelPlugin, nullptr);
     sqlite3_prepare_v2(m_db, "DELETE FROM plugins_skipped WHERE path = ?", -1, &stmtDelSkip, nullptr);
@@ -811,6 +881,7 @@ size_t DatabaseManager::removeStaleEntries(const std::set<std::string>& validPat
         if (validPaths.find(p) == validPaths.end()) {
             deleteByPath(stmtDelAax, p);
             deleteByPath(stmtDelVst3, p);
+            deleteByPath(stmtDelAu, p);
             deleteByPath(stmtDelParams, p);
             deleteByPath(stmtDelPlugin, p);
             removed++;
@@ -832,6 +903,7 @@ size_t DatabaseManager::removeStaleEntries(const std::set<std::string>& validPat
 
     if (stmtDelAax) sqlite3_finalize(stmtDelAax);
     if (stmtDelVst3) sqlite3_finalize(stmtDelVst3);
+    if (stmtDelAu) sqlite3_finalize(stmtDelAu);
     if (stmtDelParams) sqlite3_finalize(stmtDelParams);
     if (stmtDelPlugin) sqlite3_finalize(stmtDelPlugin);
     if (stmtDelSkip) sqlite3_finalize(stmtDelSkip);

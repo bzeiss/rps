@@ -29,7 +29,7 @@ examples/python/rps-server.log
 rps-server.log
 
 # Private overlays
-_private/
+#_private/
 GEMINI.md
 
 # Java artifacts
@@ -40,3 +40,5 @@ examples/python/kiloHearts.log
 kiloHearts.log
 
 .vscode
+
+plans/

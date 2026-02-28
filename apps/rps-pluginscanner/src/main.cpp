@@ -35,6 +35,9 @@
 #include <rps/scanner/Lv2Scanner.hpp>
 #include <rps/scanner/LadspaScanner.hpp>
 #endif
+#ifdef __APPLE__
+#include <rps/scanner/AuScanner.hpp>
+#endif
 #include <rps/core/FormatTraits.hpp>
 
 bool g_verbose = false;
@@ -51,6 +54,9 @@ std::vector<std::unique_ptr<IPluginFormatScanner>> ScannerFactory::createAllScan
 #ifdef __linux__
     scanners.push_back(std::make_unique<Lv2Scanner>());
     scanners.push_back(std::make_unique<LadspaScanner>());
+#endif
+#ifdef __APPLE__
+    scanners.push_back(std::make_unique<AuScanner>());
 #endif
     return scanners;
 }
