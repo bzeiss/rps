@@ -54,7 +54,8 @@ rps::ipc::ScanResult AuScanner::scan(const boost::filesystem::path& pluginPath, 
 
         NSArray* audioComponents = infoDict[@"AudioComponents"];
         if (!audioComponents || [audioComponents count] == 0) {
-            throw std::runtime_error("No AudioComponents array found in Info.plist.");
+            logStage("No AudioComponents array found in Info.plist - skipping.");
+            throw std::runtime_error("SKIP: No AudioComponents array found in Info.plist.");
         }
 
         // We scan the first component found
