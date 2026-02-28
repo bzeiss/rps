@@ -59,11 +59,19 @@ rps::ipc::ScanResult AuScanner::scan(const boost::filesystem::path& pluginPath, 
 
         // We scan the first component found
         NSDictionary* componentDict = audioComponents[0];
-        NSString* typeStr = componentDict[@"type"];
-        NSString* subtypeStr = componentDict[@"subtype"];
-        NSString* manufacturerStr = componentDict[@"manufacturer"];
-        NSString* nameStr = componentDict[@"name"];
-        NSString* versionStr = componentDict[@"version"];
+        
+        auto safeGetString = [](id obj) -> NSString* {
+            if (!obj) return nil;
+            if ([obj isKindOfClass:[NSString class]]) return (NSString*)obj;
+            if ([obj respondsToSelector:@selector(stringValue)]) return [obj stringValue];
+            return [obj description];
+        };
+
+        NSString* typeStr = safeGetString(componentDict[@"type"]);
+        NSString* subtypeStr = safeGetString(componentDict[@"subtype"]);
+        NSString* manufacturerStr = safeGetString(componentDict[@"manufacturer"]);
+        NSString* nameStr = safeGetString(componentDict[@"name"]);
+        NSString* versionStr = safeGetString(componentDict[@"version"]);
 
         auto fourccToUInt32 = [](NSString* str) -> UInt32 {
             if (!str || [str length] != 4) return 0;

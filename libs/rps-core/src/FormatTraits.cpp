@@ -182,6 +182,7 @@ public:
 #if defined(__APPLE__)
         paths.push_back("/Library/Audio/Plug-Ins/Components");
         paths.push_back(getHomeDir() / "Library/Audio/Plug-Ins/Components");
+        paths.push_back("/System/Library/Components");
 #endif
         return paths;
     }
