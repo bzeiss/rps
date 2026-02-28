@@ -56,6 +56,24 @@ jobs:
         restore-keys: |
           vcpkg-${{ runner.os }}-${{ matrix.toolchain }}-
 
+    - name: Ensure vcpkg baseline commit is available (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        BASELINE=$(python3 -c "import json; print(json.load(open('vcpkg.json', encoding='utf-8'))['builtin-baseline'])")
+        git -C "$VCPKG_INSTALLATION_ROOT" fetch --no-tags origin "$BASELINE" || git -C "$VCPKG_INSTALLATION_ROOT" fetch --tags --prune origin
+        git -C "$VCPKG_INSTALLATION_ROOT" cat-file -e "${BASELINE}^{commit}"
+
+    - name: Ensure vcpkg baseline commit is available (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $baseline = (Get-Content vcpkg.json | ConvertFrom-Json).'builtin-baseline'
+        git -C "$env:VCPKG_INSTALLATION_ROOT" fetch --no-tags origin $baseline
+        if ($LASTEXITCODE -ne 0) {
+          git -C "$env:VCPKG_INSTALLATION_ROOT" fetch --tags --prune origin
+        }
+        git -C "$env:VCPKG_INSTALLATION_ROOT" cat-file -e "$baseline`^{commit}"
+
     - name: Configure CMake (Unix)
       if: runner.os != 'Windows'
       run: |
