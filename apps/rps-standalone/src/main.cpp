@@ -8,10 +8,27 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <csignal>
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4100)
+#pragma warning(disable: 4244)
+#pragma warning(disable: 4245)
+#endif
 #include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 #include <rps/engine/ScanEngine.hpp>
 #include <rps/engine/ConsoleScanObserver.hpp>
+
+static std::atomic<rps::engine::ScanEngine*> g_engine{nullptr};
+
+static void signalHandler(int /*sig*/) {
+    auto* e = g_engine.load();
+    if (e) e->stop();
+}
 
 int main(int argc, char* argv[]) {
     namespace po = boost::program_options;
@@ -59,6 +76,15 @@ int main(int argc, char* argv[]) {
     DWORD outMode = 0, errMode = 0;
     if (hOut != INVALID_HANDLE_VALUE) { GetConsoleMode(hOut, &outMode); SetConsoleMode(hOut, outMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING); }
     if (hErr != INVALID_HANDLE_VALUE) { GetConsoleMode(hErr, &errMode); SetConsoleMode(hErr, errMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING); }
+
+    // Kill all child scanner processes when this process exits (Ctrl+C, taskkill, etc.)
+    HANDLE hJob = CreateJobObject(nullptr, nullptr);
+    if (hJob) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli = {};
+        jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli));
+        AssignProcessToJobObject(hJob, GetCurrentProcess());
+    }
 #endif
 
     // --- Build ScanConfig from CLI args ---
@@ -94,6 +120,9 @@ int main(int argc, char* argv[]) {
 
     rps::engine::ConsoleScanObserver observer(config.verbose);
     rps::engine::ScanEngine engine;
+    g_engine.store(&engine);
+    std::signal(SIGINT, signalHandler);
+    std::signal(SIGTERM, signalHandler);
 
     auto summary = engine.runScan(config, &observer);
 

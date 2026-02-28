@@ -4,14 +4,19 @@ rps-plugins.db
 build/.ninja_log
 build/CMakeFiles/CMakeConfigureLog.yaml
 
+# Build artifacts in examples
+examples/**/rps-server
+examples/**/rps-server.exe
+examples/**/rps-pluginscanner
+examples/**/rps-pluginscanner.exe
+
 vst3_full_scan.log
 
 patch.json
 rps-plugins.db-journal
 esp_jit.log
 
-libs/rps-core/include/rps/core/vstsdk2.4/*
-
+libs/rps-core/include/rps/core/vstsdk2.4
 MIOConsole3d.log
 rps-plugins.db-shm
 rps-plugins.db-wal
@@ -22,3 +27,18 @@ examples/python/.venv/
 examples/python/rps_client/proto/rps_pb2*.py
 examples/python/rps-server.log
 rps-server.log
+
+# Private overlays
+#_private/
+GEMINI.md
+
+# Java artifacts
+examples/java/src/main/proto/rps.proto
+examples/java/target/
+examples/java/rps-server-java.log
+examples/python/kiloHearts.log
+kiloHearts.log
+
+.vscode
+
+plans/

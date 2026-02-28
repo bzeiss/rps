@@ -25,6 +25,11 @@
 #endif
 #endif
 
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4996)
+#endif
+
 #define VST_2_4_EXTENSIONS 1
 #ifndef _WIN32
 #ifndef __cdecl
@@ -33,6 +38,10 @@
 #endif
 #include "pluginterfaces/vst2.x/aeffect.h"
 #include "pluginterfaces/vst2.x/aeffectx.h"
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop
@@ -160,7 +169,8 @@ static std::string categoryToString(VstInt32 cat) {
 // ---------------------------------------------------------------------------
 bool Vst2Scanner::canHandle(const boost::filesystem::path& pluginPath) const {
     std::string ext = pluginPath.extension().string();
-    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 #if defined(_WIN32)
     return ext == ".dll";
 #elif defined(__APPLE__)

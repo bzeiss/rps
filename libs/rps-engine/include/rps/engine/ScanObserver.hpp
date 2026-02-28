@@ -42,6 +42,12 @@ public:
     virtual void onWorkerStderrDump(size_t workerId, const std::string& pluginPath,
                                      const std::vector<std::string>& lines) = 0;
 
+    virtual void onWorkerStdoutLine(size_t workerId, const std::string& pluginPath,
+                                     const std::string& line) = 0;
+
+    virtual void onWorkerStdoutDump(size_t workerId, const std::string& pluginPath,
+                                     const std::vector<std::string>& lines) = 0;
+
     virtual void onWorkerForceKill(size_t workerId, const std::string& pluginPath) = 0;
 
     virtual void onPluginRetry(size_t workerId, const std::string& pluginPath,

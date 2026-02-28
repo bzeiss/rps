@@ -12,8 +12,17 @@
 #include <chrono>
 #include <vector>
 #include <memory>
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4100)
+#pragma warning(disable: 4244)
+#pragma warning(disable: 4245)
+#endif
 #include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 #include <rps/ipc/Connection.hpp>
 #include <rps/scanner/IPluginFormatScanner.hpp>
 #include <rps/scanner/ClapScanner.hpp>
@@ -24,6 +33,10 @@
 #endif
 #ifdef __linux__
 #include <rps/scanner/Lv2Scanner.hpp>
+#include <rps/scanner/LadspaScanner.hpp>
+#endif
+#ifdef __APPLE__
+#include <rps/scanner/AuScanner.hpp>
 #endif
 #include <rps/core/FormatTraits.hpp>
 
@@ -40,6 +53,10 @@ std::vector<std::unique_ptr<IPluginFormatScanner>> ScannerFactory::createAllScan
 #endif
 #ifdef __linux__
     scanners.push_back(std::make_unique<Lv2Scanner>());
+    scanners.push_back(std::make_unique<LadspaScanner>());
+#endif
+#ifdef __APPLE__
+    scanners.push_back(std::make_unique<AuScanner>());
 #endif
     return scanners;
 }
@@ -124,11 +141,13 @@ int main(int argc, char* argv[]) {
 
         for (auto& s : scanners) {
             auto formatName = s->getFormatName();
-            const auto* traits = formatRegistry.getTraits(formatName);
-            if (traits && traits->isPluginPath(pluginPath)) {
-                if (s->canHandle(pluginPath)) {
-                    activeScanner = s.get();
-                    break;
+            if (formatName == req.format) {
+                const auto* traits = formatRegistry.getTraits(formatName);
+                if (traits && traits->isPluginPath(pluginPath)) {
+                    if (s->canHandle(pluginPath)) {
+                        activeScanner = s.get();
+                        break;
+                    }
                 }
             }
         }

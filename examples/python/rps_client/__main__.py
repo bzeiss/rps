@@ -47,51 +47,48 @@ def scan(ctx, formats, mode, jobs, retries, timeout, limit, filter_str, single_p
             click.echo("Error: Cannot find rps-server binary. Use --server-bin or --server.", err=True)
             sys.exit(1)
 
-        mgr = ServerManager(
+        mgr_context = ServerManager(
             server_bin=server_bin,
             port=ctx.obj["port"],
             db=ctx.obj["db"],
             log_level="debug" if verbose else "info",
         )
         click.echo(f"Starting rps-server ({server_bin})...")
-        try:
-            mgr.start()
-        except Exception as e:
-            click.echo(f"Error starting server: {e}", err=True)
-            sys.exit(1)
-        server_addr = mgr.address
     else:
-        mgr = None
+        from contextlib import nullcontext
+        mgr_context = nullcontext()
 
     try:
-        with RpsClient(server_addr) as client:
-            event_stream = client.start_scan(
-                scan_dirs=list(scan_dirs),
-                single_plugin=single_plugin,
-                mode=mode,
-                formats=formats,
-                filter_str=filter_str,
-                limit=limit,
-                jobs=jobs,
-                retries=retries,
-                timeout_ms=timeout,
-                verbose=verbose,
-            )
-            state = run_tui(event_stream, mode=mode, formats=formats)
+        with mgr_context as mgr:
+            if managed:
+                server_addr = mgr.address
 
-        # Print final summary
-        click.echo()
-        if state.failures:
-            click.echo(f"Failed plugins ({len(state.failures)}):")
-            for path, reason in state.failures:
-                click.echo(f"  {path}")
-                click.echo(f"    -> {reason}")
-    except Exception as e:
-        click.echo(f"Error: {e}", err=True)
+            with RpsClient(server_addr) as client:
+                event_stream = client.start_scan(
+                    scan_dirs=list(scan_dirs),
+                    single_plugin=single_plugin,
+                    mode=mode,
+                    formats=formats,
+                    filter_str=filter_str,
+                    limit=limit,
+                    jobs=jobs,
+                    retries=retries,
+                    timeout_ms=timeout,
+                    verbose=verbose,
+                )
+                state = run_tui(event_stream, mode=mode, formats=formats)
+
+            # Print final summary
+            click.echo()
+            if state.failures:
+                click.echo(f"Failed plugins ({len(state.failures)}):")
+                for path, reason in state.failures:
+                    click.echo(f"  {path}")
+                    click.echo(f"    -> {reason}")
+    except (KeyboardInterrupt, Exception) as e:
+        if not isinstance(e, KeyboardInterrupt):
+            click.echo(f"Error: {e}", err=True)
         sys.exit(1)
-    finally:
-        if mgr:
-            mgr.stop()
 
 
 @cli.command()
@@ -133,23 +130,30 @@ def shutdown(ctx):
 
 
 def _find_server_bin() -> str | None:
-    """Try to locate rps-server binary relative to this script or on PATH."""
-    # Check common build output locations relative to project root
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.abspath(os.path.join(script_dir, "..", "..", ".."))
+    """Try to locate rps-server binary next to this script or in CWD."""
+    # Check common binary names
+    names = ["rps-server", "rps-server.exe"]
 
-    candidates = [
-        os.path.join(project_root, "build", "apps", "rps-server", "rps-server.exe"),
-        os.path.join(project_root, "build", "apps", "rps-server", "rps-server"),
-    ]
-    for c in candidates:
-        if os.path.isfile(c):
-            return c
+    # Check directories: CWD and script dir
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # Also check the parent of the package (where __main__.py lives)
+    pkg_dir = os.path.dirname(script_dir)
+    
+    dirs = [os.getcwd(), pkg_dir]
+    
+    for d in dirs:
+        for name in names:
+            path = os.path.join(d, name)
+            if os.path.isfile(path):
+                return path
 
     # Check PATH
     import shutil
-    found = shutil.which("rps-server") or shutil.which("rps-server.exe")
-    return found
+    for name in names:
+        found = shutil.which(name)
+        if found:
+            return found
+    return None
 
 
 def main():

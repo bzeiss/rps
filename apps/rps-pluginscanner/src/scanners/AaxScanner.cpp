@@ -42,7 +42,8 @@ namespace rps::scanner {
 
 bool AaxScanner::canHandle(const boost::filesystem::path& pluginPath) const {
     std::string ext = pluginPath.extension().string();
-    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return ext == ".aaxplugin" && fs::is_directory(pluginPath);
 }
 
@@ -50,6 +51,10 @@ std::vector<boost::filesystem::path> AaxScanner::getCacheSearchPaths() const {
     std::vector<fs::path> paths;
 
 #if defined(_WIN32)
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4996)
+#endif
     // PT 2023.12+ public cache
     paths.push_back("C:\\Users\\Public\\Pro Tools\\AAXPlugInCache");
 
@@ -58,6 +63,9 @@ std::vector<boost::filesystem::path> AaxScanner::getCacheSearchPaths() const {
     if (appdata) {
         paths.push_back(fs::path(appdata) / "Avid" / "Pro Tools");
     }
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 #elif defined(__APPLE__)
     // PT 2023.12+ shared cache
     paths.push_back("/Users/Shared/Pro Tools/AAXPluginCache");

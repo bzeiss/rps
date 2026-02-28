@@ -35,6 +35,12 @@ public:
     void onWorkerStderrDump(size_t workerId, const std::string& pluginPath,
                              const std::vector<std::string>& lines) override;
 
+    void onWorkerStdoutLine(size_t workerId, const std::string& pluginPath,
+                             const std::string& line) override;
+
+    void onWorkerStdoutDump(size_t workerId, const std::string& pluginPath,
+                             const std::vector<std::string>& lines) override;
+
     void onWorkerForceKill(size_t workerId, const std::string& pluginPath) override;
 
     void onPluginRetry(size_t workerId, const std::string& pluginPath,

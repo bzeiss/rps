@@ -3,6 +3,8 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#else
+#include <csignal>
 #endif
 
 #include <rps/engine/ProcessPool.hpp>
@@ -22,12 +24,32 @@
 #pragma clang diagnostic ignored "-Wunused-variable"
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 #endif
+
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4100) // unreferenced formal parameter
+#pragma warning(disable: 4244) // conversion from 'type1' to 'type2', possible loss of data
+#pragma warning(disable: 4245) // conversion from 'type1' to 'type2', signed/unsigned mismatch
+#endif
+
 #include <rps/ipc/Connection.hpp>
-#include <boost/process/v1.hpp>
+#include <boost/process.hpp>
+#include <boost/filesystem.hpp>
 #include <boost/process/v1/pipe.hpp>
+#include <boost/process/v1/child.hpp>
+#include <boost/process/v1/args.hpp>
+#include <boost/process/v1/io.hpp>
+#include <boost/process/v1/start_dir.hpp>
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
+
+namespace fs = boost::filesystem;
 
 namespace {
 
@@ -83,13 +105,14 @@ std::vector<std::pair<std::string, std::string>> ProcessPool::failures() const {
 }
 
 ProcessPool::~ProcessPool() {
-    m_stop = true;
+    stop();
     for (auto& t : m_threads) {
         if (t.joinable()) t.join();
     }
 }
 
 void ProcessPool::runJobs(const std::vector<ScanJob>& jobs) {
+    m_stop = false;
     {
         std::lock_guard<std::mutex> lock(m_queueMutex);
         m_jobQueue = jobs;
@@ -105,10 +128,10 @@ void ProcessPool::runJobs(const std::vector<ScanJob>& jobs) {
     // Monitor thread: periodically report still-active workers
     std::atomic<bool> monitorStop{false};
     std::thread monitor([this, &monitorStop]() {
-        while (!monitorStop) {
-            for (int i = 0; i < 300 && !monitorStop; ++i)  // 30s in 100ms ticks
+        while (!monitorStop && !m_stop) {
+            for (int i = 0; i < 300 && !monitorStop && !m_stop; ++i)  // 30s in 100ms ticks
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            if (monitorStop) break;
+            if (monitorStop || m_stop) break;
 
             std::lock_guard<std::mutex> aLock(m_activeMutex);
             if (!m_activeWorkers.empty() && m_observer) {
@@ -130,6 +153,52 @@ void ProcessPool::runJobs(const std::vector<ScanJob>& jobs) {
     monitorStop = true;
     monitor.join();
     m_threads.clear();
+}
+
+void ProcessPool::stop() {
+    m_stop = true;
+    killAllChildren();
+}
+
+#ifdef _WIN32
+void ProcessPool::registerChildProcess(size_t workerId, HANDLE handle) {
+    HANDLE dup = nullptr;
+    DuplicateHandle(GetCurrentProcess(), handle, GetCurrentProcess(), &dup,
+                    0, FALSE, DUPLICATE_SAME_ACCESS);
+    std::lock_guard<std::mutex> lock(m_activeChildMutex);
+    m_activeChildHandles[workerId] = dup;
+}
+#else
+void ProcessPool::registerChildProcess(size_t workerId, pid_t pid) {
+    std::lock_guard<std::mutex> lock(m_activeChildMutex);
+    m_activeChildPids[workerId] = pid;
+}
+#endif
+
+void ProcessPool::deregisterChildProcess(size_t workerId) {
+    std::lock_guard<std::mutex> lock(m_activeChildMutex);
+#ifdef _WIN32
+    auto it = m_activeChildHandles.find(workerId);
+    if (it != m_activeChildHandles.end()) {
+        CloseHandle(it->second);
+        m_activeChildHandles.erase(it);
+    }
+#else
+    m_activeChildPids.erase(workerId);
+#endif
+}
+
+void ProcessPool::killAllChildren() {
+    std::lock_guard<std::mutex> lock(m_activeChildMutex);
+#ifdef _WIN32
+    for (auto& [id, handle] : m_activeChildHandles) {
+        TerminateProcess(handle, 1);
+    }
+#else
+    for (auto& [id, pid] : m_activeChildPids) {
+        ::kill(pid, SIGKILL);
+    }
+#endif
 }
 
 std::string ProcessPool::formatDuration(int64_t ms) {
@@ -242,7 +311,17 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
         if (job.verbose) scanArgs.push_back("--verbose");
 
         bp::ipstream errStream;
-        bp::child scannerProc(job.scannerBin, bp::args(scanArgs), bp::std_err > errStream);
+        bp::ipstream outStream;
+        bp::child scannerProc(job.scannerBin, bp::args(scanArgs),
+                              bp::start_dir(fs::temp_directory_path().string()),
+                              bp::std_err > errStream, bp::std_out > outStream);
+
+        // Register child PID so stop() can kill it instantly
+#ifdef _WIN32
+        registerChildProcess(workerId, scannerProc.native_handle());
+#else
+        registerChildProcess(workerId, scannerProc.id());
+#endif
 
 #ifdef _WIN32
         // Restrict scanner child process from showing Win32 UI (dialogs, message boxes).
@@ -285,11 +364,29 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
             }
         });
 
-        // Helper: safely join the stderr drainer. Must be called before
-        // stderrDrainer goes out of scope, or std::terminate() is triggered.
+        std::vector<std::string> stdoutLines;
+        std::mutex stdoutMutex;
+        std::thread stdoutDrainer([&outStream, &stdoutLines, &stdoutMutex, workerId, &pluginFullPath, this]() {
+            std::string line;
+            while (std::getline(outStream, line)) {
+                std::string cleaned = stripAnsiCodes(line);
+                {
+                    std::lock_guard<std::mutex> lock(stdoutMutex);
+                    stdoutLines.push_back(cleaned);
+                }
+                if (m_observer) {
+                    m_observer->onWorkerStdoutLine(workerId, pluginFullPath, cleaned);
+                }
+            }
+        });
+
+        // Helper: safely join the stderr/stdout drainers. Must be called before
+        // the threads go out of scope, or std::terminate() is triggered.
         auto safeJoinDrainer = [&]() {
             try { errStream.pipe().close(); } catch (...) {}
+            try { outStream.pipe().close(); } catch (...) {}
             if (stderrDrainer.joinable()) stderrDrainer.join();
+            if (stdoutDrainer.joinable()) stdoutDrainer.join();
         };
 
         // Everything from here until safeJoinDrainer() is wrapped in a try-catch
@@ -300,7 +397,7 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
 
         rps::ipc::Message reqMsg;
         reqMsg.type = rps::ipc::MessageType::ScanRequest;
-        reqMsg.payload = rps::ipc::ScanRequest{ job.pluginPath.string(), "unknown", false };
+        reqMsg.payload = rps::ipc::ScanRequest{ job.pluginPath.string(), job.format, false };
         
         if (!connection->sendMessage(reqMsg)) {
             std::string errMsg = "Failed to send ScanRequest";
@@ -390,7 +487,9 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                         if (m_observer) {
                             m_observer->onPluginCompleted(workerId, pluginFullPath, ScanOutcome::Fail, elapsedMs, nullptr, &errMsg);
                             std::lock_guard<std::mutex> slock(stderrMutex);
+                            std::lock_guard<std::mutex> solock(stdoutMutex);
                             m_observer->onWorkerStderrDump(workerId, pluginFullPath, stderrLines);
+                            m_observer->onWorkerStdoutDump(workerId, pluginFullPath, stdoutLines);
                         }
                         if (m_db) {
                             m_db->recordPluginFailure(job.pluginPath, errMsg, elapsedMs, fileMtime, fileHash);
@@ -417,7 +516,9 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                         if (m_observer) {
                             m_observer->onPluginCompleted(workerId, pluginFullPath, outcome, elapsedMs, nullptr, &errMsg);
                             std::lock_guard<std::mutex> slock(stderrMutex);
+                            std::lock_guard<std::mutex> solock(stdoutMutex);
                             m_observer->onWorkerStderrDump(workerId, pluginFullPath, stderrLines);
+                            m_observer->onWorkerStdoutDump(workerId, pluginFullPath, stdoutLines);
                         }
                         if (m_db) {
                             m_db->recordPluginFailure(job.pluginPath, errMsg, elapsedMs, fileMtime, fileHash);
@@ -435,7 +536,9 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                     if (m_observer) {
                         m_observer->onPluginCompleted(workerId, pluginFullPath, ScanOutcome::Timeout, elapsedMs, nullptr, &errMsg);
                         std::lock_guard<std::mutex> slock(stderrMutex);
+                        std::lock_guard<std::mutex> solock(stdoutMutex);
                         m_observer->onWorkerStderrDump(workerId, pluginFullPath, stderrLines);
+                        m_observer->onWorkerStdoutDump(workerId, pluginFullPath, stdoutLines);
                     }
                     if (m_db) {
                         m_db->recordPluginFailure(job.pluginPath, errMsg, elapsedMs, fileMtime, fileHash);
@@ -443,7 +546,15 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                     }
                     recordFailure(pluginFullPath, errMsg);
                     ++m_timeout;
-                    scannerProc.terminate();
+                    // Try graceful terminate first, then force-kill
+                    try { scannerProc.terminate(); } catch (...) {}
+#ifdef _WIN32
+                    // If still alive after terminate(), force-kill via TerminateProcess
+                    if (scannerProc.running()) {
+                        if (m_observer) m_observer->onWorkerForceKill(workerId, pluginFullPath);
+                        TerminateProcess(scannerProc.native_handle(), 1);
+                    }
+#endif
                     done = true;
                 }
             }
@@ -468,15 +579,27 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
 
             if (scannerProc.running()) {
                 logCleanup("process still running, terminating");
-                scannerProc.terminate();
+                try { scannerProc.terminate(); } catch (...) {}
                 logCleanup("terminate() returned");
+#ifdef _WIN32
+                // Force-kill if still alive after graceful terminate
+                if (scannerProc.running()) {
+                    logCleanup("still running after terminate, force-killing");
+                    if (m_observer) m_observer->onWorkerForceKill(workerId, pluginFullPath);
+                    TerminateProcess(scannerProc.native_handle(), 1);
+                    logCleanup("TerminateProcess called");
+                }
+#endif
             }
 
             logCleanup("calling wait()");
-            scannerProc.wait();
+            try { scannerProc.wait(); } catch (...) {}
+            deregisterChildProcess(workerId);
             logCleanup("wait() returned");
         } catch (const std::exception& ex) {
-            std::cerr << "[Worker #" << workerId << " WARN] cleanup exception: " << ex.what() << "\n";
+            if (job.verbose) {
+                std::cerr << "[Worker #" << workerId << " DBG] cleanup exception: " << ex.what() << "\n";
+            }
         }
 
         // Always close the pipe and join the drainer, even if the above failed

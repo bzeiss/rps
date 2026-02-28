@@ -116,6 +116,7 @@ void GrpcScanObserver::onWorkerStderrLine(size_t workerId, const std::string& /*
     auto* wl = event.mutable_worker_log();
     wl->set_worker_id(static_cast<uint32_t>(workerId));
     wl->set_line(line);
+    wl->set_is_stderr(true);
     m_writer->Write(event);
     spdlog::debug("[Worker #{}] {}", workerId, line);
 }
@@ -128,6 +129,32 @@ void GrpcScanObserver::onWorkerStderrDump(size_t workerId, const std::string& /*
         auto* wl = event.mutable_worker_log();
         wl->set_worker_id(static_cast<uint32_t>(workerId));
         wl->set_line(line);
+        wl->set_is_stderr(true);
+        m_writer->Write(event);
+    }
+}
+
+void GrpcScanObserver::onWorkerStdoutLine(size_t workerId, const std::string& /*pluginPath*/,
+                                            const std::string& line) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    rps::v1::ScanEvent event;
+    auto* wl = event.mutable_worker_log();
+    wl->set_worker_id(static_cast<uint32_t>(workerId));
+    wl->set_line(line);
+    wl->set_is_stderr(false);
+    m_writer->Write(event);
+    spdlog::debug("[Worker #{}] stdout: {}", workerId, line);
+}
+
+void GrpcScanObserver::onWorkerStdoutDump(size_t workerId, const std::string& /*pluginPath*/,
+                                            const std::vector<std::string>& lines) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (const auto& line : lines) {
+        rps::v1::ScanEvent event;
+        auto* wl = event.mutable_worker_log();
+        wl->set_worker_id(static_cast<uint32_t>(workerId));
+        wl->set_line(line);
+        wl->set_is_stderr(false);
         m_writer->Write(event);
     }
 }

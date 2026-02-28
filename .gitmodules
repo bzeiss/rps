@@ -5,5 +5,8 @@
 	path = libs/rps-core/include/rps/core/vst3sdk
 	url = https://github.com/steinbergmedia/vst3sdk.git
 [submodule "libs/rps-core/include/lv2"]
-	path = libs/rps-core/include/lv2
+	path = libs/rps-core/include/rps/core/lv2
 	url = https://github.com/lv2/lv2.git
+[submodule "libs/rps-core/include/rps/ladspa"]
+	path = libs/rps-core/include/rps/core/ladspa
+	url = https://salsa.debian.org/multimedia-team/ladspa-sdk.git

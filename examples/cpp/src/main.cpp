@@ -6,9 +6,10 @@
 #else
 #include <unistd.h>
 #include <sys/wait.h>
-#include <csignal>
 #include <fcntl.h>
 #endif
+
+#include <csignal>
 
 #include <iostream>
 #include <string>
@@ -23,8 +24,17 @@
 #include <algorithm>
 #include <mutex>
 
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4100)
+#pragma warning(disable: 4244)
+#pragma warning(disable: 4245)
+#endif
 #include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -65,6 +75,14 @@ namespace ansi {
         for (int i = 0; i < n; ++i) std::cout << cursor_up;
     }
 }
+
+// ---------------------------------------------------------------------------
+// Signal handling for clean Ctrl+C
+// ---------------------------------------------------------------------------
+static std::atomic<bool> g_interrupted{false};
+
+// Forward-declare — defined after ServerManager
+static void installSignalHandlers();
 
 // ---------------------------------------------------------------------------
 // Server process manager
@@ -131,37 +149,45 @@ public:
         return false;
     }
 
-    void stop() {
+    void stop(bool inHurry = false) {
         if (!m_running) return;
         m_running = false;
 
-        // Try graceful shutdown via gRPC
-        try {
-            auto channel = grpc::CreateChannel(address(), grpc::InsecureChannelCredentials());
-            auto stub = rps::v1::RpsService::NewStub(channel);
-            grpc::ClientContext ctx;
-            ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
-            rps::v1::ShutdownRequest req;
-            rps::v1::ShutdownResponse resp;
-            stub->Shutdown(&ctx, req, &resp);
-        } catch (...) {}
+        if (!inHurry) {
+            // Try graceful shutdown via gRPC
+            try {
+                auto channel = grpc::CreateChannel(address(), grpc::InsecureChannelCredentials());
+                auto stub = rps::v1::RpsService::NewStub(channel);
+                grpc::ClientContext ctx;
+                ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
+                rps::v1::ShutdownRequest req;
+                rps::v1::ShutdownResponse resp;
+                stub->Shutdown(&ctx, req, &resp);
+            } catch (...) {}
+        }
 
 #ifdef _WIN32
         if (m_processHandle) {
-            WaitForSingleObject(m_processHandle, 5000);
-            TerminateProcess(m_processHandle, 0);
+            if (inHurry) {
+                TerminateProcess(m_processHandle, 0);
+            } else {
+                WaitForSingleObject(m_processHandle, 3000);
+                TerminateProcess(m_processHandle, 0);
+            }
             CloseHandle(m_processHandle);
             m_processHandle = nullptr;
         }
 #else
         if (m_pid > 0) {
             int status;
-            auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            kill(m_pid, SIGTERM);
+            auto deadline = std::chrono::steady_clock::now()
+                + std::chrono::seconds(inHurry ? 1 : 3);
             while (std::chrono::steady_clock::now() < deadline) {
                 if (waitpid(m_pid, &status, WNOHANG) != 0) { m_pid = -1; return; }
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
             }
-            kill(m_pid, SIGTERM);
+            kill(m_pid, SIGKILL);
             waitpid(m_pid, &status, 0);
             m_pid = -1;
         }
@@ -184,6 +210,15 @@ private:
     pid_t m_pid = -1;
 #endif
 };
+
+static void signalHandlerFunc(int /*sig*/) {
+    g_interrupted = true;
+}
+
+static void installSignalHandlers() {
+    std::signal(SIGINT, signalHandlerFunc);
+    std::signal(SIGTERM, signalHandlerFunc);
+}
 
 // ---------------------------------------------------------------------------
 // Console TUI state
@@ -493,6 +528,10 @@ int cmdScan(const std::string& serverAddr, const po::variables_map& vm,
             std::lock_guard<std::mutex> lock(state.mtx);
             if (state.finished) break;
         }
+        if (g_interrupted) {
+            ctx.TryCancel();
+            break;
+        }
         render(state);
         std::this_thread::sleep_for(std::chrono::milliseconds(150));
     }
@@ -642,19 +681,19 @@ int main(int argc, char* argv[]) {
         if (vm.count("server-bin")) {
             serverBin = vm["server-bin"].as<std::string>();
         } else {
-            // rps-example-client is at build/examples/cpp/
-            // rps-server is at build/apps/rps-server/
-            auto exe = fs::canonical(fs::path(argv[0])).parent_path();
+            // Predictable lookup: check CWD and the executable's own directory
+            std::string binaryName = "rps-server";
+#ifdef _WIN32
+            binaryName += ".exe";
+#endif
+            fs::path exeDir = fs::canonical(fs::path(argv[0])).parent_path();
             std::vector<fs::path> candidates = {
-                exe / ".." / ".." / "apps" / "rps-server" / "rps-server.exe",
-                exe / ".." / ".." / "apps" / "rps-server" / "rps-server",
-                exe / ".." / "rps-server" / "rps-server.exe",
-                exe / ".." / "rps-server" / "rps-server",
-                exe / "rps-server.exe",
-                exe / "rps-server",
+                fs::current_path() / binaryName,
+                exeDir / binaryName
             };
+
             for (auto& c : candidates) {
-                if (fs::exists(c)) {
+                if (fs::exists(c) && fs::is_regular_file(c)) {
                     serverBin = fs::canonical(c).string();
                     break;
                 }
@@ -663,6 +702,16 @@ int main(int argc, char* argv[]) {
 
         if (serverBin.empty()) {
             std::cerr << "Error: Cannot find rps-server binary. Use --server-bin or --server.\n";
+            return 1;
+        }
+
+        std::string scannerName = "rps-pluginscanner";
+#ifdef _WIN32
+        scannerName += ".exe";
+#endif
+        fs::path scannerBin = fs::path(serverBin).parent_path() / scannerName;
+        if (!fs::exists(scannerBin) || !fs::is_regular_file(scannerBin)) {
+            std::cerr << "Error: Cannot find " << scannerName << " alongside rps-server (" << serverBin << ").\n";
             return 1;
         }
 
@@ -677,6 +726,9 @@ int main(int argc, char* argv[]) {
         }
         serverAddr = mgr->address();
     }
+
+    // Install signal handlers so Ctrl+C triggers fast server shutdown
+    installSignalHandlers();
 
     int rc = 0;
     if (command == "scan") {

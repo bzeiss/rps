@@ -128,6 +128,7 @@ message WorkerLog {
   uint32 worker_id = 1;
   string plugin_path = 2;
   string line = 3;
+  bool is_stderr = 4;
 }
 
 message MonitorReport {

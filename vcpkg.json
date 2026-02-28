@@ -1,11 +1,14 @@
 {
   "name": "rps-plugin-scanner",
-  "version-string": "0.1.0",
+  "version-string": "0.2.0",
   "dependencies": [
     "boost-program-options",
     "boost-json",
     "boost-process",
     "boost-interprocess",
-    "sqlite3"
+    "sqlite3",
+    "grpc",
+    "protobuf",
+    "spdlog"    
   ]
 }

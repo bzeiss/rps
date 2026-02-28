@@ -3,18 +3,43 @@
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/sinks/basic_file_sink.h>
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4100)
+#pragma warning(disable: 4244)
+#pragma warning(disable: 4245)
+#endif
 #include <boost/program_options.hpp>
 #include <boost/dll/runtime_symbol_info.hpp>
 #include <boost/filesystem.hpp>
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 #include <iostream>
 #include <csignal>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 static std::atomic<grpc::Server*> g_server{nullptr};
+static std::atomic<rps::server::RpsServiceImpl*> g_service{nullptr};
 
 static void signalHandler(int sig) {
     spdlog::info("Received signal {}, shutting down...", sig);
+    // Stop scan engine FIRST — kills all scanner children immediately
+    auto* svc = g_service.load();
+    if (svc) svc->stopScan();
+    // Then shut down gRPC with a deadline so it doesn't block forever
     auto* srv = g_server.load();
-    if (srv) srv->Shutdown();
+    if (srv) {
+        std::thread([srv]() {
+            auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(2);
+            srv->Shutdown(deadline);
+        }).detach();
+    }
 }
 
 int main(int argc, char* argv[]) {
@@ -72,14 +97,39 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+#ifdef _WIN32
+    // Kill all child scanner processes when this process exits (Ctrl+C, taskkill, etc.)
+    HANDLE hJob = CreateJobObject(nullptr, nullptr);
+    if (hJob) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli = {};
+        jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli));
+        AssignProcessToJobObject(hJob, GetCurrentProcess());
+    }
+#endif
+
     // --- Resolve scanner binary ---
     std::string scannerBin = vm["scanner-bin"].as<std::string>();
     fs::path scannerPath(scannerBin);
     if (!scannerPath.is_absolute()) {
-        fs::path exePath = boost::dll::program_location();
-        scannerPath = exePath.parent_path() / scannerPath;
-        if (!fs::exists(scannerPath)) {
-            scannerPath = exePath.parent_path().parent_path() / "rps-pluginscanner" / scannerPath.filename();
+        fs::path exeDir = boost::dll::program_location().parent_path();
+        std::vector<fs::path> candidates = {
+            fs::current_path() / scannerPath,
+            exeDir / scannerPath
+        };
+
+        bool found = false;
+        for (auto& c : candidates) {
+            if (fs::exists(c) && fs::is_regular_file(c)) {
+                scannerPath = fs::canonical(c);
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            spdlog::error("Cannot find rps-pluginscanner binary: {}. Use --scanner-bin.", scannerBin);
+            return 1;
         }
     }
 
@@ -108,6 +158,7 @@ int main(int argc, char* argv[]) {
 
     service.setServer(server.get());
     g_server.store(server.get());
+    g_service.store(&service);
 
     // Handle SIGINT/SIGTERM for graceful shutdown
     std::signal(SIGINT, signalHandler);
