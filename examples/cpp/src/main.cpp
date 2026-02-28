@@ -84,10 +84,12 @@ static std::atomic<bool> g_interrupted{false};
 
 // Forward-declare signal setup.
 static void installSignalHandlers();
+#ifdef _WIN32
 static bool processDebugEnabled() {
     const char* v = std::getenv("RPS_DEBUG_PROCESS_LIFECYCLE");
     return v && std::string(v) == "1";
 }
+#endif
 
 // ---------------------------------------------------------------------------
 // Server process manager
