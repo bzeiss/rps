@@ -1,11 +1,11 @@
 """Manages the rps-server subprocess lifecycle."""
 
-import subprocess
-import time
-import socket
 import os
-import sys
 import signal
+import socket
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 import grpc
@@ -28,6 +28,7 @@ class ServerManager:
         self.log_file = log_file
         self.log_level = log_level
         self._process: subprocess.Popen | None = None
+        self._windows_job = None
         self._old_sigint_handler = None
         self._old_sigterm_handler = None
 
@@ -43,7 +44,6 @@ class ServerManager:
 
     def start(self, timeout: float = 10.0) -> None:
         """Start the server subprocess and wait for it to accept connections."""
-        # Precondition checks for binaries
         server_path = Path(self.server_bin)
         if not server_path.exists() or not server_path.is_file():
             raise FileNotFoundError(f"Cannot find rps-server binary at: {self.server_bin}")
@@ -53,7 +53,6 @@ class ServerManager:
         if not scanner_path.exists() or not scanner_path.is_file():
             raise FileNotFoundError(f"Cannot find {scanner_name} alongside rps-server at: {scanner_path}")
 
-        # Register signal handlers for cleanup
         self._old_sigint_handler = signal.getsignal(signal.SIGINT)
         self._old_sigterm_handler = signal.getsignal(signal.SIGTERM)
         signal.signal(signal.SIGINT, self._handle_signal)
@@ -67,38 +66,45 @@ class ServerManager:
             "--log-level", self.log_level,
         ]
         env = self._build_env()
-        # On Unix, put the process in its own group so Ctrl+C to parent doesn't 
-        # kill the child immediately before we can call Shutdown() or cleanup.
-        # Wait, actually if we WANT it killed, we should leave it.
-        # But for reliability, we want the PARENT to control the death.
         self._process = subprocess.Popen(
             cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             env=env,
-            start_new_session=(sys.platform != "win32")
+            start_new_session=(sys.platform != "win32"),
         )
 
-        # Wait for the server to start accepting connections
+        if sys.platform == "win32":
+            from rps_client.windows_job import WindowsJobObject
+
+            try:
+                self._windows_job = WindowsJobObject.create_and_assign(self._process.pid)
+            except Exception:
+                self._process.terminate()
+                self._process.wait(timeout=2.0)
+                self._process = None
+                raise
+
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self._process.poll() is not None:
+                self._close_windows_job()
                 raise RuntimeError(
                     f"rps-server exited immediately with code {self._process.returncode}"
                 )
             try:
                 with socket.create_connection(("localhost", self.port), timeout=0.5):
-                    return  # Server is ready
+                    return
             except (ConnectionRefusedError, OSError, socket.timeout):
                 time.sleep(0.2)
 
+        self.stop(in_hurry=True)
         raise TimeoutError(
             f"rps-server did not start within {timeout}s on port {self.port}"
         )
 
     def stop(self, in_hurry: bool = False) -> None:
         """Stop the server subprocess gracefully, then forcefully if needed."""
-        # Restore signal handlers
         if self._old_sigint_handler:
             signal.signal(signal.SIGINT, self._old_sigint_handler)
             self._old_sigint_handler = None
@@ -107,43 +113,48 @@ class ServerManager:
             self._old_sigterm_handler = None
 
         if self._process is None:
+            self._close_windows_job()
             return
 
-        if in_hurry:
-            # Kill immediately — server's signal handler will clean up children
-            self._process.terminate()  # SIGTERM
+        try:
+            if in_hurry:
+                self._process.terminate()
+                try:
+                    self._process.wait(timeout=3.0)
+                except subprocess.TimeoutExpired:
+                    self._process.kill()
+                    self._process.wait()
+                return
+
             try:
-                self._process.wait(timeout=3.0)
+                from rps_client.proto import rps_pb2, rps_pb2_grpc
+
+                channel = grpc.insecure_channel(f"localhost:{self.port}")
+                stub = rps_pb2_grpc.RpsServiceStub(channel)
+                stub.Shutdown(rps_pb2.ShutdownRequest(), timeout=2)
+                channel.close()
+            except Exception:
+                pass
+
+            try:
+                self._process.wait(timeout=5.0)
             except subprocess.TimeoutExpired:
-                self._process.kill()  # SIGKILL
-                self._process.wait()
+                self._process.terminate()
+                try:
+                    self._process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    self._process.kill()
+                    self._process.wait()
+        finally:
             self._process = None
-            return
+            self._close_windows_job()
 
-        # Try graceful shutdown via gRPC first
-        try:
-            from rps_client.proto import rps_pb2, rps_pb2_grpc
-
-            channel = grpc.insecure_channel(f"localhost:{self.port}")
-            stub = rps_pb2_grpc.RpsServiceStub(channel)
-            stub.Shutdown(rps_pb2.ShutdownRequest(), timeout=2)
-            channel.close()
-        except Exception:
-            pass
-
-        # Wait for graceful exit
-        try:
-            self._process.wait(timeout=5.0)
-        except subprocess.TimeoutExpired:
-            # Force kill
-            self._process.terminate()
+    def _close_windows_job(self) -> None:
+        if self._windows_job is not None:
             try:
-                self._process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self._process.kill()
-                self._process.wait()
-
-        self._process = None
+                self._windows_job.close()
+            finally:
+                self._windows_job = None
 
     @staticmethod
     def _build_env() -> dict[str, str]:

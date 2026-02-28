@@ -21,6 +21,7 @@ Notes:
 ## Usage
 
 The client auto-spawns and kills `rps-server` unless `--server` is provided.
+On Windows, auto-spawned server processes are attached to a Job Object so they are reliably cleaned up when the Python client exits.
 
 ### Scan (auto-managed server)
 
