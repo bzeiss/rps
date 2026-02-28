@@ -87,13 +87,21 @@ cmake --build build --config Release
 > **Important Note regarding process termination on Windows:**
 > When using the example Java or C++ clients on Windows, it is recommended to run them from PowerShell rather than MSYS2/MinTTY terminals. MSYS2 terminals do not always translate `Ctrl+C` into proper Windows console control events, which can cause the client to abruptly terminate without running shutdown hooks, leaving the `rps-server.exe` running in the background as an orphaned process. Running from PowerShell or standard Command Prompt ensures proper process termination.
 
-#### Windows (Clang)
+#### Windows (Clang with MSVC ABI)
 
 ```cmd
 # Enable VST2 with custom SDK path if needed: -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=/path/to/vstsdk2.4
 cmake -G Ninja -B build -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static
 cmake --build build --config Release
 ```
+#### Windows (Clang with GNU/MinGW ABI)
+
+```cmd
+# Enable VST2 with custom SDK path if needed: -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=/path/to/vstsdk2.4
+cmake -G Ninja -B build -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-mingw-static
+cmake --build build --config Release
+```
+
 
 #### macOS (Apple Silicon)
 
@@ -118,14 +126,16 @@ cmake --build build --config Release
 
 #### Vcpkg Triplet Reference
 
-| OS          | Architecture  | Compiler    | Recommended `VCPKG_TARGET_TRIPLET` | CMake Flags Required                                    |
-|-------------|---------------|-------------|------------------------------------|---------------------------------------------------------|
-| **Windows** | x64           | MSVC        | `x64-windows-static`               | `-DRPS_MSVC_STATIC_RUNTIME=ON`                          |
-| **Windows** | x64           | Clang       | `x64-windows-static`               | `-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++` |
-| **macOS**   | arm64 (M1/M2) | Apple Clang | `arm64-osx-release`                |                                                         |
-| **macOS**   | x64 (Intel)   | Apple Clang | `x64-osx-release`                  |                                                         |
-| **Linux**   | x64           | GCC / Clang | `x64-linux`                        |                                                         |
-| **Linux**   | arm64         | GCC / Clang | `arm64-linux`                      |                                                         |
+| OS          | Architecture  | Compiler            | Recommended `VCPKG_TARGET_TRIPLET` | CMake Flags Required                                        |
+|-------------|---------------|---------------------|------------------------------------|-------------------------------------------------------------|
+| **Windows** | x64           | MSVC                | `x64-windows-static`               | `-DRPS_MSVC_STATIC_RUNTIME=ON`                              |
+| **Windows** | x64           | Clang/MSVC ABI      | `x64-windows-static`               | `-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl` |
+| **Windows** | x64           | Clang/GNU/MinGW ABI | `x64-mingw-static`                 | `-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++`     |
+| **Windows** | arm64         | MSVC ABI            | `x64-windows-static`               | `-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl` |
+| **macOS**   | arm64 (M1/M2) | Apple Clang         | `arm64-osx-release`                |                                                             |
+| **macOS**   | x64 (Intel)   | Apple Clang         | `x64-osx-release`                  |                                                             |
+| **Linux**   | x64           | GCC / Clang         | `x64-linux`                        |                                                             |
+| **Linux**   | arm64         | GCC / Clang         | `arm64-linux`                      |                                                             |
 
 ---
 
