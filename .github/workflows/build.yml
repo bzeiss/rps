@@ -45,7 +45,7 @@ jobs:
         key: ${{ runner.os }}-${{ matrix.toolchain }}-ccache
 
     - name: Setup MSVC Developer Command Prompt
-      if: runner.os == 'Windows' && matrix.toolchain == 'msvc'
+      if: runner.os == 'Windows'
       uses: ilammy/msvc-dev-cmd@v1
 
     - name: Cache vcpkg dependencies
@@ -62,7 +62,7 @@ jobs:
         if [ "$RUNNER_OS" == "Linux" ]; then
           TRIPLET="x64-linux" # vcpkg's x64-linux defaults to static libraries
         else
-          TRIPLET="arm64-osx-static" # Force static linking on macOS
+          TRIPLET="arm64-osx-release" # Force static linking on macOS
         fi
 
         cmake -G Ninja -B build \
@@ -82,7 +82,7 @@ jobs:
 
     - name: Configure CMake (Windows Clang)
       if: runner.os == 'Windows' && matrix.toolchain == 'clang'
-      run: cmake -G Ninja -B build -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      run: cmake -G Ninja -B build -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DRPS_MSVC_STATIC_RUNTIME=ON
 
     - name: Build (Windows)
       if: runner.os == 'Windows'
@@ -98,7 +98,7 @@ jobs:
         cp build/apps/rps-vstscannermaster/vstscannermaster release_stage/
         cp build/examples/cpp/rps-example-client release_stage/
         cd release_stage
-        zip -r ../rps-binaries-${{ matrix.os }}.zip ./*
+        zip -r ../rps-binaries-${{ matrix.name }}.zip ./*
 
     - name: Stage & Zip Binaries (Windows MSVC)
       if: runner.os == 'Windows' && matrix.toolchain == 'msvc'
