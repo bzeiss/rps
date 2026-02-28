@@ -12,7 +12,7 @@ RPS solves this by using a **multi-process architecture**:
 - **`rps-server`**: A gRPC server that coordinates scanning. It manages a pool of worker processes, handles watchdogs/timeouts, streams progress events to clients, and aggregates results into a central SQLite database. If a plugin crashes, only the worker dies—the server logs the failure and moves on.
 - **`rps-standalone`**: A standalone CLI wrapper around the same scan engine (no server needed).
 - **`rps-pluginscanner`**: The worker. It isolates the unsafe, third-party plugin code from the rest of your system.
-- **`examples/python/`**: A Python TUI client using `rich` that spawns/kills the server and displays per-worker progress bars.
+- **`examples/`**: Client examples.
 
 ## Project Goals
 1. **Primary Objective**: Robustness (Crash and stall isolation).
