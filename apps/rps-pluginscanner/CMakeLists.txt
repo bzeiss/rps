@@ -42,16 +42,15 @@ target_link_libraries(rps-pluginscanner
         Boost::filesystem
 )
 
-# After build, copy rps-pluginscanner to Python and Java example directories
-add_custom_command(
-    TARGET rps-pluginscanner POST_BUILD
+add_custom_target(rps-pluginscanner-deps ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:rps-pluginscanner>
         "${CMAKE_SOURCE_DIR}/examples/python/$<TARGET_FILE_NAME:rps-pluginscanner>"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:rps-pluginscanner>
         "${CMAKE_SOURCE_DIR}/examples/java/$<TARGET_FILE_NAME:rps-pluginscanner>"
-    COMMENT "Copying rps-pluginscanner to example directories"
+    DEPENDS rps-pluginscanner
+    COMMENT "Ensuring rps-pluginscanner is present in example directories"
 )
 
 if(WIN32)

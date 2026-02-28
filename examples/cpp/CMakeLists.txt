@@ -92,14 +92,14 @@ target_link_libraries(rps-example-client
         Boost::filesystem
 )
 
-# Ensure rps-server binary is next to the client for easy execution
-add_custom_command(
-    TARGET rps-example-client POST_BUILD
+add_custom_target(rps-example-client-deps ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:rps-server>
         "$<TARGET_FILE_DIR:rps-example-client>/$<TARGET_FILE_NAME:rps-server>"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:rps-pluginscanner>
         "$<TARGET_FILE_DIR:rps-example-client>/$<TARGET_FILE_NAME:rps-pluginscanner>"
-    COMMENT "Copying rps-server and rps-pluginscanner to C++ example output directory"
+    DEPENDS rps-server rps-pluginscanner
+    COMMENT "Ensuring server binaries are present for C++ example"
 )
+add_dependencies(rps-example-client rps-example-client-deps)

@@ -11,11 +11,11 @@ target_link_libraries(vstscannermaster
         Boost::dll
 )
 
-# After build, copy rps-pluginscanner into vstscannermaster's directory
-add_custom_command(
-    TARGET vstscannermaster POST_BUILD
+add_custom_target(vstscannermaster-deps ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:rps-pluginscanner>
         "$<TARGET_FILE_DIR:vstscannermaster>/$<TARGET_FILE_NAME:rps-pluginscanner>"
-    COMMENT "Copying rps-pluginscanner to vstscannermaster directory"
+    DEPENDS rps-pluginscanner
+    COMMENT "Ensuring rps-pluginscanner is present for vstscannermaster"
 )
+add_dependencies(vstscannermaster vstscannermaster-deps)

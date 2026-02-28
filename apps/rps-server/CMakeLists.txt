@@ -97,9 +97,7 @@ target_link_libraries(rps-server
 # Ensure the scanner is built before we try to copy it
 add_dependencies(rps-server rps-pluginscanner)
 
-# After build, copy rps-server and rps-pluginscanner to necessary directories
-add_custom_command(
-    TARGET rps-server POST_BUILD
+add_custom_target(rps-server-deps ALL
     # Copy scanner next to server
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:rps-pluginscanner>
@@ -111,5 +109,6 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:rps-server>
         "${CMAKE_SOURCE_DIR}/examples/java/$<TARGET_FILE_NAME:rps-server>"
-    COMMENT "Copying binaries to server and example directories"
+    DEPENDS rps-server rps-pluginscanner
+    COMMENT "Ensuring binaries are present for server and examples"
 )

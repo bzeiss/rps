@@ -9,11 +9,11 @@ target_link_libraries(rps-standalone
         Boost::program_options
 )
 
-# After build, copy rps-pluginscanner into standalone's directory
-add_custom_command(
-    TARGET rps-standalone POST_BUILD
+add_custom_target(rps-standalone-deps ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:rps-pluginscanner>
         "$<TARGET_FILE_DIR:rps-standalone>/$<TARGET_FILE_NAME:rps-pluginscanner>"
-    COMMENT "Copying rps-pluginscanner to standalone directory"
+    DEPENDS rps-pluginscanner
+    COMMENT "Ensuring rps-pluginscanner is present for standalone"
 )
+add_dependencies(rps-standalone rps-standalone-deps)
