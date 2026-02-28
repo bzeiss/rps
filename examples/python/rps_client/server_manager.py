@@ -6,9 +6,13 @@ import socket
 import subprocess
 import sys
 import time
+from typing import TYPE_CHECKING
 from pathlib import Path
 
 import grpc
+
+if TYPE_CHECKING:
+    from rps_client.windows_job import WindowsJobObject
 
 
 class ServerManager:
@@ -28,9 +32,10 @@ class ServerManager:
         self.log_file = log_file
         self.log_level = log_level
         self._process: subprocess.Popen | None = None
-        self._windows_job = None
+        self._windows_job: WindowsJobObject | None = None
         self._old_sigint_handler = None
         self._old_sigterm_handler = None
+        self._debug = os.getenv("RPS_DEBUG_PROCESS_LIFECYCLE") == "1"
 
     def _handle_signal(self, signum, frame):
         """Signal handler to ensure cleanup on SIGINT/SIGTERM."""
@@ -65,20 +70,25 @@ class ServerManager:
             "--log", self.log_file,
             "--log-level", self.log_level,
         ]
-        env = self._build_env()
         self._process = subprocess.Popen(
             cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            env=env,
             start_new_session=(sys.platform != "win32"),
         )
+        if self._debug:
+            print(f"[rps] spawned server pid {self._process.pid}")
 
         if sys.platform == "win32":
+            # Windows process ownership model:
+            # parent/child does not imply lifetime ownership. Attach rps-server
+            # to a Job Object so parent exit tears down the process tree.
             from rps_client.windows_job import WindowsJobObject
 
             try:
                 self._windows_job = WindowsJobObject.create_and_assign(self._process.pid)
+                if self._debug:
+                    print(f"[rps] attached Windows Job Object to pid {self._process.pid}")
             except Exception:
                 self._process.terminate()
                 self._process.wait(timeout=2.0)
@@ -118,6 +128,8 @@ class ServerManager:
 
         try:
             if in_hurry:
+                if self._debug:
+                    print("[rps] stop(in_hurry=True)")
                 self._process.terminate()
                 try:
                     self._process.wait(timeout=3.0)
@@ -146,6 +158,8 @@ class ServerManager:
                     self._process.kill()
                     self._process.wait()
         finally:
+            if self._debug:
+                print("[rps] server process stopped")
             self._process = None
             self._close_windows_job()
 
@@ -153,30 +167,10 @@ class ServerManager:
         if self._windows_job is not None:
             try:
                 self._windows_job.close()
+                if self._debug:
+                    print("[rps] closed Windows Job Object")
             finally:
                 self._windows_job = None
-
-    @staticmethod
-    def _build_env() -> dict[str, str]:
-        """Build subprocess environment with MSYS2 DLL directories on PATH.
-
-        On Windows, rps-server links shared gRPC/protobuf/spdlog DLLs from
-        MSYS2. If the user runs from PowerShell or VS Code (rather than the
-        MSYS2 shell), those DLLs won't be on PATH. We auto-detect and add
-        the MSYS2 bin directory so the server can find them.
-        """
-        env = os.environ.copy()
-        if sys.platform == "win32":
-            msys2_dirs = [
-                r"C:\msys64\clang64\bin",
-                r"C:\msys64\mingw64\bin",
-                r"C:\msys64\ucrt64\bin",
-            ]
-            path = env.get("PATH", "")
-            additions = [d for d in msys2_dirs if os.path.isdir(d) and d not in path]
-            if additions:
-                env["PATH"] = ";".join(additions) + ";" + path
-        return env
 
     @property
     def address(self) -> str:

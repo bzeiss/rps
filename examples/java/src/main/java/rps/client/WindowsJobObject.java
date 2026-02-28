@@ -23,6 +23,8 @@ final class WindowsJobObject implements AutoCloseable {
     private static final MethodHandle ASSIGN_PROCESS_TO_JOB_OBJECT;
     private static final MethodHandle CLOSE_HANDLE;
     private static final MethodHandle GET_LAST_ERROR;
+    private static final boolean PROCESS_DEBUG =
+            "1".equals(System.getenv("RPS_DEBUG_PROCESS_LIFECYCLE"));
 
     static {
         int minimumWorkingSetOffset = alignUp(20, POINTER_SIZE);
@@ -115,7 +117,7 @@ final class WindowsJobObject implements AutoCloseable {
                     MemorySegment.NULL
             );
             if (MemorySegment.NULL.equals(jobHandle)) {
-                throw new IOException("CreateJobObjectA failed (GetLastError=" + getLastError() + ")");
+                throw new IOException("failed to create Windows Job Object (GetLastError=" + getLastError() + ")");
             }
 
             try (Arena arena = Arena.ofConfined()) {
@@ -130,7 +132,7 @@ final class WindowsJobObject implements AutoCloseable {
                 );
                 if (setRes == 0) {
                     throw new IOException(
-                            "SetInformationJobObject failed (GetLastError=" + getLastError()
+                            "failed to configure Windows Job Object (GetLastError=" + getLastError()
                                     + ", infoSize=" + JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_SIZE
                                     + ", ptrSize=" + POINTER_SIZE + ")"
                     );
@@ -142,13 +144,15 @@ final class WindowsJobObject implements AutoCloseable {
                         (int) pid
                 );
                 if (MemorySegment.NULL.equals(processHandle)) {
-                    throw new IOException("OpenProcess failed for pid " + pid + " (GetLastError=" + getLastError() + ")");
+                    throw new IOException("failed to open process for Windows Job assignment, pid=" + pid
+                            + " (GetLastError=" + getLastError() + ")");
                 }
 
                 try {
                     int assignRes = (int) ASSIGN_PROCESS_TO_JOB_OBJECT.invokeExact(jobHandle, processHandle);
                     if (assignRes == 0) {
-                        throw new IOException("AssignProcessToJobObject failed for pid " + pid + " (GetLastError=" + getLastError() + ")");
+                        throw new IOException("failed to assign process to Windows Job Object, pid=" + pid
+                                + " (GetLastError=" + getLastError() + ")");
                     }
                 } finally {
                     closeHandleQuiet(processHandle);
@@ -158,14 +162,17 @@ final class WindowsJobObject implements AutoCloseable {
                 if (t instanceof IOException ioe) {
                     throw ioe;
                 }
-                throw new IOException("Failed to configure Windows Job Object", t);
+                throw new IOException("failed to configure Windows Job Object", t);
             }
 
+            if (PROCESS_DEBUG) {
+                System.out.println("[rps] created Windows Job Object for pid " + pid);
+            }
             return new WindowsJobObject(jobHandle);
         } catch (IOException e) {
             throw e;
         } catch (Throwable t) {
-            throw new IOException("Failed to initialize Windows Job Object", t);
+            throw new IOException("failed to initialize Windows Job Object", t);
         }
     }
 

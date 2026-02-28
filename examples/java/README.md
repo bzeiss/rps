@@ -55,6 +55,10 @@ mvn exec:exec
 
 But on Windows this is not recommended for interactive runs because `Ctrl+C` may be intercepted by the batch layer before normal JVM shutdown flow.
 
+### Process lifecycle debug
+
+Set `RPS_DEBUG_PROCESS_LIFECYCLE=1` to print spawn/attach/stop lifecycle logs.
+
 The client will:
 1. Check if an `rps-server` is running (and start one if needed).
 2. Connect to the server at `127.0.0.1:50051`.

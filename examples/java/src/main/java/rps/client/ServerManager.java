@@ -10,6 +10,9 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 public class ServerManager implements AutoCloseable {
+    private static final boolean PROCESS_DEBUG =
+            "1".equals(System.getenv("RPS_DEBUG_PROCESS_LIFECYCLE"));
+
     private final String binPath;
     private final int port;
     private final String dbPath;
@@ -53,7 +56,13 @@ public class ServerManager implements AutoCloseable {
         System.out.println("Spawning server: " + String.join(" ", cmd));
         this.process = pb.start();
         if (isWindows()) {
+            // Windows process ownership model:
+            // parent/child does not imply lifetime ownership. We explicitly attach
+            // rps-server to a Job Object so parent exit tears down the process tree.
             this.windowsJob = WindowsJobObject.createAndAssign(process.pid());
+            if (PROCESS_DEBUG) {
+                System.out.println("[rps] attached Windows Job Object to pid " + process.pid());
+            }
         }
 
         // Wait for server to be ready
@@ -112,6 +121,9 @@ public class ServerManager implements AutoCloseable {
     public void close() {
         try {
             if (process != null) {
+                if (PROCESS_DEBUG) {
+                    System.out.println("[rps] stopping server pid " + process.pid());
+                }
                 process.destroy();
                 try {
                     process.waitFor(2, TimeUnit.SECONDS);
@@ -132,6 +144,9 @@ public class ServerManager implements AutoCloseable {
             if (windowsJob != null) {
                 windowsJob.close();
                 windowsJob = null;
+                if (PROCESS_DEBUG) {
+                    System.out.println("[rps] closed Windows Job Object");
+                }
             }
             process = null;
         }

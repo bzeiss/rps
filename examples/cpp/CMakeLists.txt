@@ -71,6 +71,7 @@ endif()
 add_executable(rps-example-client
     src/main.cpp
     src/ProtobufCompat.cpp
+    src/WindowsProcessJob.cpp
     ${PROTO_SRCS}
     ${GRPC_SRCS}
 )

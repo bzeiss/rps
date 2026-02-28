@@ -82,11 +82,11 @@ class WindowsJobObject:
     @classmethod
     def create_and_assign(cls, pid: int) -> "WindowsJobObject":
         if pid <= 0:
-            raise OSError(f"invalid pid: {pid}")
+            raise OSError(f"failed to assign Windows Job Object: invalid pid {pid}")
 
         job = _kernel32.CreateJobObjectW(None, None)
         if not job:
-            raise ctypes.WinError(ctypes.get_last_error())
+            raise OSError(f"failed to create Windows Job Object: {ctypes.WinError(ctypes.get_last_error())}")
 
         try:
             info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
@@ -99,16 +99,24 @@ class WindowsJobObject:
                 ctypes.sizeof(info),
             )
             if not ok:
-                raise ctypes.WinError(ctypes.get_last_error())
+                raise OSError(
+                    f"failed to configure Windows Job Object: {ctypes.WinError(ctypes.get_last_error())}"
+                )
 
             proc = _kernel32.OpenProcess(PROCESS_TERMINATE | PROCESS_SET_QUOTA, False, int(pid))
             if not proc:
-                raise ctypes.WinError(ctypes.get_last_error())
+                raise OSError(
+                    f"failed to open process for Windows Job assignment, pid={pid}: "
+                    f"{ctypes.WinError(ctypes.get_last_error())}"
+                )
 
             try:
                 ok = _kernel32.AssignProcessToJobObject(job, proc)
                 if not ok:
-                    raise ctypes.WinError(ctypes.get_last_error())
+                    raise OSError(
+                        f"failed to assign process to Windows Job Object, pid={pid}: "
+                        f"{ctypes.WinError(ctypes.get_last_error())}"
+                    )
             finally:
                 _kernel32.CloseHandle(proc)
 
@@ -121,4 +129,3 @@ class WindowsJobObject:
         if self._handle:
             _kernel32.CloseHandle(self._handle)
             self._handle = None
-
