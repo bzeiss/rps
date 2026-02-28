@@ -11,6 +11,7 @@
     "boost-uuid",
     "boost-dll",
     "boost-date-time",
+    "boost-crc",
     "sqlite3",
     "grpc",
     "protobuf",
@@ -47,6 +48,10 @@
     },
     {
       "name": "boost-date-time",
+      "version": "1.90.0"
+    },
+    {
+      "name": "boost-crc",
       "version": "1.90.0"
     },
     {

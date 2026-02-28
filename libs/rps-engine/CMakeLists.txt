@@ -7,7 +7,6 @@ add_library(rps-engine STATIC
 
 target_include_directories(rps-engine
     PUBLIC include
-    PRIVATE ${BOOST_SOURCE_DIR}/libs/crc/include
 )
 
 target_link_libraries(rps-engine
@@ -19,6 +18,7 @@ target_link_libraries(rps-engine
         SQLite::SQLite3
     PRIVATE
         rps_warnings
+        Boost::crc
         Boost::process
         Boost::interprocess
         Boost::uuid

@@ -8,6 +8,23 @@ project(rps-plugin-scanner
     LANGUAGES C CXX
 )
 
+# x64-windows* vcpkg triplets produce MSVC-ABI binaries. Using GNU-targeting
+# clang++ (e.g. MSYS2 clang64) with those libraries causes linker failures
+# such as missing LIBCMTD/OLDNAMES import libs.
+if(WIN32
+   AND VCPKG_TARGET_TRIPLET MATCHES "^x64-windows"
+   AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang"
+   AND NOT CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC")
+    message(FATAL_ERROR
+        "Incompatible toolchain combination detected:\n"
+        "  compiler: ${CMAKE_CXX_COMPILER}\n"
+        "  triplet:  ${VCPKG_TARGET_TRIPLET}\n\n"
+        "The selected vcpkg triplet uses MSVC ABI libraries, but this clang++ "
+        "targets GNU/MinGW. Use one of:\n"
+        "  1) clang-cl or cl.exe with -DVCPKG_TARGET_TRIPLET=x64-windows-static\n"
+        "  2) clang++ with a MinGW triplet (for example x64-mingw-static).")
+endif()
+
 # Enforce strictly C++23
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -51,7 +68,7 @@ if(WIN32 AND NOT MSVC)
 endif()
 
 # Boost: managed entirely by vcpkg
-find_package(Boost REQUIRED COMPONENTS json program_options filesystem process interprocess uuid dll date_time)
+find_package(Boost REQUIRED COMPONENTS json program_options filesystem process interprocess uuid dll date_time crc)
 
 # Find SQLite3
 # Prefer the static library; fall back to shared via find_package
