@@ -94,14 +94,22 @@ target_link_libraries(rps-server
         Boost::dll
 )
 
-# After build, copy rps-server to Python and Java example source directories
+# Ensure the scanner is built before we try to copy it
+add_dependencies(rps-server rps-pluginscanner)
+
+# After build, copy rps-server and rps-pluginscanner to necessary directories
 add_custom_command(
     TARGET rps-server POST_BUILD
+    # Copy scanner next to server
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:rps-pluginscanner>
+        "$<TARGET_FILE_DIR:rps-server>/$<TARGET_FILE_NAME:rps-pluginscanner>"
+    # Copy server to Python and Java example directories
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:rps-server>
         "${CMAKE_SOURCE_DIR}/examples/python/$<TARGET_FILE_NAME:rps-server>"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:rps-server>
         "${CMAKE_SOURCE_DIR}/examples/java/$<TARGET_FILE_NAME:rps-server>"
-    COMMENT "Copying rps-server to Python and Java example directories"
+    COMMENT "Copying binaries to server and example directories"
 )
