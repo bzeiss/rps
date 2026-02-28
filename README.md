@@ -90,6 +90,7 @@ cmake --build build --config Release
 #### Windows (Clang)
 
 ```cmd
+# Enable VST2 with custom SDK path if needed: -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=/path/to/vstsdk2.4
 cmake -G Ninja -B build -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static
 cmake --build build --config Release
 ```
@@ -98,7 +99,7 @@ cmake --build build --config Release
 
 ```bash
 # Enable VST2 with custom SDK path if needed: -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=/path/to/vstsdk2.4
-cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=arm64-osx-static
+cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=arm64-osx-release
 cmake --build build --config Release
 ```
 
@@ -110,20 +111,21 @@ cmake --build build --config Release
 # Ubuntu: sudo apt install build-essential cmake ninja-build pkg-config curl zip unzip tar
 # Fedora: sudo dnf install gcc-c++ cmake ninja-build pkgconf-pkg-config curl zip unzip tar
 
+# Enable VST2 with custom SDK path if needed: -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=/path/to/vstsdk2.4
 cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux
 cmake --build build --config Release
 ```
 
 #### Vcpkg Triplet Reference
 
-| OS | Architecture | Compiler | Recommended `VCPKG_TARGET_TRIPLET` | CMake Flags Required |
-|---|---|---|---|---|
-| **Windows** | x64 | MSVC | `x64-windows-static` | `-DRPS_MSVC_STATIC_RUNTIME=ON` |
-| **Windows** | x64 | Clang | `x64-windows-static` | `-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++` |
-| **macOS** | arm64 (M1/M2) | Apple Clang | `arm64-osx-static` | |
-| **macOS** | x64 (Intel) | Apple Clang | `x64-osx-static` | |
-| **Linux** | x64 | GCC / Clang | `x64-linux` | |
-| **Linux** | arm64 | GCC / Clang | `arm64-linux` | |
+| OS          | Architecture  | Compiler    | Recommended `VCPKG_TARGET_TRIPLET` | CMake Flags Required                                    |
+|-------------|---------------|-------------|------------------------------------|---------------------------------------------------------|
+| **Windows** | x64           | MSVC        | `x64-windows-static`               | `-DRPS_MSVC_STATIC_RUNTIME=ON`                          |
+| **Windows** | x64           | Clang       | `x64-windows-static`               | `-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++` |
+| **macOS**   | arm64 (M1/M2) | Apple Clang | `arm64-osx-release`                |                                                         |
+| **macOS**   | x64 (Intel)   | Apple Clang | `x64-osx-release`                  |                                                         |
+| **Linux**   | x64           | GCC / Clang | `x64-linux`                        |                                                         |
+| **Linux**   | arm64         | GCC / Clang | `arm64-linux`                      |                                                         |
 
 ---
 
