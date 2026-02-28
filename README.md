@@ -1,8 +1,8 @@
-# RPS - Reliable Plugin Scanner
+# RPS
 
-RPS is a modern, cross-platform audio plugin scanner designed from the ground up for extreme robustness and reliability. It supports scanning VST2, VST3, CLAP, AAX, AU, LV2, and LADSPA formats on Windows, macOS, and Linux.
+RPS is a modern, cross-platform audio plugin scanner designed from the ground up for extreme robustness and reliability. It supports scanning VST2, VST3, CLAP, AAX, LV2, and LADSPA formats on Windows, macOS, and Linux.
 
-RPS exposes a **gRPC API** so it can be driven from any language. A Python TUI example client is included.
+RPS exposes a **gRPC API** so it can be driven from any language. Example clients in C++, Python and Java are included.
 
 ## Why RPS?
 
@@ -25,17 +25,18 @@ RPS solves this by using a **multi-process architecture**:
 
 ### Prerequisites
 
-| Dependency | Minimum Version | Notes |
-|---|---|---|
-| CMake | 3.25 | Build system |
-| C++ Compiler | C++23 capable | Clang 16+ (recommended), GCC 13+, MSVC 2022 17.5+ |
-| Ninja | 1.11+ | Recommended build backend (optional, can use Make or VS) |
-| SQLite3 | 3.x | For the plugin database |
-| gRPC | 1.60+ | For the `rps-server` gRPC API |
-| spdlog | 1.12+ | Structured logging for `rps-server` |
-| Git | 2.x | For cloning submodules |
+| Dependency   | Minimum Version | Notes                                              |
+|--------------|-----------------|----------------------------------------------------|
+| CMake        | 3.25            | Build system                                       |
+| C++ Compiler | C++23 capable   | Clang 16+ (macOS+Linux), MSVC 2022 17.5+ (Windows) |
+| Ninja        | 1.11+           | Build backend (macOS+Linux)                        |
+| vcpkg        | Latest          | C/C++ package manager (Windows)                    |
+| SQLite3      | 3.x             | For the plugin database                            |
+| gRPC         | 1.60+           | For the `rps-server` gRPC API                      |
+| spdlog       | 1.12+           | Structured logging for `rps-server`                |
+| Git          | 2.x             | For version management                             |
 
-**Boost 1.90** is built from source — no system Boost installation is needed. You must provide a path to a Boost source tree (see Step 1).
+**Boost 1.90** is built from source. You must provide a path to a Boost source tree (see Step 1).
 
 ### Step 1: Clone and Set Up Dependencies
 
@@ -64,7 +65,7 @@ This will take several minutes (~180 sub-repos). Once done, the directory will c
 
 #### Windows (MSVC + vcpkg - Recommended for Static Builds)
 
-To avoid DLL dependencies and build a single, standalone executable on Windows, it is highly recommended to use Visual Studio (MSVC) with `vcpkg` for dependency management. This allows for fully static linking.
+To avoid DLL dependencies and build a single, standalone executable on Windows, it is recommended to use Visual Studio (MSVC) with `vcpkg` for dependency management.
 
 1. **Install Visual Studio 2022** (or later) with the "Desktop development with C++" workload.
 2. **Install vcpkg** and the required libraries:
@@ -77,14 +78,15 @@ To avoid DLL dependencies and build a single, standalone executable on Windows, 
 
 3. **Configure and Build** (using Developer Command Prompt for VS 2022):
    ```cmd
-   # Set the Boost source directory
+   # Set the Boost source directory (or use the cmake parameter like in the example below)
    set BOOST_SOURCE_DIR=C:\develop\boost
-   
+
    # Configure CMake to use vcpkg and static linking
-   # leave out the VST2 parameters to build without it
-   # leave out the boost source dir if you have the environment variable set
-   # use -G "Visual Studio 18 2026" if you use the latest one - VS 18 requires at least cmake 4.2!
-   
+   # * leave out the VST2 parameters to build without it
+   # * leave out the boost source dir if you have the environment variable set
+   # * use -G "Visual Studio 18 2026" if you use the latest one - VS 18 requires at least cmake 4.2!
+   # * adapt the paths
+
    cmake -G "Visual Studio 17 2022" -A x64 -B build -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static -DRPS_MSVC_STATIC_RUNTIME=ON -DBOOST_SOURCE_DIR=C:/dev/boost -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=c:/dev/vstsdk2.4
          
    # Build the project
@@ -93,7 +95,7 @@ To avoid DLL dependencies and build a single, standalone executable on Windows, 
    *Note: Ensure your `C:\vcpkg` path matches where you cloned it.*
 
 > **Important Note regarding process termination on Windows:**
-> When using the example Java or C++ clients on Windows, it is highly recommended to run them from PowerShell rather than MSYS2/MinTTY terminals. MSYS2 terminals do not always translate `Ctrl+C` into proper Windows console control events, which can cause the client to abruptly terminate without running shutdown hooks, leaving the `rps-server.exe` running in the background as an orphaned process. Running from PowerShell or standard Command Prompt ensures proper process termination.
+> When using the example Java or C++ clients on Windows, it is recommended to run them from PowerShell rather than MSYS2/MinTTY terminals. MSYS2 terminals do not always translate `Ctrl+C` into proper Windows console control events, which can cause the client to abruptly terminate without running shutdown hooks, leaving the `rps-server.exe` running in the background as an orphaned process. Running from PowerShell or standard Command Prompt ensures proper process termination.
 
 #### Windows (MSYS2/Clang - Alternative)
 The MSYS2 Clang64 environment can be used, but note that it produces dynamically linked executables.
@@ -109,11 +111,12 @@ The MSYS2 Clang64 environment can be used, but note that it produces dynamically
 
 Configure and build:
 ```bash
-# Optionally set as environment variable
+# Set the Boost source directory (or use the cmake parameter like in the example below)
 export BOOST_SOURCE_DIR=/c/develop/boost
 
-# leave out the VST2 parameters to build without it
-# leave out the boost source dir if you have the environment variable set
+# * leave out the VST2 parameters to build without it
+# * leave out the boost source dir if you have the environment variable set
+# * adapt the paths
 cmake -G Ninja -DBOOST_SOURCE_DIR=/c/dev/boost -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=/c/dev/vstsdk2.4 -B build
 cmake --build build
 ```
@@ -126,12 +129,8 @@ brew install cmake ninja sqlite pkg-config grpc protobuf spdlog
 ```
 
 Configure and build:
-```bash
-# leave out the VST2 parameters to build without it
-# leave out the boost source dir if you have the environment variable set
-cmake -G Ninja -DBOOST_SOURCE_DIR=~/dev/boost -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=~/dev/vstsdk2.4 -B build
-cmake --build build
-```
+
+Same as Windows MSYS2.
 
 #### Linux (Fedora)
 
@@ -141,7 +140,7 @@ sudo dnf install cmake ninja-build gcc-c++ clang sqlite-devel git grpc-devel grp
 
 Configure and build:
 
-same as macOS
+Same as Windows MSYS2.
 
 #### Linux (Ubuntu / Debian)
 
@@ -151,7 +150,7 @@ sudo apt install cmake ninja-build g++ clang libsqlite3-dev git libgrpc++-dev pr
 
 Configure and build:
 
-same as macOS
+Same as Windows MSYS2.
 
 ### Build Output
 
@@ -162,7 +161,9 @@ After a successful build, you will find five binaries in the `build/` directory:
 - `build/apps/rps-vstscannermaster/vstscannermaster` (or `.exe`) — Steinberg-compatible VST3 cache generator
 - `build/examples/cpp/rps-example-client` (or `.exe`) — C++ gRPC example client
 
-The standalone CLI, server, and vstscannermaster all auto-locate `rps-pluginscanner` relative to their own path.
+Visual Studio adds an additional layer of subdirectories "Release" or "Debug".
+
+The dependant process `rps-pluginscanner` will be copied automatically to the example directories so that the standalone CLI, server, and vstscannermaster will find it.
 
 ## Usage
 
@@ -304,7 +305,7 @@ Scan results are stored in a SQLite database (default: `rps-plugins.db`) with WA
 
 ## VST3 Scanner Master
 
-`vstscannermaster` is a drop-in replacement for Steinberg's `vstscannermaster.exe`. It uses the rps crash-isolated scanning infrastructure to produce the same XML cache files that Cubase, Nuendo, and Dorico consume.
+`vstscannermaster` is an experimental drop-in replacement for Steinberg's `vstscannermaster.exe`. It uses the rps crash-isolated scanning infrastructure to produce the same XML cache files that Cubase, Nuendo, and Dorico consume. It's currently not working properly in Cubase.
 
 ### Command Line Arguments
 
@@ -331,14 +332,14 @@ vstscannermaster -prefPath ./VST3Cache -licenceLevel 25000 -progress -rescan
 
 ### Output Files
 
-| File | Description |
-|---|---|
-| `vst3plugins.xml` | All successfully scanned VST3 plugins with full class metadata |
-| `vst3blocklist.xml` | Plugins that crashed or timed out during scanning |
-| `vst3allowlist.xml` | User-managed allow list (created empty, preserved on subsequent runs) |
-| `cacheVersion` | Cache format version |
-| `vstscannermaster.log` | Scan log with summary statistics |
-| `rps-cache.db` | Internal SQLite database (used for incremental scanning) |
+| File                   | Description                                                           |
+|------------------------|-----------------------------------------------------------------------|
+| `vst3plugins.xml`      | All successfully scanned VST3 plugins with full class metadata        |
+| `vst3blocklist.xml`    | Plugins that crashed or timed out during scanning                     |
+| `vst3allowlist.xml`    | User-managed allow list (created empty, preserved on subsequent runs) |
+| `cacheVersion`         | Cache format version                                                  |
+| `vstscannermaster.log` | Scan log with summary statistics                                      |
+| `rps-cache.db`         | Internal SQLite database (used for incremental scanning)              |
 
 ## gRPC Server
 
@@ -360,12 +361,12 @@ RPS Server Options:
 
 Defined in `proto/rps.proto`:
 
-| RPC | Type | Description |
-|---|---|---|
+| RPC         | Type             | Description                                                             |
+|-------------|------------------|-------------------------------------------------------------------------|
 | `StartScan` | Server streaming | Start a scan, returns a stream of `ScanEvent` messages until completion |
-| `StopScan` | Unary | Stop a running scan gracefully |
-| `GetStatus` | Unary | Query server state (idle/scanning), uptime, db path |
-| `Shutdown` | Unary | Graceful server shutdown |
+| `StopScan`  | Unary            | Stop a running scan gracefully                                          |
+| `GetStatus` | Unary            | Query server state (idle/scanning), uptime, db path                     |
+| `Shutdown`  | Unary            | Graceful server shutdown                                                |
 
 Only one scan at a time is allowed. `StartScan` returns `ALREADY_EXISTS` if a scan is in progress.
 
@@ -378,6 +379,8 @@ Only one scan at a time is allowed. `StartScan` returns `ALREADY_EXISTS` if a sc
 # Custom options
 ./rps-server --port 50051 --db my-plugins.db --log-level debug
 ```
+
+The gRPC clients spawn the server automatically.
 
 ## Example Clients
 
