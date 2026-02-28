@@ -7,16 +7,16 @@ A Python command-line client for the RPS Plugin Scanner gRPC server, featuring a
 ```bash
 cd examples/python
 
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate  # or .venv\Scripts\activate on Windows
-
-# Install dependencies
-pip install -e .
+# Install dependencies and create .venv from uv.lock
+uv sync
 
 # Generate gRPC stubs (generates and patches imports)
-python generate_proto.py
+uv run python generate_proto.py
 ```
+
+Notes:
+- This project uses `uv` as the package/environment manager.
+- Recommended Python version is `3.13` (see `.python-version`).
 
 ## Usage
 
@@ -26,34 +26,34 @@ The client auto-spawns and kills `rps-server` unless `--server` is provided.
 
 ```bash
 # Incremental scan of all formats (default)
-python -m rps_client scan
+uv run python -m rps_client scan
 
 # Full scan, specific formats, limited
-python -m rps_client scan --mode full --formats vst3,clap --limit 50
+uv run python -m rps_client scan --mode full --formats vst3,clap --limit 50
 
 # Single plugin scan
-python -m rps_client scan --scan /path/to/plugin.vst3
+uv run python -m rps_client scan --scan /path/to/plugin.vst3
 
 # Custom scan directories
-python -m rps_client scan --scan-dir /path/to/plugins --jobs 8
+uv run python -m rps_client scan --scan-dir /path/to/plugins --jobs 8
 
 # Verbose debug output
-python -m rps_client scan --verbose
+uv run python -m rps_client scan --verbose
 ```
 
 ### Connect to an existing server
 
 ```bash
-python -m rps_client --server localhost:50051 scan --formats vst3
-python -m rps_client --server localhost:50051 status
-python -m rps_client --server localhost:50051 shutdown
+uv run python -m rps_client --server localhost:50051 scan --formats vst3
+uv run python -m rps_client --server localhost:50051 status
+uv run python -m rps_client --server localhost:50051 shutdown
 ```
 
 ### Options
 
 ```
-python -m rps_client --help
-python -m rps_client scan --help
+uv run python -m rps_client --help
+uv run python -m rps_client scan --help
 ```
 
 | Option | Description |
