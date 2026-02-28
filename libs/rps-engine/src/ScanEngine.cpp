@@ -125,11 +125,9 @@ ScanSummary ScanEngine::runScan(const ScanConfig& config, ScanObserver* observer
             exeDir / scannerPath
         };
 
-        bool found = false;
         for (auto& c : candidates) {
             if (fs::exists(c) && fs::is_regular_file(c)) {
                 scannerPath = fs::canonical(c);
-                found = true;
                 break;
             }
         }
