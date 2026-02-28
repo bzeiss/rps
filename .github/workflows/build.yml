@@ -48,13 +48,23 @@ jobs:
       if: runner.os == 'Windows'
       uses: ilammy/msvc-dev-cmd@v1
 
-    - name: Cache vcpkg dependencies
+    - name: Cache vcpkg binary archives (Unix)
+      if: runner.os != 'Windows'
       uses: actions/cache@v4
       with:
-        path: build/vcpkg_installed
-        key: vcpkg-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('vcpkg.json') }}
+        path: ~/.cache/vcpkg/archives
+        key: vcpkg-archives-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
         restore-keys: |
-          vcpkg-${{ runner.os }}-${{ matrix.toolchain }}-
+          vcpkg-archives-${{ runner.os }}-${{ matrix.toolchain }}-
+
+    - name: Cache vcpkg binary archives (Windows)
+      if: runner.os == 'Windows'
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.LOCALAPPDATA }}\vcpkg\archives
+        key: vcpkg-archives-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+        restore-keys: |
+          vcpkg-archives-${{ runner.os }}-${{ matrix.toolchain }}-
 
     - name: Ensure vcpkg baseline commit is available (Unix)
       if: runner.os != 'Windows'
