@@ -49,7 +49,7 @@ jobs:
     - name: Setup MSVC Developer Command Prompt
       if: runner.os == 'Windows'
       uses: ilammy/msvc-dev-cmd@v1
-
+    
     - name: Select Windows storage for vcpkg
       if: runner.os == 'Windows'
       id: win_storage
@@ -78,7 +78,6 @@ jobs:
         $best = $candidates | Sort-Object Free -Descending | Select-Object -First 1
         $base = Join-Path $best.Root "vcpkg-cache"
         
-        # Add buildtrees and packages to the D: drive paths
         $archives = Join-Path $base "archives"
         $downloads = Join-Path $base "downloads"
         $buildtrees = Join-Path $base "buildtrees"
@@ -88,13 +87,18 @@ jobs:
 
         "VCPKG_DEFAULT_BINARY_CACHE=$archives" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         "VCPKG_DOWNLOADS=$downloads" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-        
-        # Force vcpkg to compile on the D: drive
-        "VCPKG_BUILDTREES_DIR=$buildtrees" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-        "VCPKG_PACKAGES_DIR=$packages" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
         "vcpkg_cache_dir=$archives" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
         "vcpkg_downloads_dir=$downloads" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+        # --- THE FIX: Create Junctions to redirect C: to D: ---
+        # 1. Remove existing directories if GitHub pre-created them
+        Remove-Item -Path "C:\vcpkg\buildtrees" -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path "C:\vcpkg\packages" -Recurse -Force -ErrorAction SilentlyContinue
+        
+        # 2. Create the junctions
+        New-Item -ItemType Junction -Path "C:\vcpkg\buildtrees" -Target $buildtrees | Out-Null
+        New-Item -ItemType Junction -Path "C:\vcpkg\packages" -Target $packages | Out-Null
 
         $bestGb = [math]::Round($best.Free / 1GB, 2)
         Write-Host "Selected vcpkg storage root: $($best.Root)"
