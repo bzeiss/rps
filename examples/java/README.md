@@ -1,6 +1,6 @@
 # RPS Java Client Example
 
-This is a professional Java client for the Reliable Plugin Scanner (RPS) gRPC service. It demonstrates how to connect to the server, start a scan, and handle streaming scan events using a modern Terminal UI (TUI).
+This is a professional Java client for the RPS gRPC service. It demonstrates how to connect to the server, start a scan, and handle streaming scan events using a modern Terminal UI (TUI).
 
 ## Prerequisites
 
