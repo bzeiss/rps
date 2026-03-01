@@ -50,6 +50,54 @@ jobs:
       if: runner.os == 'Windows'
       uses: ilammy/msvc-dev-cmd@v1
 
+    - name: Select Windows storage for vcpkg
+      if: runner.os == 'Windows'
+      id: win_storage
+      shell: pwsh
+      run: |
+        $candidates = @()
+        foreach ($p in @($env:RUNNER_TEMP, $env:GITHUB_WORKSPACE, 'D:\', 'C:\')) {
+          if (-not $p) { continue }
+          if (-not (Test-Path $p)) { continue }
+          $resolved = (Resolve-Path $p).Path
+          $qualifier = Split-Path -Qualifier $resolved
+          $driveName = $qualifier.TrimEnd('\').TrimEnd(':')
+          $drive = Get-PSDrive -Name $driveName -ErrorAction SilentlyContinue
+          if ($drive) {
+            $candidates += [pscustomobject]@{
+              Root = $qualifier
+              Free = [int64]$drive.Free
+            }
+          }
+        }
+
+        if (-not $candidates) {
+          throw "Could not determine a writable storage location for vcpkg."
+        }
+
+        $best = $candidates | Sort-Object Free -Descending | Select-Object -First 1
+        $base = Join-Path $best.Root "vcpkg-cache"
+        $archives = Join-Path $base "archives"
+        $downloads = Join-Path $base "downloads"
+
+        New-Item -ItemType Directory -Force -Path $archives, $downloads | Out-Null
+
+        "VCPKG_DEFAULT_BINARY_CACHE=$archives" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        "VCPKG_DOWNLOADS=$downloads" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+        "vcpkg_cache_dir=$archives" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+        "vcpkg_downloads_dir=$downloads" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+        $bestGb = [math]::Round($best.Free / 1GB, 2)
+        $all = $candidates | Sort-Object Free -Descending | ForEach-Object {
+          "$($_.Root)=$([math]::Round($_.Free / 1GB, 2))GB"
+        }
+        Write-Host "Storage candidates: $($all -join ', ')"
+        Write-Host "Selected vcpkg storage root: $($best.Root)"
+        Write-Host "Selected drive free space: $bestGb GB"
+        Write-Host "vcpkg archives: $archives"
+        Write-Host "vcpkg downloads: $downloads"
+
     - name: Restore vcpkg binary archives (Unix)
       if: runner.os != 'Windows'
       id: vcpkg_cache_restore_unix
@@ -65,7 +113,7 @@ jobs:
       id: vcpkg_cache_restore_windows
       uses: actions/cache/restore@v4
       with:
-        path: ${{ env.LOCALAPPDATA }}\vcpkg\archives
+        path: ${{ steps.win_storage.outputs.vcpkg_cache_dir }}
         key: vcpkg-archives-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
         restore-keys: |
           vcpkg-archives-${{ runner.os }}-${{ matrix.toolchain }}-
@@ -129,7 +177,7 @@ jobs:
       if: ${{ runner.os == 'Windows' && always() && steps.vcpkg_cache_restore_windows.outputs.cache-hit != 'true' }}
       uses: actions/cache/save@v4
       with:
-        path: ${{ env.LOCALAPPDATA }}\vcpkg\archives
+        path: ${{ steps.win_storage.outputs.vcpkg_cache_dir }}
         key: vcpkg-archives-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
 
     - name: Build (Windows)
