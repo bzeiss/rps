@@ -77,26 +77,28 @@ jobs:
 
         $best = $candidates | Sort-Object Free -Descending | Select-Object -First 1
         $base = Join-Path $best.Root "vcpkg-cache"
+        
+        # Add buildtrees and packages to the D: drive paths
         $archives = Join-Path $base "archives"
         $downloads = Join-Path $base "downloads"
+        $buildtrees = Join-Path $base "buildtrees"
+        $packages = Join-Path $base "packages"
 
-        New-Item -ItemType Directory -Force -Path $archives, $downloads | Out-Null
+        New-Item -ItemType Directory -Force -Path $archives, $downloads, $buildtrees, $packages | Out-Null
 
         "VCPKG_DEFAULT_BINARY_CACHE=$archives" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         "VCPKG_DOWNLOADS=$downloads" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        
+        # Force vcpkg to compile on the D: drive
+        "VCPKG_BUILDTREES_DIR=$buildtrees" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        "VCPKG_PACKAGES_DIR=$packages" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
         "vcpkg_cache_dir=$archives" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
         "vcpkg_downloads_dir=$downloads" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
         $bestGb = [math]::Round($best.Free / 1GB, 2)
-        $all = $candidates | Sort-Object Free -Descending | ForEach-Object {
-          "$($_.Root)=$([math]::Round($_.Free / 1GB, 2))GB"
-        }
-        Write-Host "Storage candidates: $($all -join ', ')"
         Write-Host "Selected vcpkg storage root: $($best.Root)"
         Write-Host "Selected drive free space: $bestGb GB"
-        Write-Host "vcpkg archives: $archives"
-        Write-Host "vcpkg downloads: $downloads"
 
     - name: Restore vcpkg binary archives (Unix)
       if: runner.os != 'Windows'
