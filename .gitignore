@@ -42,3 +42,8 @@ kiloHearts.log
 .vscode
 
 plans/
+build_ninja_msvc/vcpkg-manifest-install.log
+build_ninja_msvc/CMakeCache.txt
+build_ninja_msvc/CMakeFiles/cmake.check_cache
+
+_private

@@ -3,6 +3,7 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include "WindowsProcessJob.hpp"
 #else
 #include <unistd.h>
 #include <sys/wait.h>
@@ -81,8 +82,14 @@ namespace ansi {
 // ---------------------------------------------------------------------------
 static std::atomic<bool> g_interrupted{false};
 
-// Forward-declare — defined after ServerManager
+// Forward-declare signal setup.
 static void installSignalHandlers();
+#ifdef _WIN32
+static bool processDebugEnabled() {
+    const char* v = std::getenv("RPS_DEBUG_PROCESS_LIFECYCLE");
+    return v && std::string(v) == "1";
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // Server process manager
@@ -114,6 +121,22 @@ public:
         }
         m_processHandle = pi.hProcess;
         CloseHandle(pi.hThread);
+        if (processDebugEnabled()) {
+            std::cerr << "[rps] spawned server process\n";
+        }
+
+        // Windows process ownership model:
+        // parent/child does not imply lifetime ownership. Attach rps-server
+        // to a Job Object so parent exit tears down the process tree.
+        std::string jobErr;
+        if (!m_windowsJob.attach(m_processHandle, &jobErr)) {
+            TerminateProcess(m_processHandle, 1);
+            CloseHandle(m_processHandle);
+            m_processHandle = nullptr;
+            m_windowsJob.close();
+            std::cerr << "Error: " << jobErr << "\n";
+            return false;
+        }
 #else
         // Fork + exec on POSIX
         m_pid = fork();
@@ -168,6 +191,9 @@ public:
 
 #ifdef _WIN32
         if (m_processHandle) {
+            if (processDebugEnabled()) {
+                std::cerr << "[rps] stopping server process\n";
+            }
             if (inHurry) {
                 TerminateProcess(m_processHandle, 0);
             } else {
@@ -177,6 +203,7 @@ public:
             CloseHandle(m_processHandle);
             m_processHandle = nullptr;
         }
+        m_windowsJob.close();
 #else
         if (m_pid > 0) {
             int status;
@@ -206,6 +233,7 @@ private:
     bool m_running = false;
 #ifdef _WIN32
     HANDLE m_processHandle = nullptr;
+    WindowsProcessJob m_windowsJob;
 #else
     pid_t m_pid = -1;
 #endif
@@ -745,3 +773,6 @@ int main(int argc, char* argv[]) {
     // ServerManager destructor handles shutdown
     return rc;
 }
+
+
+

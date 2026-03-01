@@ -27,11 +27,37 @@ The `rps.proto` file is automatically copied from the project root into the Java
 
 ## Running the Client
 
-To run the client, use the `exec:exec` goal. This ensures the correct JVM flags are passed to provide a clean, warning-free output:
+### Recommended on Windows
+
+Run the Java process directly (not via `mvn exec:*`):
+
+```powershell
+cd examples/java
+.\run-client.ps1
+```
+
+Why: on Windows, `mvn exec:*` runs under `cmd`/batch mediation, and `Ctrl+C` handling is less reliable for child-process teardown. Running `java` directly gives the JVM full signal handling.
+On Windows, spawned server processes are additionally bound to a native Job Object, so they are torn down when the Java parent exits.
+
+You can skip rebuilding after the first run:
+
+```powershell
+.\run-client.ps1 -SkipBuild
+```
+
+### Optional (all platforms)
+
+You can still use Maven exec:
 
 ```bash
 mvn exec:exec
 ```
+
+But on Windows this is not recommended for interactive runs because `Ctrl+C` may be intercepted by the batch layer before normal JVM shutdown flow.
+
+### Process lifecycle debug
+
+Set `RPS_DEBUG_PROCESS_LIFECYCLE=1` to print spawn/attach/stop lifecycle logs.
 
 The client will:
 1. Check if an `rps-server` is running (and start one if needed).

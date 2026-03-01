@@ -3,10 +3,27 @@ cmake_minimum_required(VERSION 3.25)
 cmake_policy(SET CMP0167 NEW)
 
 project(rps-plugin-scanner
-    VERSION 0.2.0
-    DESCRIPTION "Reliable Plugin Scanner"
+    VERSION 0.2.1
+    DESCRIPTION "RPS"
     LANGUAGES C CXX
 )
+
+# x64-windows* vcpkg triplets produce MSVC-ABI binaries. Using GNU-targeting
+# clang++ (e.g. MSYS2 clang64) with those libraries causes linker failures
+# such as missing LIBCMTD/OLDNAMES import libs.
+if(WIN32
+   AND VCPKG_TARGET_TRIPLET MATCHES "^x64-windows"
+   AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang"
+   AND NOT CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC")
+    message(FATAL_ERROR
+        "Incompatible toolchain combination detected:\n"
+        "  compiler: ${CMAKE_CXX_COMPILER}\n"
+        "  triplet:  ${VCPKG_TARGET_TRIPLET}\n\n"
+        "The selected vcpkg triplet uses MSVC ABI libraries, but this clang++ "
+        "targets GNU/MinGW. Use one of:\n"
+        "  1) clang-cl or cl.exe with -DVCPKG_TARGET_TRIPLET=x64-windows-static\n"
+        "  2) clang++ with a MinGW triplet (for example x64-mingw-static).")
+endif()
 
 # Enforce strictly C++23
 set(CMAKE_CXX_STANDARD 23)
@@ -21,11 +38,17 @@ else()
     option(RPS_MSVC_STATIC_RUNTIME "Use static MSVC runtime (/MT)" OFF)
 endif()
 
-if(MSVC AND RPS_MSVC_STATIC_RUNTIME)
+if(WIN32
+   AND RPS_MSVC_STATIC_RUNTIME
+   AND (MSVC OR CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC"))
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    # Resolve LNK4098 by ignoring the runtime we're not using for each config
-    set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /NODEFAULTLIB:LIBCMTD")
-    set(CMAKE_EXE_LINKER_FLAGS_DEBUG "${CMAKE_EXE_LINKER_FLAGS_DEBUG} /NODEFAULTLIB:LIBCMT")
+    # Resolve LNK4098 by ignoring the runtime we're not using for each config.
+    # Keep this only for cl.exe-style drivers; clang++ (MSVC target) does not
+    # accept raw '/NODEFAULTLIB:...' in CMAKE_EXE_LINKER_FLAGS.
+    if(MSVC)
+        set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /NODEFAULTLIB:LIBCMTD")
+        set(CMAKE_EXE_LINKER_FLAGS_DEBUG "${CMAKE_EXE_LINKER_FLAGS_DEBUG} /NODEFAULTLIB:LIBCMT")
+    endif()
 endif()
 
 # Disable Boost Auto-Linking on Windows (CMake handles libraries explicitly)
@@ -35,7 +58,6 @@ add_definitions(-DBOOST_ALL_NO_LIB)
 add_library(rps_warnings INTERFACE)
 if(MSVC)
     target_compile_options(rps_warnings INTERFACE /W4 /WX /permissive-)
-    target_compile_definitions(rps_warnings INTERFACE NOMINMAX WIN32_LEAN_AND_MEAN)    
 else()
     target_compile_options(rps_warnings INTERFACE -Wall -Wextra -Wpedantic -Werror)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -44,33 +66,22 @@ else()
     endif()
 endif()
 
+if(WIN32)
+    target_compile_definitions(rps_warnings INTERFACE
+        NOMINMAX
+        WIN32_LEAN_AND_MEAN
+        _CRT_SECURE_NO_WARNINGS
+    )
+endif()
+
 # Force static linking
-if(WIN32 AND NOT MSVC)
+if(WIN32 AND NOT MSVC AND NOT CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
 endif()
 
-# Boost: build from local source tree via add_subdirectory
-# Override with: cmake -DBOOST_SOURCE_DIR=/path/to/boost
-#            or: export BOOST_SOURCE_DIR=/path/to/boost && cmake -B build
-if(DEFINED ENV{BOOST_SOURCE_DIR} AND NOT DEFINED BOOST_SOURCE_DIR)
-    set(BOOST_SOURCE_DIR "$ENV{BOOST_SOURCE_DIR}" CACHE PATH "Path to Boost source tree (requires Boost 1.90+)")
-else()
-    set(BOOST_SOURCE_DIR "${CMAKE_SOURCE_DIR}/third_party/boost" CACHE PATH "Path to Boost source tree (requires Boost 1.90+)")
-endif()
-if(NOT EXISTS "${BOOST_SOURCE_DIR}/CMakeLists.txt")
-    message(FATAL_ERROR
-        "Boost CMake source tree not found at: ${BOOST_SOURCE_DIR}\n"
-        "Note: The official boost.org tarball does NOT include CMake support.\n"
-        "You must clone Boost from GitHub:\n"
-        "  git clone https://github.com/boostorg/boost.git /path/to/boost\n"
-        "  cd /path/to/boost && git checkout boost-1.90.0\n"
-        "  git submodule update --init --recursive\n"
-        "Then pass: cmake -DBOOST_SOURCE_DIR=/path/to/boost\n"
-    )
-endif()
-set(BOOST_INCLUDE_LIBRARIES json program_options filesystem process interprocess uuid dll date_time)
-add_subdirectory(${BOOST_SOURCE_DIR} ${CMAKE_BINARY_DIR}/_deps/boost EXCLUDE_FROM_ALL)
+# Boost: managed entirely by vcpkg
+find_package(Boost REQUIRED COMPONENTS json program_options filesystem process interprocess uuid dll date_time crc)
 
 # Find SQLite3
 # Prefer the static library; fall back to shared via find_package

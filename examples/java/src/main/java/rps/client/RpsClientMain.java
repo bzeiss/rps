@@ -53,10 +53,11 @@ public class RpsClientMain {
         terminal.writer().println("RPS Java Client starting...");
 
         String serverBin = ServerManager.findServerBinary();
+        final boolean ownServer = serverBin != null;
         try (ServerManager server = (serverBin != null) ? new ServerManager(serverBin, port, dbPath, "info") : null) {
             if (server != null) {
                 Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                    try { server.close(); } catch (Exception e) {}
+                    try { server.close(); } catch (Exception ignored) {}
                 }));
                 server.start();
             }
@@ -76,6 +77,14 @@ public class RpsClientMain {
                 }
 
                 terminal.writer().println("\nScan complete.");
+
+                // Graceful shutdown is only attempted in the normal path.
+                if (ownServer) {
+                    try {
+                        client.shutdown();
+                    } catch (Exception ignored) {
+                    }
+                }
             }
         } catch (io.grpc.StatusRuntimeException e) {
             terminal.writer().println("gRPC Error: " + e.getStatus().getCode());

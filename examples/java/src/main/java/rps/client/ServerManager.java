@@ -10,11 +10,15 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 public class ServerManager implements AutoCloseable {
+    private static final boolean PROCESS_DEBUG =
+            "1".equals(System.getenv("RPS_DEBUG_PROCESS_LIFECYCLE"));
+
     private final String binPath;
     private final int port;
     private final String dbPath;
     private final String logLevel;
     private Process process;
+    private WindowsJobObject windowsJob;
 
     public ServerManager(String binPath, int port, String dbPath, String logLevel) {
         this.binPath = binPath;
@@ -51,6 +55,15 @@ public class ServerManager implements AutoCloseable {
 
         System.out.println("Spawning server: " + String.join(" ", cmd));
         this.process = pb.start();
+        if (isWindows()) {
+            // Windows process ownership model:
+            // parent/child does not imply lifetime ownership. We explicitly attach
+            // rps-server to a Job Object so parent exit tears down the process tree.
+            this.windowsJob = WindowsJobObject.createAndAssign(process.pid());
+            if (PROCESS_DEBUG) {
+                System.out.println("[rps] attached Windows Job Object to pid " + process.pid());
+            }
+        }
 
         // Wait for server to be ready
         long deadline = System.currentTimeMillis() + 10000;
@@ -106,15 +119,40 @@ public class ServerManager implements AutoCloseable {
 
     @Override
     public void close() {
-        if (process != null && process.isAlive()) {
-            // Kill the entire process tree (server + any scanner workers)
-            process.descendants().forEach(ProcessHandle::destroyForcibly);
-            process.destroyForcibly();
-            try {
-                process.waitFor(5, TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                // already force-killed
+        try {
+            if (process != null) {
+                if (PROCESS_DEBUG) {
+                    System.out.println("[rps] stopping server pid " + process.pid());
+                }
+                process.destroy();
+                try {
+                    process.waitFor(2, TimeUnit.SECONDS);
+                } catch (InterruptedException ignored) {
+                }
+
+                // If graceful stop didn't finish quickly, force-kill child tree.
+                if (process.isAlive()) {
+                    process.descendants().forEach(ProcessHandle::destroyForcibly);
+                    process.destroyForcibly();
+                    try {
+                        process.waitFor(5, TimeUnit.SECONDS);
+                    } catch (InterruptedException ignored) {
+                    }
+                }
             }
+        } finally {
+            if (windowsJob != null) {
+                windowsJob.close();
+                windowsJob = null;
+                if (PROCESS_DEBUG) {
+                    System.out.println("[rps] closed Windows Job Object");
+                }
+            }
+            process = null;
         }
+    }
+
+    private static boolean isWindows() {
+        return System.getProperty("os.name").toLowerCase().contains("win");
     }
 }
