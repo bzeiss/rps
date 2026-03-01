@@ -209,7 +209,7 @@ jobs:
         cp build/apps/rps-vstscannermaster/vstscannermaster release_stage/
         cp build/examples/cpp/rps-example-client release_stage/
         cd release_stage
-        zip -r ../rps-binaries-${{ matrix.name }}.zip ./*
+        zip -r "../rps-binaries-${{ matrix.name }}.zip" ./*
 
     - name: Stage & Zip Binaries (Windows MSVC)
       if: runner.os == 'Windows' && matrix.toolchain == 'msvc'
@@ -220,7 +220,7 @@ jobs:
         Copy-Item build\apps\rps-pluginscanner\rps-pluginscanner.exe release_stage\
         Copy-Item build\apps\rps-vstscannermaster\vstscannermaster.exe release_stage\
         Copy-Item build\examples\cpp\rps-example-client.exe release_stage\
-        Compress-Archive -Path release_stage\* -DestinationPath rps-binaries-${{ matrix.name }}.zip
+        Compress-Archive -Path release_stage\* -DestinationPath "rps-binaries-${{ matrix.name }}.zip"
 
     - name: Stage & Zip Binaries (Windows Clang)
       if: runner.os == 'Windows' && matrix.toolchain == 'clang'
@@ -231,7 +231,7 @@ jobs:
         Copy-Item build\apps\rps-pluginscanner\rps-pluginscanner.exe release_stage\
         Copy-Item build\apps\rps-vstscannermaster\vstscannermaster.exe release_stage\
         Copy-Item build\examples\cpp\rps-example-client.exe release_stage\
-        Compress-Archive -Path release_stage\* -DestinationPath rps-binaries-${{ matrix.name }}.zip
+        Compress-Archive -Path release_stage\* -DestinationPath "rps-binaries-${{ matrix.name }}.zip"
 
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
