@@ -99,6 +99,15 @@ jobs:
         # 2. Create the junctions
         New-Item -ItemType Junction -Path "C:\vcpkg\buildtrees" -Target $buildtrees | Out-Null
         New-Item -ItemType Junction -Path "C:\vcpkg\packages" -Target $packages | Out-Null
+        
+        # --- PROOF OF REDIRECTION ---
+        Write-Host "Testing the Junctions..."
+        Set-Content -Path "C:\vcpkg\buildtrees\proof.txt" -Value "This is actually on the D drive!"
+        if (Test-Path "$buildtrees\proof.txt") {
+            Write-Host "SUCCESS: C:\vcpkg\buildtrees is successfully routing to the D: drive!"
+        } else {
+            Write-Error "FAILURE: Junction didn't work."
+        }
 
         $bestGb = [math]::Round($best.Free / 1GB, 2)
         Write-Host "Selected vcpkg storage root: $($best.Root)"
