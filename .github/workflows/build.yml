@@ -43,15 +43,15 @@ jobs:
 
           # Windows
           - os: windows-latest
-            name: Windows Clang x64
+            name: Windows x64
             toolchain: clang
             artifact_name: rps-win-x64
             archive_ext: zip
             vcpkg_triplet: x64-windows-static
             msvc_arch: x64
 
-          - os: windows-latest
-            name: Windows Clang ARM64
+          - os: windows-11-arm
+            name: Windows arm64
             toolchain: clang
             artifact_name: rps-win-arm64
             archive_ext: zip
