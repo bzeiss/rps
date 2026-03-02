@@ -11,231 +11,265 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Linux
           - os: ubuntu-latest
             name: Linux x64
             toolchain: clang
+            artifact_name: rps-linux-x64
+            archive_ext: tar.gz
+            vcpkg_triplet: x64-linux
+
+          - os: ubuntu-24.04-arm
+            name: Linux arm64
+            toolchain: clang
+            artifact_name: rps-linux-arm64
+            archive_ext: tar.gz
+            vcpkg_triplet: arm64-linux
+
+          # macOS
+          - os: macos-15-large
+            name: macOS Intel
+            toolchain: clang
+            artifact_name: rps-macos-intel
+            archive_ext: zip
+            vcpkg_triplet: x64-osx-release
+
           - os: macos-15
             name: macOS Apple Silicon
             toolchain: clang
-#          - os: windows-latest
-#            name: Windows MSVC
-#            toolchain: msvc
+            artifact_name: rps-macos-arm64
+            archive_ext: zip
+            vcpkg_triplet: arm64-osx-release
+
+          # Windows
           - os: windows-latest
-            name: Windows Clang
+            name: Windows Clang x64
             toolchain: clang
+            artifact_name: rps-win-x64
+            archive_ext: zip
+            vcpkg_triplet: x64-windows-static
+            msvc_arch: x64
+
+          - os: windows-latest
+            name: Windows Clang ARM64
+            toolchain: clang
+            artifact_name: rps-win-arm64
+            archive_ext: zip
+            vcpkg_triplet: arm64-windows-static
+            msvc_arch: x64_arm64
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-    - name: Install Build Tools (Linux)
-      if: runner.os == 'Linux'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y cmake ninja-build g++ clang pkg-config
+      - name: Install Build Tools (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++ clang pkg-config
 
-    - name: Install Build Tools (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        brew install cmake ninja pkg-config
+      - name: Install Build Tools (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install cmake ninja pkg-config
 
-    - name: Setup ccache
-      uses: hendrikmuhs/ccache-action@v1.2
-      with:
-        key: ${{ runner.os }}-${{ matrix.toolchain }}-ccache
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-${{ matrix.toolchain }}-ccache
 
-    - name: Setup MSVC Developer Command Prompt
-      if: runner.os == 'Windows'
-      uses: ilammy/msvc-dev-cmd@v1
-    
-    - name: Select Windows storage for vcpkg
-      if: runner.os == 'Windows'
-      id: win_storage
-      shell: pwsh
-      run: |
-        $candidates = @()
-        foreach ($p in @($env:RUNNER_TEMP, $env:GITHUB_WORKSPACE, 'D:\', 'C:\')) {
-          if (-not $p) { continue }
-          if (-not (Test-Path $p)) { continue }
-          $resolved = (Resolve-Path $p).Path
-          $qualifier = Split-Path -Qualifier $resolved
-          $driveName = $qualifier.TrimEnd('\').TrimEnd(':')
-          $drive = Get-PSDrive -Name $driveName -ErrorAction SilentlyContinue
-          if ($drive) {
-            $candidates += [pscustomobject]@{
-              Root = $qualifier
-              Free = [int64]$drive.Free
+      - name: Setup MSVC Developer Command Prompt
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc_arch || 'x64' }}
+
+      - name: Select Windows storage for vcpkg
+        if: runner.os == 'Windows'
+        id: win_storage
+        shell: pwsh
+        run: |
+          $candidates = @()
+          foreach ($p in @($env:RUNNER_TEMP, $env:GITHUB_WORKSPACE, 'D:\', 'C:\')) {
+            if (-not $p) { continue }
+            if (-not (Test-Path $p)) { continue }
+            $resolved = (Resolve-Path $p).Path
+            $qualifier = Split-Path -Qualifier $resolved
+            $driveName = $qualifier.TrimEnd('\').TrimEnd(':')
+            $drive = Get-PSDrive -Name $driveName -ErrorAction SilentlyContinue
+            if ($drive) {
+              $candidates += [pscustomobject]@{
+                Root = $qualifier
+                Free = [int64]$drive.Free
+              }
             }
           }
-        }
 
-        if (-not $candidates) {
-          throw "Could not determine a writable storage location for vcpkg."
-        }
+          if (-not $candidates) {
+            throw "Could not determine a writable storage location for vcpkg."
+          }
 
-        $best = $candidates | Sort-Object Free -Descending | Select-Object -First 1
-        $base = Join-Path $best.Root "vcpkg-cache"
-        
-        $archives = Join-Path $base "archives"
-        $downloads = Join-Path $base "downloads"
-        $buildtrees = Join-Path $base "buildtrees"
-        $packages = Join-Path $base "packages"
+          $best = $candidates | Sort-Object Free -Descending | Select-Object -First 1
+          $base = Join-Path $best.Root "vcpkg-cache"
 
-        New-Item -ItemType Directory -Force -Path $archives, $downloads, $buildtrees, $packages | Out-Null
+          $archives = Join-Path $base "archives"
+          $downloads = Join-Path $base "downloads"
+          $buildtrees = Join-Path $base "buildtrees"
+          $packages = Join-Path $base "packages"
 
-        "VCPKG_DEFAULT_BINARY_CACHE=$archives" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-        "VCPKG_DOWNLOADS=$downloads" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          New-Item -ItemType Directory -Force -Path $archives, $downloads, $buildtrees, $packages | Out-Null
 
-        "vcpkg_cache_dir=$archives" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-        "vcpkg_downloads_dir=$downloads" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "VCPKG_DEFAULT_BINARY_CACHE=$archives" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "VCPKG_DOWNLOADS=$downloads" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-        # --- THE FIX: Create Junctions to redirect C: to D: ---
-        # 1. Remove existing directories if GitHub pre-created them
-        Remove-Item -Path "C:\vcpkg\buildtrees" -Recurse -Force -ErrorAction SilentlyContinue
-        Remove-Item -Path "C:\vcpkg\packages" -Recurse -Force -ErrorAction SilentlyContinue
-        
-        # 2. Create the junctions
-        New-Item -ItemType Junction -Path "C:\vcpkg\buildtrees" -Target $buildtrees | Out-Null
-        New-Item -ItemType Junction -Path "C:\vcpkg\packages" -Target $packages | Out-Null
-        
-        # --- PROOF OF REDIRECTION ---
-        Write-Host "Testing the Junctions..."
-        Set-Content -Path "C:\vcpkg\buildtrees\proof.txt" -Value "This is actually on the D drive!"
-        if (Test-Path "$buildtrees\proof.txt") {
-            Write-Host "SUCCESS: C:\vcpkg\buildtrees is successfully routing to the D: drive!"
-        } else {
-            Write-Error "FAILURE: Junction didn't work."
-        }
+          "vcpkg_cache_dir=$archives" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "vcpkg_downloads_dir=$downloads" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
-        $bestGb = [math]::Round($best.Free / 1GB, 2)
-        Write-Host "Selected vcpkg storage root: $($best.Root)"
-        Write-Host "Selected drive free space: $bestGb GB"
+          # --- THE FIX: Create Junctions to redirect C: to D: ---
+          # 1. Remove existing directories if GitHub pre-created them
+          Remove-Item -Path "C:\vcpkg\buildtrees" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\vcpkg\packages" -Recurse -Force -ErrorAction SilentlyContinue
 
-    - name: Restore vcpkg binary archives (Unix)
-      if: runner.os != 'Windows'
-      id: vcpkg_cache_restore_unix
-      uses: actions/cache/restore@v4
-      with:
-        path: ~/.cache/vcpkg/archives
-        key: vcpkg-archives-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
-        restore-keys: |
-          vcpkg-archives-${{ runner.os }}-${{ matrix.toolchain }}-
+          # 2. Create the junctions
+          New-Item -ItemType Junction -Path "C:\vcpkg\buildtrees" -Target $buildtrees | Out-Null
+          New-Item -ItemType Junction -Path "C:\vcpkg\packages" -Target $packages | Out-Null
 
-    - name: Restore vcpkg binary archives (Windows)
-      if: runner.os == 'Windows'
-      id: vcpkg_cache_restore_windows
-      uses: actions/cache/restore@v4
-      with:
-        path: ${{ steps.win_storage.outputs.vcpkg_cache_dir }}
-        key: vcpkg-archives-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
-        restore-keys: |
-          vcpkg-archives-${{ runner.os }}-${{ matrix.toolchain }}-
+          # --- PROOF OF REDIRECTION ---
+          Write-Host "Testing the Junctions..."
+          Set-Content -Path "C:\vcpkg\buildtrees\proof.txt" -Value "This is actually on the D drive!"
+          if (Test-Path "$buildtrees\proof.txt") {
+              Write-Host "SUCCESS: C:\vcpkg\buildtrees is successfully routing to the D: drive!"
+          } else {
+              Write-Error "FAILURE: Junction didn't work."
+          }
 
-    - name: Ensure vcpkg baseline commit is available (Unix)
-      if: runner.os != 'Windows'
-      run: |
-        BASELINE=$(python3 -c "import json; print(json.load(open('vcpkg.json', encoding='utf-8'))['builtin-baseline'])")
-        git -C "$VCPKG_INSTALLATION_ROOT" fetch --no-tags origin "$BASELINE" || git -C "$VCPKG_INSTALLATION_ROOT" fetch --tags --prune origin
-        git -C "$VCPKG_INSTALLATION_ROOT" cat-file -e "${BASELINE}^{commit}"
+          $bestGb = [math]::Round($best.Free / 1GB, 2)
+          Write-Host "Selected vcpkg storage root: $($best.Root)"
+          Write-Host "Selected drive free space: $bestGb GB"
 
-    - name: Ensure vcpkg baseline commit is available (Windows)
-      if: runner.os == 'Windows'
-      shell: pwsh
-      run: |
-        $baseline = (Get-Content vcpkg.json | ConvertFrom-Json).'builtin-baseline'
-        git -C "$env:VCPKG_INSTALLATION_ROOT" fetch --no-tags origin $baseline
-        if ($LASTEXITCODE -ne 0) {
-          git -C "$env:VCPKG_INSTALLATION_ROOT" fetch --tags --prune origin
-        }
-        git -C "$env:VCPKG_INSTALLATION_ROOT" cat-file -e "$baseline`^{commit}"
+      - name: Restore vcpkg binary archives (Unix)
+        if: runner.os != 'Windows'
+        id: vcpkg_cache_restore_unix
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/vcpkg/archives
+          key: vcpkg-archives-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          restore-keys: |
+            vcpkg-archives-${{ runner.os }}-${{ matrix.toolchain }}-
 
-    - name: Configure CMake (Unix)
-      if: runner.os != 'Windows'
-      run: |
-        if [ "$RUNNER_OS" == "Linux" ]; then
-          TRIPLET="x64-linux" # vcpkg's x64-linux defaults to static libraries
-        else
-          TRIPLET="arm64-osx-release" # Force static linking on macOS
-        fi
+      - name: Restore vcpkg binary archives (Windows)
+        if: runner.os == 'Windows'
+        id: vcpkg_cache_restore_windows
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.win_storage.outputs.vcpkg_cache_dir }}
+          key: vcpkg-archives-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          restore-keys: |
+            vcpkg-archives-${{ runner.os }}-${{ matrix.toolchain }}-
 
-        cmake -G Ninja -B build \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DCMAKE_C_COMPILER=clang \
-          -DCMAKE_CXX_COMPILER=clang++ \
-          -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-          -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
-          -DVCPKG_TARGET_TRIPLET=$TRIPLET
+      - name: Ensure vcpkg baseline commit is available (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          BASELINE=$(python3 -c "import json; print(json.load(open('vcpkg.json', encoding='utf-8'))['builtin-baseline'])")
+          git -C "$VCPKG_INSTALLATION_ROOT" fetch --no-tags origin "$BASELINE" || git -C "$VCPKG_INSTALLATION_ROOT" fetch --tags --prune origin
+          git -C "$VCPKG_INSTALLATION_ROOT" cat-file -e "${BASELINE}^{commit}"
 
-    - name: Save vcpkg binary archives (Unix)
-      if: ${{ runner.os != 'Windows' && always() && steps.vcpkg_cache_restore_unix.outputs.cache-hit != 'true' }}
-      uses: actions/cache/save@v4
-      with:
-        path: ~/.cache/vcpkg/archives
-        key: vcpkg-archives-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+      - name: Ensure vcpkg baseline commit is available (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $baseline = (Get-Content vcpkg.json | ConvertFrom-Json).'builtin-baseline'
+          git -C "$env:VCPKG_INSTALLATION_ROOT" fetch --no-tags origin $baseline
+          if ($LASTEXITCODE -ne 0) {
+            git -C "$env:VCPKG_INSTALLATION_ROOT" fetch --tags --prune origin
+          }
+          git -C "$env:VCPKG_INSTALLATION_ROOT" cat-file -e "$baseline`^{commit}"
 
-    - name: Build (Unix)
-      if: runner.os != 'Windows'
-      run: cmake --build build --config Release
+      - name: Configure CMake (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cmake -G Ninja -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }}
 
-    - name: Configure CMake (Windows MSVC)
-      if: runner.os == 'Windows' && matrix.toolchain == 'msvc'
-      run: cmake -G Ninja -B build -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DRPS_MSVC_STATIC_RUNTIME=ON
+      - name: Save vcpkg binary archives (Unix)
+        if: ${{ runner.os != 'Windows' && always() && steps.vcpkg_cache_restore_unix.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/vcpkg/archives
+          key: vcpkg-archives-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
 
-    - name: Configure CMake (Windows Clang)
-      if: runner.os == 'Windows' && matrix.toolchain == 'clang'
-      run: cmake -G Ninja -B build -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DRPS_MSVC_STATIC_RUNTIME=ON
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
+        run: cmake --build build --config Release
 
-    - name: Save vcpkg binary archives (Windows)
-      if: ${{ runner.os == 'Windows' && always() && steps.vcpkg_cache_restore_windows.outputs.cache-hit != 'true' }}
-      uses: actions/cache/save@v4
-      with:
-        path: ${{ steps.win_storage.outputs.vcpkg_cache_dir }}
-        key: vcpkg-archives-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+      - name: Configure CMake (Windows MSVC)
+        if: runner.os == 'Windows' && matrix.toolchain == 'msvc'
+        run: cmake -G Ninja -B build -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DRPS_MSVC_STATIC_RUNTIME=ON
 
-    - name: Build (Windows)
-      if: runner.os == 'Windows'
-      run: cmake --build build --config Release
+      - name: Configure CMake (Windows Clang)
+        if: runner.os == 'Windows' && matrix.toolchain == 'clang'
+        run: cmake -G Ninja -B build -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }} -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DRPS_MSVC_STATIC_RUNTIME=ON
 
-    - name: Stage & Zip Binaries (Unix)
-      if: runner.os != 'Windows'
-      run: |
-        mkdir -p release_stage
-        cp build/apps/rps-server/rps-server release_stage/
-        cp build/apps/rps-standalone/rps-standalone release_stage/
-        cp build/apps/rps-pluginscanner/rps-pluginscanner release_stage/
-        cp build/apps/rps-vstscannermaster/vstscannermaster release_stage/
-        cp build/examples/cpp/rps-example-client release_stage/
-        cd release_stage
-        zip -r "../rps-binaries-${{ matrix.name }}.zip" ./*
+      - name: Save vcpkg binary archives (Windows)
+        if: ${{ runner.os == 'Windows' && always() && steps.vcpkg_cache_restore_windows.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.win_storage.outputs.vcpkg_cache_dir }}
+          key: vcpkg-archives-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
 
-    - name: Stage & Zip Binaries (Windows MSVC)
-      if: runner.os == 'Windows' && matrix.toolchain == 'msvc'
-      run: |
-        New-Item -ItemType Directory -Force -Path release_stage
-        Copy-Item build\apps\rps-server\rps-server.exe release_stage\
-        Copy-Item build\apps\rps-standalone\rps-standalone.exe release_stage\
-        Copy-Item build\apps\rps-pluginscanner\rps-pluginscanner.exe release_stage\
-        Copy-Item build\apps\rps-vstscannermaster\vstscannermaster.exe release_stage\
-        Copy-Item build\examples\cpp\rps-example-client.exe release_stage\
-        Compress-Archive -Path release_stage\* -DestinationPath "rps-binaries-${{ matrix.name }}.zip"
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --build build --config Release
 
-    - name: Stage & Zip Binaries (Windows Clang)
-      if: runner.os == 'Windows' && matrix.toolchain == 'clang'
-      run: |
-        New-Item -ItemType Directory -Force -Path release_stage
-        Copy-Item build\apps\rps-server\rps-server.exe release_stage\
-        Copy-Item build\apps\rps-standalone\rps-standalone.exe release_stage\
-        Copy-Item build\apps\rps-pluginscanner\rps-pluginscanner.exe release_stage\
-        Copy-Item build\apps\rps-vstscannermaster\vstscannermaster.exe release_stage\
-        Copy-Item build\examples\cpp\rps-example-client.exe release_stage\
-        Compress-Archive -Path release_stage\* -DestinationPath "rps-binaries-${{ matrix.name }}.zip"
+      - name: Stage & Archive Binaries (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p release_stage
+          cp build/apps/rps-server/rps-server release_stage/
+          cp build/apps/rps-standalone/rps-standalone release_stage/
+          cp build/apps/rps-pluginscanner/rps-pluginscanner release_stage/
+          cp build/apps/rps-vstscannermaster/vstscannermaster release_stage/
+          cp build/examples/cpp/rps-example-client release_stage/
+          cd release_stage
+          if [ "${{ matrix.archive_ext }}" = "tar.gz" ]; then
+            tar -czvf "../${{ matrix.artifact_name }}.tar.gz" ./*
+          else
+            zip -r "../${{ matrix.artifact_name }}.zip" ./*
+          fi
 
-    - name: Upload Artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: rps-binaries-${{ matrix.name }}
-        path: rps-binaries-${{ matrix.name }}.zip
-        retention-days: 7
+      - name: Stage & Zip Binaries (Windows MSVC)
+        if: runner.os == 'Windows' && matrix.toolchain == 'msvc'
+        run: |
+          New-Item -ItemType Directory -Force -Path release_stage
+          Copy-Item build\apps\rps-server\rps-server.exe release_stage\
+          Copy-Item build\apps\rps-standalone\rps-standalone.exe release_stage\
+          Copy-Item build\apps\rps-pluginscanner\rps-pluginscanner.exe release_stage\
+          Copy-Item build\apps\rps-vstscannermaster\vstscannermaster.exe release_stage\
+          Copy-Item build\examples\cpp\rps-example-client.exe release_stage\
+          Compress-Archive -Path release_stage\* -DestinationPath "rps-binaries-${{ matrix.name }}.zip"
+
+      - name: Stage & Archive Binaries (Windows Clang)
+        if: runner.os == 'Windows' && matrix.toolchain == 'clang'
+        run: |
+          New-Item -ItemType Directory -Force -Path release_stage
+          Copy-Item build\apps\rps-server\rps-server.exe release_stage\
+          Copy-Item build\apps\rps-standalone\rps-standalone.exe release_stage\
+          Copy-Item build\apps\rps-pluginscanner\rps-pluginscanner.exe release_stage\
+          Copy-Item build\apps\rps-vstscannermaster\vstscannermaster.exe release_stage\
+          Copy-Item build\examples\cpp\rps-example-client.exe release_stage\
+          Compress-Archive -Path release_stage\* -DestinationPath "${{ matrix.artifact_name }}.zip"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}.${{ matrix.archive_ext }}
+          retention-days: 7
