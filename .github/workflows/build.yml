@@ -27,12 +27,12 @@ jobs:
             vcpkg_triplet: arm64-linux
 
           # macOS
-          - os: macos-15-large
-            name: macOS Intel
-            toolchain: clang
-            artifact_name: rps-macos-intel
-            archive_ext: zip
-            vcpkg_triplet: x64-osx-release
+          # - os: macos-15-large
+          #   name: macOS Intel
+          #   toolchain: clang
+          #   artifact_name: rps-macos-intel
+          #   archive_ext: zip
+          #   vcpkg_triplet: x64-osx-release
 
           - os: macos-15
             name: macOS Apple Silicon
@@ -169,17 +169,24 @@ jobs:
           restore-keys: |
             vcpkg-archives-${{ runner.os }}-${{ matrix.toolchain }}-
 
-      - name: Ensure vcpkg baseline commit is available (Unix)
+      - name: Ensure vcpkg registry and baseline commit are updated (Unix)
         if: runner.os != 'Windows'
         run: |
+          sudo git config --global --add safe.directory "$VCPKG_INSTALLATION_ROOT"
+          git -C "$VCPKG_INSTALLATION_ROOT" fetch origin master
+          git -C "$VCPKG_INSTALLATION_ROOT" checkout -f master
+          git -C "$VCPKG_INSTALLATION_ROOT" pull --rebase
           BASELINE=$(python3 -c "import json; print(json.load(open('vcpkg.json', encoding='utf-8'))['builtin-baseline'])")
           git -C "$VCPKG_INSTALLATION_ROOT" fetch --no-tags origin "$BASELINE" || git -C "$VCPKG_INSTALLATION_ROOT" fetch --tags --prune origin
           git -C "$VCPKG_INSTALLATION_ROOT" cat-file -e "${BASELINE}^{commit}"
 
-      - name: Ensure vcpkg baseline commit is available (Windows)
+      - name: Ensure vcpkg registry and baseline commit are updated (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          git -C "$env:VCPKG_INSTALLATION_ROOT" fetch origin master
+          git -C "$env:VCPKG_INSTALLATION_ROOT" checkout -f master
+          git -C "$env:VCPKG_INSTALLATION_ROOT" pull --rebase
           $baseline = (Get-Content vcpkg.json | ConvertFrom-Json).'builtin-baseline'
           git -C "$env:VCPKG_INSTALLATION_ROOT" fetch --no-tags origin $baseline
           if ($LASTEXITCODE -ne 0) {
