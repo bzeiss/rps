@@ -75,14 +75,6 @@ jobs:
         run: |
           brew install cmake ninja pkg-config
 
-      - name: Install Build Tools (Windows ARM64)
-        if: runner.os == 'Windows' && matrix.msvc_arch == 'arm64'
-        shell: pwsh
-        run: |
-          Invoke-WebRequest -Uri "https://github.com/ninja-build/ninja/releases/download/v1.13.2/ninja-winarm64.zip" -OutFile "C:\ninja.zip"
-          Expand-Archive "C:\ninja.zip" -DestinationPath C:\ninja -Force
-          "C:\ninja" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
@@ -156,6 +148,18 @@ jobs:
           $bestGb = [math]::Round($best.Free / 1GB, 2)
           Write-Host "Selected vcpkg storage root: $($best.Root)"
           Write-Host "Selected drive free space: $bestGb GB"
+
+          # --- VCPKG NINJA BOOTSTRAP FIX ---
+          # VCPKG on ARM64 struggles to extract ninja correctly due to 7zip architectural bugs.
+          # Pre-populating the exact directory VCPKG expects circumvents the broken inner downloader.
+          if ("${{ matrix.msvc_arch }}" -eq "arm64") {
+            $ninjaDir = Join-Path $downloads "tools\ninja-1.13.2-windows"
+            New-Item -ItemType Directory -Force -Path $ninjaDir | Out-Null
+            Invoke-WebRequest -Uri "https://github.com/ninja-build/ninja/releases/download/v1.13.2/ninja-winarm64.zip" -OutFile "$downloads\ninja.zip"
+            Expand-Archive "$downloads\ninja.zip" -DestinationPath $ninjaDir -Force
+            $ninjaDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+            Write-Host "Bootstrapped ARM64 Ninja directly into $ninjaDir"
+          }
 
       - name: Restore vcpkg binary archives (Unix)
         if: runner.os != 'Windows'
