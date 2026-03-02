@@ -56,7 +56,7 @@ jobs:
             artifact_name: rps-win-arm64
             archive_ext: zip
             vcpkg_triplet: arm64-windows-static
-            msvc_arch: x64_arm64
+            msvc_arch: arm64
 
     steps:
       - name: Checkout repository
@@ -74,6 +74,14 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           brew install cmake ninja pkg-config
+
+      - name: Install Build Tools (Windows ARM64)
+        if: runner.os == 'Windows' && matrix.msvc_arch == 'arm64'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/ninja-build/ninja/releases/download/v1.13.2/ninja-winarm64.zip" -OutFile "C:\ninja.zip"
+          Expand-Archive "C:\ninja.zip" -DestinationPath C:\ninja -Force
+          "C:\ninja" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
