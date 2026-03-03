@@ -1,6 +1,6 @@
 # RPS Developer Guide
 
-Welcome to the **Reliable Plugin Scanner (RPS)** project! This guide explains the architecture, design choices, and implementation details of what we have built so far, serving as an onboarding manual for new developers.
+Welcome to the **RPS** project! This guide explains the architecture, design choices, and implementation details of what we have built so far, serving as an onboarding manual for new developers.
 
 ---
 
