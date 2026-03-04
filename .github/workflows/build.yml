@@ -28,15 +28,15 @@ jobs:
             vcpkg_triplet: arm64-linux
 
           # macOS
-          # - os: macos-15-large
-          #   name: macOS Intel
-          #   toolchain: clang
-          #   artifact_name: rps-macos-intel
-          #   archive_ext: zip
-          #   vcpkg_triplet: x64-osx-release
+          - os: macos-15-intel
+            name: macOS x64
+            toolchain: clang
+            artifact_name: rps-macos-intel
+            archive_ext: zip
+            vcpkg_triplet: x64-osx-release
 
           - os: macos-15
-            name: macOS Apple Silicon
+            name: macOS arm64
             toolchain: clang
             artifact_name: rps-macos-arm64
             archive_ext: zip
