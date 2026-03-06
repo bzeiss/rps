@@ -68,7 +68,8 @@ private:
     // Host state
     std::string m_pluginName;
     bool m_canResize = false;
-    bool m_inResize = false;  // re-entrancy guard for resize
+    bool m_inPluginResize = false;  // true during plugin-initiated resize (resizeView)
+    bool m_inOnSize = false;        // prevents resizeView recursion from within onSize
 
     void cleanup();
 };

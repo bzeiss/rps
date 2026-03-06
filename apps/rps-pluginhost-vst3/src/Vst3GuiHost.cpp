@@ -166,28 +166,30 @@ void Vst3GuiHost::cleanup() {
 }
 
 void Vst3GuiHost::onPluginRequestResize(ViewRect* newSize) {
-    if (!newSize || m_inResize) return;
-    m_inResize = true;
+    if (!newSize) return;
 
     uint32_t w = static_cast<uint32_t>(newSize->right - newSize->left);
     uint32_t h = static_cast<uint32_t>(newSize->bottom - newSize->top);
     spdlog::info("onPluginRequestResize: {}x{}", w, h);
 
-    // Update window constraints to allow the new size
-    // (canResize=false means the HOST shouldn't offer edge-drag resizing,
-    //  but the plugin can still request resizes via IPlugFrame::resizeView)
-    m_window.setMinimumSize(w, h);
-    m_window.setMaximumSize(w, h);
-
-    // Resize the window to fit the plugin's requested size
-    m_window.resize(w, h);
-
-    // Per VST3 spec: host must call onSize() after resizeView()
-    if (m_view) {
-        m_view->onSize(newSize);
+    if (!m_canResize) {
+        m_window.setMinimumSize(w, h);
+        m_window.setMaximumSize(w, h);
     }
 
-    m_inResize = false;
+    // JUCE pattern: set recursiveResize to suppress the user-drag handler
+    // during programmatic resize.
+    m_inPluginResize = true;
+    m_window.resize(w, h);
+    m_inPluginResize = false;
+
+    // Per VST3 spec: host must call onSize() after resizeView().
+    // Guard against plugin calling resizeView() again from within onSize().
+    if (m_view && !m_inOnSize) {
+        m_inOnSize = true;
+        m_view->onSize(newSize);
+        m_inOnSize = false;
+    }
 }
 
 rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::path& pluginPath) {
@@ -384,6 +386,17 @@ rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::
     m_window.create(m_pluginName, w, h, m_canResize, false /* no presets in phase 1 */);
     spdlog::info("  SDL3 window created");
 
+#ifdef _WIN32
+    // Apply WS_CLIPCHILDREN to prevent drawing over plugin's child HWND during resize.
+    // Without this, Windows BitBlts old content from the parent over the plugin area
+    // before the plugin repaints, causing visual artifacts.
+    {
+        HWND hwnd = static_cast<HWND>(m_window.getNativeHandle());
+        LONG style = GetWindowLong(hwnd, GWL_STYLE);
+        SetWindowLong(hwnd, GWL_STYLE, style | WS_CLIPCHILDREN);
+    }
+#endif
+
     // Set size constraints
     if (m_canResize) {
         ViewRect minRect{0, 0, 1, 1};
@@ -459,30 +472,21 @@ void Vst3GuiHost::runEventLoop(
     spdlog::info("Vst3GuiHost::runEventLoop() starting");
 
     auto resizeHandler = [this](uint32_t newWidth, uint32_t newHeight) {
-        if (!m_canResize || !m_view || m_inResize) return;
-        m_inResize = true;
+        if (!m_canResize || !m_view) return;
+
+        // Skip during plugin-initiated resizes (resizeView) —
+        // onPluginRequestResize handles onSize() itself.
+        if (m_inPluginResize) return;
 
         spdlog::debug("Window resized to {}x{}, syncing with VST3 view...", newWidth, newHeight);
 
+        // Tell the plugin its new size. The window is already at this size.
+        // Do NOT call checkSizeConstraint + m_window.resize() here:
+        // SDL3's WM_WINDOWPOSCHANGING handler blocks programmatic resizes
+        // during the modal drag loop (adds SWP_NOSIZE), so m_window.resize()
+        // would silently fail, but we'd pass the wrong size to onSize().
         ViewRect rect{0, 0, static_cast<int32>(newWidth), static_cast<int32>(newHeight)};
-
-        // Let the plugin adjust to valid dimensions
-        m_view->checkSizeConstraint(&rect);
-        uint32_t adjustedW = static_cast<uint32_t>(rect.right - rect.left);
-        uint32_t adjustedH = static_cast<uint32_t>(rect.bottom - rect.top);
-
-        // Tell the plugin its new size
         m_view->onSize(&rect);
-
-        // If the plugin adjusted the size, resize the window to match
-        if (adjustedW != newWidth || adjustedH != newHeight) {
-            spdlog::debug("  checkSizeConstraint: {}x{} -> {}x{}", newWidth, newHeight, adjustedW, adjustedH);
-            m_window.resize(adjustedW, adjustedH);
-        }
-
-        m_inResize = false;
-
-        // Child HWND repositioning is handled automatically by SdlWindow::handleResize()
     };
     m_window.setResizeCallback(resizeHandler);
 

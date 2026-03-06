@@ -64,6 +64,21 @@ void SdlWindow::create(const std::string& title, uint32_t width, uint32_t height
         flags |= SDL_WINDOW_RESIZABLE;
     }
 
+#ifdef _WIN32
+    // Prevent SDL from painting black over the entire client area (including
+    // plugin child HWNDs) during WM_ERASEBKGND. SDL3's default handler calls
+    // FillRect(GetDC(hwnd), &client_rect, black_brush), which overwrites plugin
+    // content on every resize. Must be set before SDL_CreateWindow.
+    SDL_SetHint(SDL_HINT_WINDOWS_ERASE_BACKGROUND_MODE, "never");
+
+    // Preserve existing pixel content during SDL's internal programmatic resizes.
+    // SDL3 defaults copybits_flag to SWP_NOCOPYBITS, which tells Windows to
+    // discard old pixel content when SetWindowPos is called (causes flash).
+    // Setting this hint makes SDL use 0 instead, preserving the rendered
+    // plugin content during resize transitions.
+    SDL_SetHint("SDL_WINDOW_RETAIN_CONTENT", "1");
+#endif
+
     m_window = SDL_CreateWindow(
         title.c_str(),
         static_cast<int>(totalWidth),
@@ -168,13 +183,14 @@ void* SdlWindow::getNativeHandle() const {
 }
 
 void SdlWindow::resize(uint32_t width, uint32_t height) {
-    if (m_window) {
-        uint32_t totalWidth = width;
-        if (m_sidebarEnabled) {
-            totalWidth += getSidebarWidth();
-        }
-        SDL_SetWindowSize(m_window, static_cast<int>(totalWidth), static_cast<int>(height));
+    if (!m_window) return;
+
+    uint32_t totalWidth = width;
+    if (m_sidebarEnabled) {
+        totalWidth += getSidebarWidth();
     }
+
+    SDL_SetWindowSize(m_window, static_cast<int>(totalWidth), static_cast<int>(height));
 }
 
 void SdlWindow::setMinimumSize(uint32_t width, uint32_t height) {
