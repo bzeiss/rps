@@ -140,12 +140,7 @@ void Vst3GuiHost::cleanup() {
         if (controllerCP) controllerCP->disconnect(&s_connectionStub);
     }
 
-#ifdef _WIN32
-    if (m_pluginHwnd) {
-        DestroyWindow(m_pluginHwnd);
-        m_pluginHwnd = nullptr;
-    }
-#endif
+
 
     // Deactivate before terminating
     if (m_component) {
@@ -186,14 +181,6 @@ void Vst3GuiHost::onPluginRequestResize(ViewRect* newSize) {
 
     // Resize the window to fit the plugin's requested size
     m_window.resize(w, h);
-
-#ifdef _WIN32
-    // Resize the child HWND to match
-    if (m_pluginHwnd) {
-        SetWindowPos(m_pluginHwnd, nullptr, 0, 0, static_cast<int>(w), static_cast<int>(h),
-                     SWP_NOZORDER | SWP_NOMOVE | SWP_NOACTIVATE);
-    }
-#endif
 
     // Per VST3 spec: host must call onSize() after resizeView()
     if (m_view) {
@@ -418,48 +405,7 @@ rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::
     static Vst3PlugFrame plugFrame(*this);
     m_view->setFrame(&plugFrame);
 
-#ifdef _WIN32
-    // Create a dedicated child HWND for the plugin's view.
-    // JUCE's VST3 wrapper subclasses its parent HWND's WndProc — if we pass
-    // SDL's HWND directly, JUCE's hooks conflict with SDL's internal message
-    // processing, causing re-entrant DispatchMessage and stack overflow.
-    {
-        static bool classRegistered = false;
-        static const wchar_t* className = L"RPS_Vst3PluginChild";
-        if (!classRegistered) {
-            WNDCLASSEXW wc{};
-            wc.cbSize = sizeof(WNDCLASSEXW);
-            wc.style = CS_DBLCLKS;
-            wc.lpfnWndProc = DefWindowProcW;
-            wc.hInstance = GetModuleHandleW(nullptr);
-            wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512)); // IDC_ARROW
-            wc.lpszClassName = className;
-            RegisterClassExW(&wc);
-            classRegistered = true;
-        }
-
-        HWND parentHwnd = static_cast<HWND>(m_window.getNativeHandle());
-        m_pluginHwnd = CreateWindowExW(
-            0, className, L"", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
-            0, 0, static_cast<int>(w), static_cast<int>(h),
-            parentHwnd, nullptr, GetModuleHandleW(nullptr), nullptr);
-
-        if (!m_pluginHwnd) {
-            throw std::runtime_error("Failed to create child HWND for plugin view");
-        }
-        spdlog::info("  Created child HWND {:p} (parent {:p})",
-                     static_cast<void*>(m_pluginHwnd), static_cast<void*>(parentHwnd));
-
-        // Disable IMM (Input Method Manager) for the plugin window.
-        // Stack trace shows JUCE's WndProc and IMM32.dll enter infinite
-        // recursion on WM_IME_* messages: JUCE handles IMM msg → triggers
-        // another IMM msg → JUCE handles again → stack overflow.
-        ImmAssociateContext(m_pluginHwnd, nullptr);
-    }
-    void* nativeHandle = static_cast<void*>(m_pluginHwnd);
-#else
     void* nativeHandle = m_window.getNativeHandle();
-#endif
 
     if (m_view->attached(nativeHandle, platformType) != kResultTrue) {
         throw std::runtime_error("IPlugView::attached() failed for " + m_pluginName);
@@ -485,7 +431,7 @@ rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::
     }
 
     // 13. Initial child HWND positioning for sidebar
-    m_window.repositionChildHwnd(w, h);
+
 
     // 14. Activate the audio processor (AFTER view attachment)
     //     Some plugins (e.g. UAD) tie their GUI state to the processing state.
@@ -527,15 +473,6 @@ void Vst3GuiHost::runEventLoop(
 
         // Tell the plugin its new size
         m_view->onSize(&rect);
-
-#ifdef _WIN32
-        // Resize the child HWND to match
-        if (m_pluginHwnd) {
-            SetWindowPos(m_pluginHwnd, nullptr, 0, 0,
-                         static_cast<int>(adjustedW), static_cast<int>(adjustedH),
-                         SWP_NOZORDER | SWP_NOMOVE | SWP_NOACTIVATE);
-        }
-#endif
 
         // If the plugin adjusted the size, resize the window to match
         if (adjustedW != newWidth || adjustedH != newHeight) {

@@ -70,12 +70,6 @@ private:
     bool m_canResize = false;
     bool m_inResize = false;  // re-entrancy guard for resize
 
-#ifdef _WIN32
-    // Dedicated child HWND for plugin view — isolates JUCE's WndProc
-    // subclassing from SDL's internal WndProc to prevent stack overflow.
-    HWND m_pluginHwnd = nullptr;
-#endif
-
     void cleanup();
 };
 
