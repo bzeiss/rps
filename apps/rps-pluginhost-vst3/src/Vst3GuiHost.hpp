@@ -71,6 +71,14 @@ private:
     bool m_inPluginResize = false;  // true during plugin-initiated resize (resizeView)
     bool m_inOnSize = false;        // prevents resizeView recursion from within onSize
 
+    // Parameter polling state — cached values for change detection
+    struct CachedParam {
+        std::string id;         // ParamID as string
+        uint32_t paramId = 0;   // VST3 ParamID (uint32)
+        double lastValue = 0.0; // Last known plain-scale value
+    };
+    std::vector<CachedParam> m_cachedParams;
+
     void cleanup();
 };
 

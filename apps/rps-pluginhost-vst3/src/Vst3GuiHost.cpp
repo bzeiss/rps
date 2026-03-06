@@ -468,7 +468,7 @@ rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::
 
 void Vst3GuiHost::runEventLoop(
     std::function<void(const std::string& reason)> closedCb,
-    std::function<void(std::vector<rps::ipc::ParameterValueUpdate>)> /*paramChangeCb*/) {
+    std::function<void(std::vector<rps::ipc::ParameterValueUpdate>)> paramChangeCb) {
     spdlog::info("Vst3GuiHost::runEventLoop() starting");
 
     auto resizeHandler = [this](uint32_t newWidth, uint32_t newHeight) {
@@ -490,9 +490,23 @@ void Vst3GuiHost::runEventLoop(
     };
     m_window.setResizeCallback(resizeHandler);
 
+    // Parameter polling at ~20Hz (matches CLAP host)
+    auto lastParamPoll = std::chrono::steady_clock::now();
+    constexpr auto kParamPollInterval = std::chrono::milliseconds(50);
+
     // Event loop — blocks until window is closed
     while (m_window.pollEvents()) {
-        // Phase 2 will add parameter polling here
+        // Parameter polling
+        if (paramChangeCb) {
+            auto now = std::chrono::steady_clock::now();
+            if (now - lastParamPoll >= kParamPollInterval) {
+                auto changes = pollParameterChanges();
+                if (!changes.empty()) {
+                    paramChangeCb(std::move(changes));
+                }
+                lastParamPoll = now;
+            }
+        }
     }
 
     spdlog::info("Vst3GuiHost::runEventLoop() ended");
@@ -506,14 +520,124 @@ void Vst3GuiHost::requestClose() {
     m_window.requestClose();
 }
 
-// --- Phase 2+ stubs ---
+// --- VST3 String128 to UTF-8 helper ---
+namespace {
+std::string vst3String128ToUtf8(const Steinberg::Vst::String128& str128) {
+    // String128 is char16_t[128] — convert to UTF-8
+    std::string result;
+    for (int i = 0; i < 128 && str128[i] != 0; ++i) {
+        char16_t ch = str128[i];
+        if (ch < 0x80) {
+            result += static_cast<char>(ch);
+        } else if (ch < 0x800) {
+            result += static_cast<char>(0xC0 | (ch >> 6));
+            result += static_cast<char>(0x80 | (ch & 0x3F));
+        } else {
+            result += static_cast<char>(0xE0 | (ch >> 12));
+            result += static_cast<char>(0x80 | ((ch >> 6) & 0x3F));
+            result += static_cast<char>(0x80 | (ch & 0x3F));
+        }
+    }
+    return result;
+}
+} // anonymous namespace
 
 std::vector<rps::ipc::PluginParameterInfo> Vst3GuiHost::getParameters() {
-    return {};  // Phase 2
+    std::vector<rps::ipc::PluginParameterInfo> result;
+    if (!m_controller) {
+        spdlog::info("getParameters: no IEditController available");
+        return result;
+    }
+
+    int32 count = m_controller->getParameterCount();
+    spdlog::info("getParameters: plugin has {} parameters", count);
+    result.reserve(count);
+    m_cachedParams.clear();
+    m_cachedParams.reserve(count);
+
+    for (int32 i = 0; i < count; ++i) {
+        Steinberg::Vst::ParameterInfo info{};
+        if (m_controller->getParameterInfo(i, info) != kResultTrue) {
+            spdlog::warn("  getParameterInfo({}) failed, skipping", i);
+            continue;
+        }
+
+        rps::ipc::PluginParameterInfo p;
+        p.id = std::to_string(info.id);
+        p.index = static_cast<uint32_t>(i);
+        p.name = vst3String128ToUtf8(info.title);
+        p.module = vst3String128ToUtf8(info.units);
+
+        // VST3 values are normalized [0,1] — convert to plain scale
+        double normValue = m_controller->getParamNormalized(info.id);
+        double plainValue = m_controller->normalizedParamToPlain(info.id, normValue);
+        p.currentValue = plainValue;
+
+        // Min/max: convert 0.0 and 1.0 from normalized to plain
+        p.minValue = m_controller->normalizedParamToPlain(info.id, 0.0);
+        p.maxValue = m_controller->normalizedParamToPlain(info.id, 1.0);
+        p.defaultValue = m_controller->normalizedParamToPlain(info.id, info.defaultNormalizedValue);
+
+        // Get display text
+        Steinberg::Vst::String128 displayStr{};
+        if (m_controller->getParamStringByValue(info.id, normValue, displayStr) == kResultTrue) {
+            p.displayText = vst3String128ToUtf8(displayStr);
+        }
+
+        // Map VST3 flags to universal flags
+        uint32_t flags = 0;
+        if (info.flags & Steinberg::Vst::ParameterInfo::kIsReadOnly)
+            flags |= rps::ipc::kParamFlagReadOnly;
+        if (info.flags & Steinberg::Vst::ParameterInfo::kIsHidden)
+            flags |= rps::ipc::kParamFlagHidden;
+        if (info.flags & Steinberg::Vst::ParameterInfo::kIsBypass)
+            flags |= rps::ipc::kParamFlagBypass;
+        if (info.flags & Steinberg::Vst::ParameterInfo::kIsList) {
+            flags |= rps::ipc::kParamFlagEnum;
+            flags |= rps::ipc::kParamFlagStepped;
+        }
+        if (info.stepCount > 0)
+            flags |= rps::ipc::kParamFlagStepped;
+        p.flags = flags;
+
+        result.push_back(p);
+
+        // Cache for polling
+        m_cachedParams.push_back({p.id, info.id, plainValue});
+    }
+
+    return result;
 }
 
 std::vector<rps::ipc::ParameterValueUpdate> Vst3GuiHost::pollParameterChanges() {
-    return {};  // Phase 2
+    std::vector<rps::ipc::ParameterValueUpdate> updates;
+    if (!m_controller) {
+        return updates;
+    }
+
+    for (size_t i = 0; i < m_cachedParams.size(); ++i) {
+        auto& cached = m_cachedParams[i];
+        double normValue = m_controller->getParamNormalized(cached.paramId);
+        double plainValue = m_controller->normalizedParamToPlain(cached.paramId, normValue);
+
+        // Compare with cached value (epsilon for floating-point noise)
+        if (std::abs(plainValue - cached.lastValue) > 1e-9) {
+            rps::ipc::ParameterValueUpdate u;
+            u.paramId = cached.id;
+            u.value = plainValue;
+
+            // Get updated display text
+            Steinberg::Vst::String128 displayStr{};
+            if (m_controller->getParamStringByValue(cached.paramId, normValue, displayStr) == kResultTrue) {
+                u.displayText = vst3String128ToUtf8(displayStr);
+            }
+
+            cached.lastValue = plainValue;
+            updates.push_back(std::move(u));
+        }
+    }
+
+    return updates;
 }
 
 rps::ipc::GetStateResponse Vst3GuiHost::saveState() {
