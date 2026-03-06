@@ -22,6 +22,9 @@ public:
     // Initialize the schema if it doesn't exist
     void initializeSchema();
 
+    // Get the raw SQLite3 handle (for direct queries)
+    sqlite3* rawDb() { return m_db; }
+
     // Insert or update a plugin scan result
     void upsertPluginResult(const boost::filesystem::path& pluginPath, const rps::ipc::ScanResult& result,
                             int64_t scanTimeMs, const std::string& fileMtime = "", const std::string& fileHash = "");

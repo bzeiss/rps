@@ -1,0 +1,44 @@
+#pragma once
+
+#include <string>
+#include <cstdint>
+#include <functional>
+
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4100)
+#endif
+#include <boost/filesystem.hpp>
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+
+namespace rps::gui {
+
+/// Abstract interface for format-specific plugin GUI hosts.
+/// Each format (CLAP, VST3, etc.) implements this interface in its own binary.
+class IPluginGuiHost {
+public:
+    virtual ~IPluginGuiHost() = default;
+
+    struct OpenResult {
+        std::string name;
+        uint32_t width = 800;
+        uint32_t height = 600;
+    };
+
+    /// Load the plugin and prepare its GUI for display.
+    /// @param pluginPath Filesystem path to the plugin binary.
+    /// @return OpenResult with plugin name and initial GUI dimensions.
+    /// @throws std::runtime_error on failure.
+    virtual OpenResult open(const boost::filesystem::path& pluginPath) = 0;
+
+    /// Run the GUI event loop. Blocks until the window is closed or requestClose() is called.
+    /// @param closedCb Called with a reason string ("user", "host", "crash") when the loop exits.
+    virtual void runEventLoop(std::function<void(const std::string& reason)> closedCb) = 0;
+
+    /// Request the GUI to close from another thread (e.g. IPC command).
+    virtual void requestClose() = 0;
+};
+
+} // namespace rps::gui

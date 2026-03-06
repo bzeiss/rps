@@ -71,6 +71,7 @@ add_executable(rps-server
     src/RpsServiceImpl.cpp
     src/GrpcScanObserver.cpp
     src/ProtobufCompat.cpp
+    src/GuiSessionManager.cpp
     ${PROTO_SRCS}
     ${GRPC_SRCS}
 )
@@ -85,22 +86,29 @@ target_include_directories(rps-server
 target_link_libraries(rps-server
     PRIVATE
         rps-engine
+        rps-ipc
         rps_warnings
         ${RPS_GRPC_LIB}
         ${RPS_PROTO_LIB}
         spdlog::spdlog
+        SQLite::SQLite3
         Boost::program_options
+        Boost::filesystem
         Boost::dll
 )
 
-# Ensure the scanner is built before we try to copy it
-add_dependencies(rps-server rps-pluginscanner)
+# Ensure the scanner and plugin host are built before we try to copy them
+add_dependencies(rps-server rps-pluginscanner rps-pluginhost-clap)
 
 add_custom_target(rps-server-deps ALL
     # Copy scanner next to server
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:rps-pluginscanner>
         "$<TARGET_FILE_DIR:rps-server>/$<TARGET_FILE_NAME:rps-pluginscanner>"
+    # Copy plugin host next to server
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:rps-pluginhost-clap>
+        "$<TARGET_FILE_DIR:rps-server>/$<TARGET_FILE_NAME:rps-pluginhost-clap>"
     # Copy server to Python and Java example directories
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:rps-server>
@@ -108,6 +116,10 @@ add_custom_target(rps-server-deps ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:rps-server>
         "${CMAKE_SOURCE_DIR}/examples/java/$<TARGET_FILE_NAME:rps-server>"
-    DEPENDS rps-server rps-pluginscanner
+    # Copy plugin host to Python example directory
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:rps-pluginhost-clap>
+        "${CMAKE_SOURCE_DIR}/examples/python/$<TARGET_FILE_NAME:rps-pluginhost-clap>"
+    DEPENDS rps-server rps-pluginscanner rps-pluginhost-clap
     COMMENT "Ensuring binaries are present for server and examples"
 )

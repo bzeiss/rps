@@ -21,7 +21,12 @@ enum class MessageType {
     ScanRequest,
     ScanResult,
     ProgressEvent,
-    ErrorMessage
+    ErrorMessage,
+    // GUI lifecycle
+    OpenGuiRequest,
+    GuiOpenedEvent,
+    GuiClosedEvent,
+    CloseGuiRequest
 };
 
 struct ScanRequest {
@@ -62,6 +67,24 @@ struct ErrorMessage {
     std::string details;
 };
 
+// GUI lifecycle messages (server ↔ plugin host worker)
+struct OpenGuiRequest {
+    std::string pluginPath;
+    std::string format;
+};
+
+struct GuiOpenedEvent {
+    std::string pluginName;
+    uint32_t width = 0;
+    uint32_t height = 0;
+};
+
+struct GuiClosedEvent {
+    std::string reason; // "user", "host", "crash"
+};
+
+struct CloseGuiRequest {};
+
 // JSON Serialization Declarations
 void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const ScanRequest& req);
 ScanRequest tag_invoke(boost::json::value_to_tag<ScanRequest>, const boost::json::value& jv);
@@ -78,10 +101,23 @@ ProgressEvent tag_invoke(boost::json::value_to_tag<ProgressEvent>, const boost::
 void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const ErrorMessage& err);
 ErrorMessage tag_invoke(boost::json::value_to_tag<ErrorMessage>, const boost::json::value& jv);
 
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const OpenGuiRequest& req);
+OpenGuiRequest tag_invoke(boost::json::value_to_tag<OpenGuiRequest>, const boost::json::value& jv);
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const GuiOpenedEvent& evt);
+GuiOpenedEvent tag_invoke(boost::json::value_to_tag<GuiOpenedEvent>, const boost::json::value& jv);
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const GuiClosedEvent& evt);
+GuiClosedEvent tag_invoke(boost::json::value_to_tag<GuiClosedEvent>, const boost::json::value& jv);
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const CloseGuiRequest& req);
+CloseGuiRequest tag_invoke(boost::json::value_to_tag<CloseGuiRequest>, const boost::json::value& jv);
+
 // Wrapper for any message
 struct Message {
     MessageType type;
-    std::variant<ScanRequest, ScanResult, ProgressEvent, ErrorMessage> payload;
+    std::variant<ScanRequest, ScanResult, ProgressEvent, ErrorMessage,
+                 OpenGuiRequest, GuiOpenedEvent, GuiClosedEvent, CloseGuiRequest> payload;
 };
 
 void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const Message& msg);

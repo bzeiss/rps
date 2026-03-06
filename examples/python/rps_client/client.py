@@ -65,6 +65,27 @@ class RpsClient:
         except grpc.RpcError:
             pass  # Server may close connection before responding
 
+    def list_plugins(self, format_filter: str = "") -> list:
+        """List all successfully scanned plugins from the database."""
+        response = self._stub.ListPlugins(
+            rps_pb2.ListPluginsRequest(format_filter=format_filter)
+        )
+        return list(response.plugins)
+
+    def open_plugin_gui(self, plugin_path: str, fmt: str) -> Iterator:
+        """Open a plugin's native GUI. Returns an iterator of PluginGuiEvent."""
+        request = rps_pb2.OpenPluginGuiRequest(
+            plugin_path=plugin_path,
+            format=fmt,
+        )
+        return self._stub.OpenPluginGui(request)
+
+    def close_plugin_gui(self, plugin_path: str) -> rps_pb2.ClosePluginGuiResponse:
+        """Close a currently open plugin GUI."""
+        return self._stub.ClosePluginGui(
+            rps_pb2.ClosePluginGuiRequest(plugin_path=plugin_path)
+        )
+
     def __enter__(self):
         self.connect()
         return self

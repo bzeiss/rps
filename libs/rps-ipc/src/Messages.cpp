@@ -117,6 +117,61 @@ ErrorMessage tag_invoke(boost::json::value_to_tag<ErrorMessage>, const boost::js
     };
 }
 
+// --- GUI lifecycle messages ---
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const OpenGuiRequest& req) {
+    jv = {
+        {"pluginPath", req.pluginPath},
+        {"format", req.format}
+    };
+}
+
+OpenGuiRequest tag_invoke(boost::json::value_to_tag<OpenGuiRequest>, const boost::json::value& jv) {
+    auto const& obj = jv.as_object();
+    return {
+        boost::json::value_to<std::string>(obj.at("pluginPath")),
+        boost::json::value_to<std::string>(obj.at("format"))
+    };
+}
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const GuiOpenedEvent& evt) {
+    jv = {
+        {"pluginName", evt.pluginName},
+        {"width", evt.width},
+        {"height", evt.height}
+    };
+}
+
+GuiOpenedEvent tag_invoke(boost::json::value_to_tag<GuiOpenedEvent>, const boost::json::value& jv) {
+    auto const& obj = jv.as_object();
+    return {
+        boost::json::value_to<std::string>(obj.at("pluginName")),
+        obj.at("width").to_number<uint32_t>(),
+        obj.at("height").to_number<uint32_t>()
+    };
+}
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const GuiClosedEvent& evt) {
+    jv = {
+        {"reason", evt.reason}
+    };
+}
+
+GuiClosedEvent tag_invoke(boost::json::value_to_tag<GuiClosedEvent>, const boost::json::value& jv) {
+    auto const& obj = jv.as_object();
+    return {
+        boost::json::value_to<std::string>(obj.at("reason"))
+    };
+}
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const CloseGuiRequest&) {
+    jv = boost::json::object{};
+}
+
+CloseGuiRequest tag_invoke(boost::json::value_to_tag<CloseGuiRequest>, const boost::json::value&) {
+    return {};
+}
+
 void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const Message& msg) {
     boost::json::object obj;
     obj["type"] = static_cast<int>(msg.type);
@@ -149,6 +204,18 @@ Message tag_invoke(boost::json::value_to_tag<Message>, const boost::json::value&
         case MessageType::ErrorMessage:
             msg.payload = boost::json::value_to<ErrorMessage>(payload_val);
             break;
+        case MessageType::OpenGuiRequest:
+            msg.payload = boost::json::value_to<OpenGuiRequest>(payload_val);
+            break;
+        case MessageType::GuiOpenedEvent:
+            msg.payload = boost::json::value_to<GuiOpenedEvent>(payload_val);
+            break;
+        case MessageType::GuiClosedEvent:
+            msg.payload = boost::json::value_to<GuiClosedEvent>(payload_val);
+            break;
+        case MessageType::CloseGuiRequest:
+            msg.payload = boost::json::value_to<CloseGuiRequest>(payload_val);
+            break;
         default:
             throw std::runtime_error("Unknown MessageType");
     }
@@ -157,3 +224,4 @@ Message tag_invoke(boost::json::value_to_tag<Message>, const boost::json::value&
 }
 
 } // namespace rps::ipc
+

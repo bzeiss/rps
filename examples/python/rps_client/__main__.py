@@ -129,6 +129,45 @@ def shutdown(ctx):
         sys.exit(1)
 
 
+@cli.command("open-gui")
+@click.option("--format", "format_filter", default="", help="Filter plugins by format (e.g. 'clap')")
+@click.pass_context
+def open_gui(ctx, format_filter):
+    """Browse plugins and open a native GUI for parameter editing."""
+    from rps_client.open_gui import run_open_gui
+
+    server_addr = ctx.obj["server"]
+    managed = server_addr is None
+
+    if managed:
+        server_bin = ctx.obj["server_bin"] or _find_server_bin()
+        if not server_bin:
+            click.echo("Error: Cannot find rps-server binary. Use --server-bin or --server.", err=True)
+            sys.exit(1)
+
+        mgr_context = ServerManager(
+            server_bin=server_bin,
+            port=ctx.obj["port"],
+            db=ctx.obj["db"],
+        )
+    else:
+        from contextlib import nullcontext
+        mgr_context = nullcontext()
+
+    try:
+        with mgr_context as mgr:
+            if managed:
+                server_addr = mgr.address
+
+            with RpsClient(server_addr) as client:
+                run_open_gui(client, format_filter=format_filter)
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
 def _find_server_bin() -> str | None:
     """Try to locate rps-server binary next to this script or in CWD."""
     # Check common binary names

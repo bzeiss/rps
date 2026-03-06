@@ -1,11 +1,25 @@
 #include <rps/server/RpsServiceImpl.hpp>
 #include <rps/server/GrpcScanObserver.hpp>
+#include <rps/engine/db/DatabaseManager.hpp>
+#include <sqlite3.h>
 #include <spdlog/spdlog.h>
+
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4100)
+#endif
+#include <boost/filesystem.hpp>
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 namespace rps::server {
 
 RpsServiceImpl::RpsServiceImpl(const std::string& dbPath, const std::string& scannerBin)
-    : m_dbPath(dbPath), m_scannerBin(scannerBin), m_startTime(std::chrono::steady_clock::now()) {}
+    : m_guiManager(boost::filesystem::path(scannerBin).parent_path().string())
+    , m_dbPath(dbPath)
+    , m_scannerBin(scannerBin)
+    , m_startTime(std::chrono::steady_clock::now()) {}
 
 void RpsServiceImpl::setServer(grpc::Server* server) {
     std::lock_guard<std::mutex> lock(m_serverMutex);
@@ -80,6 +94,7 @@ grpc::Status RpsServiceImpl::Shutdown(grpc::ServerContext* /*context*/,
                                        rps::v1::ShutdownResponse* /*response*/) {
     spdlog::info("Shutdown requested");
     m_engine.stop();
+    m_guiManager.closeAll();
     std::lock_guard<std::mutex> lock(m_serverMutex);
     if (m_server) {
         // Shutdown asynchronously so we can return the response first
@@ -95,8 +110,96 @@ grpc::Status RpsServiceImpl::Shutdown(grpc::ServerContext* /*context*/,
     return grpc::Status::OK;
 }
 
+grpc::Status RpsServiceImpl::ListPlugins(grpc::ServerContext* /*context*/,
+                                          const rps::v1::ListPluginsRequest* request,
+                                          rps::v1::ListPluginsResponse* response) {
+    try {
+        rps::engine::db::DatabaseManager db(m_dbPath);
+        db.initializeSchema();
+
+        // Query all successfully scanned plugins, optionally filtered by format
+        std::string sql = "SELECT id, format, path, name, uid, vendor, version, category, num_inputs, num_outputs "
+                          "FROM plugins WHERE status = 'SUCCESS'";
+        auto formatFilter = request->format_filter();
+        if (!formatFilter.empty()) {
+            sql += " AND format = ?";
+        }
+        sql += " ORDER BY name";
+
+        sqlite3* rawDb = db.rawDb();
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(rawDb, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+            return grpc::Status(grpc::StatusCode::INTERNAL, "Failed to query plugins database");
+        }
+
+        if (!formatFilter.empty()) {
+            sqlite3_bind_text(stmt, 1, formatFilter.c_str(), -1, SQLITE_TRANSIENT);
+        }
+
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            auto* plugin = response->add_plugins();
+            plugin->set_id(sqlite3_column_int64(stmt, 0));
+            if (sqlite3_column_text(stmt, 1))
+                plugin->set_format(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1)));
+            if (sqlite3_column_text(stmt, 2))
+                plugin->set_path(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2)));
+            if (sqlite3_column_text(stmt, 3))
+                plugin->set_name(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3)));
+            if (sqlite3_column_text(stmt, 4))
+                plugin->set_uid(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4)));
+            if (sqlite3_column_text(stmt, 5))
+                plugin->set_vendor(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5)));
+            if (sqlite3_column_text(stmt, 6))
+                plugin->set_version(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 6)));
+            if (sqlite3_column_text(stmt, 7))
+                plugin->set_category(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 7)));
+            plugin->set_num_inputs(static_cast<uint32_t>(sqlite3_column_int(stmt, 8)));
+            plugin->set_num_outputs(static_cast<uint32_t>(sqlite3_column_int(stmt, 9)));
+        }
+        sqlite3_finalize(stmt);
+
+        spdlog::info("ListPlugins: returned {} plugins", response->plugins_size());
+        return grpc::Status::OK;
+
+    } catch (const std::exception& e) {
+        return grpc::Status(grpc::StatusCode::INTERNAL,
+                           std::string("Failed to list plugins: ") + e.what());
+    }
+}
+
+grpc::Status RpsServiceImpl::OpenPluginGui(grpc::ServerContext* /*context*/,
+                                            const rps::v1::OpenPluginGuiRequest* request,
+                                            grpc::ServerWriter<rps::v1::PluginGuiEvent>* writer) {
+    auto pluginPath = request->plugin_path();
+    auto format = request->format();
+
+    if (pluginPath.empty() || format.empty()) {
+        rps::v1::PluginGuiEvent event;
+        auto* err = event.mutable_gui_error();
+        err->set_error("invalid_request");
+        err->set_details("plugin_path and format are required");
+        writer->Write(event);
+        return grpc::Status::OK;
+    }
+
+    spdlog::info("OpenPluginGui: path={} format={}", pluginPath, format);
+    m_guiManager.openGui(pluginPath, format, writer);
+    return grpc::Status::OK;
+}
+
+grpc::Status RpsServiceImpl::ClosePluginGui(grpc::ServerContext* /*context*/,
+                                             const rps::v1::ClosePluginGuiRequest* request,
+                                             rps::v1::ClosePluginGuiResponse* response) {
+    auto pluginPath = request->plugin_path();
+    bool wasOpen = m_guiManager.closeGui(pluginPath);
+    response->set_was_open(wasOpen);
+    spdlog::info("ClosePluginGui: path={} was_open={}", pluginPath, wasOpen);
+    return grpc::Status::OK;
+}
+
 void RpsServiceImpl::stopScan() {
     m_engine.stop();
 }
 
 } // namespace rps::server
+
