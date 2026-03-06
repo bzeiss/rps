@@ -134,7 +134,18 @@ void ClapGuiHost::cleanup() {
 
 void ClapGuiHost::onPluginRequestResize(uint32_t width, uint32_t height) {
     spdlog::info("onPluginRequestResize: resizing SDL window to {}x{}", width, height);
+    // Update min constraint so SDL allows the plugin to shrink below the previous minimum.
+    // The plugin knows its own valid sizes, so this is always safe.
+    m_window.setMinimumSize(width, height);
     m_window.resize(width, height);
+
+    // Re-discover the actual minimum for future user-drag resizing
+    if (m_canResize && m_gui && m_gui->adjust_size) {
+        uint32_t minW = 1, minH = 1;
+        if (m_gui->adjust_size(m_plugin, &minW, &minH)) {
+            m_window.setMinimumSize(minW, minH);
+        }
+    }
 }
 
 rps::gui::IPluginGuiHost::OpenResult ClapGuiHost::open(const boost::filesystem::path& pluginPath) {
@@ -426,7 +437,7 @@ void ClapGuiHost::runEventLoop(
             }
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(8));
+        // No sleep needed — SDL_WaitEventTimeout blocks efficiently
     }
 
     spdlog::info("ClapGuiHost::runEventLoop() ended");

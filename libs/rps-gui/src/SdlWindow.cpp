@@ -108,18 +108,23 @@ bool SdlWindow::pollEvents(ResizeCallback /*resizeCb*/) {
         return false;
     }
 
+    // Block on the OS message queue for up to 16ms (~60Hz).
+    // This is much more CPU-friendly than SDL_PollEvent + sleep:
+    // the thread truly sleeps until an event arrives or the timeout expires.
     SDL_Event event;
-    while (SDL_PollEvent(&event)) {
-        switch (event.type) {
-            case SDL_EVENT_QUIT:
-                return false;
-            case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
-                return false;
-            // SDL_EVENT_WINDOW_RESIZED is handled by the event watcher
-            // so we don't need to handle it here.
-            default:
-                break;
-        }
+    if (SDL_WaitEventTimeout(&event, 16)) {
+        // Process the event we just got, then drain any remaining
+        do {
+            switch (event.type) {
+                case SDL_EVENT_QUIT:
+                    return false;
+                case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+                    return false;
+                // SDL_EVENT_WINDOW_RESIZED is handled by the event watcher
+                default:
+                    break;
+            }
+        } while (SDL_PollEvent(&event));
     }
     return true;
 }
