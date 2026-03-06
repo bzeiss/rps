@@ -1,7 +1,10 @@
 #pragma once
 
+#include <rps/ipc/Messages.hpp>
+
 #include <string>
 #include <cstdint>
+#include <vector>
 #include <functional>
 
 #ifdef _MSC_VER
@@ -35,10 +38,20 @@ public:
 
     /// Run the GUI event loop. Blocks until the window is closed or requestClose() is called.
     /// @param closedCb Called with a reason string ("user", "host", "crash") when the loop exits.
-    virtual void runEventLoop(std::function<void(const std::string& reason)> closedCb) = 0;
+    /// @param paramChangeCb Called with delta parameter updates (~20Hz) during the loop.
+    virtual void runEventLoop(
+        std::function<void(const std::string& reason)> closedCb,
+        std::function<void(std::vector<rps::ipc::ParameterValueUpdate>)> paramChangeCb = nullptr) = 0;
 
     /// Request the GUI to close from another thread (e.g. IPC command).
     virtual void requestClose() = 0;
+
+    /// Get the full list of parameters. Called once after the plugin GUI is opened.
+    virtual std::vector<rps::ipc::PluginParameterInfo> getParameters() = 0;
+
+    /// Poll for parameter value changes since the last call.
+    /// Returns only parameters whose values have changed.
+    virtual std::vector<rps::ipc::ParameterValueUpdate> pollParameterChanges() = 0;
 };
 
 } // namespace rps::gui

@@ -113,6 +113,16 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
         openedMsg.payload = rps::ipc::GuiOpenedEvent{result.name, result.width, result.height};
         connection->sendMessage(openedMsg);
 
+        // Query and send full parameter list
+        auto params = host->getParameters();
+        if (!params.empty()) {
+            spdlog::info("Sending ParameterListEvent ({} params)", params.size());
+            rps::ipc::Message paramListMsg;
+            paramListMsg.type = rps::ipc::MessageType::ParameterListEvent;
+            paramListMsg.payload = rps::ipc::ParameterListEvent{std::move(params)};
+            connection->sendMessage(paramListMsg);
+        }
+
         // Run the GUI event loop — this blocks until the window is closed
         // We also need to poll IPC for CloseGuiRequest
         std::atomic<bool> ipcClosed{false};
@@ -129,11 +139,23 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
             }
         });
 
-        spdlog::info("Entering GUI event loop...");
+        spdlog::info("Entering GUI event loop (with parameter polling)...");
         std::string closeReason;
-        host->runEventLoop([&](const std::string& reason) {
-            closeReason = reason;
-        });
+
+        // Parameter change callback: sends delta updates over IPC
+        auto paramChangeCb = [&connection](std::vector<rps::ipc::ParameterValueUpdate> changes) {
+            rps::ipc::Message msg;
+            msg.type = rps::ipc::MessageType::ParameterValuesEvent;
+            msg.payload = rps::ipc::ParameterValuesEvent{std::move(changes)};
+            connection->sendMessage(msg);
+        };
+
+        host->runEventLoop(
+            [&](const std::string& reason) {
+                closeReason = reason;
+            },
+            paramChangeCb
+        );
 
         spdlog::info("GUI event loop exited (reason: {})", closeReason.empty() ? "user" : closeReason);
 

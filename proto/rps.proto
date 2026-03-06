@@ -205,6 +205,8 @@ message PluginGuiEvent {
     GuiOpened gui_opened = 1;
     GuiClosed gui_closed = 2;
     GuiError gui_error = 3;
+    ParameterList parameter_list = 4;       // Full param list, sent once after open
+    ParameterUpdates parameter_updates = 5; // Delta updates, streamed
   }
 }
 
@@ -230,3 +232,35 @@ message ClosePluginGuiRequest {
 message ClosePluginGuiResponse {
   bool was_open = 1;
 }
+
+// ---------------------------------------------------------------------------
+// Plugin parameters (universal, format-agnostic)
+// ---------------------------------------------------------------------------
+
+message PluginParameter {
+  string id = 1;                // Unique identifier (string for cross-format compat)
+  uint32 index = 2;             // Positional index
+  string name = 3;              // Human-readable display name
+  string module = 4;            // Hierarchical group path (e.g. "Osc/Filter"), empty if N/A
+  double min_value = 5;         // Minimum plain value
+  double max_value = 6;         // Maximum plain value
+  double default_value = 7;     // Default plain value
+  double current_value = 8;     // Current plain value
+  string display_text = 9;      // Formatted display (e.g. "2.3 kHz")
+  uint32 flags = 10;            // Bitmask: STEPPED=1, HIDDEN=2, READONLY=4, BYPASS=8, ENUM=16
+}
+
+message ParameterList {
+  repeated PluginParameter parameters = 1;
+}
+
+message ParameterUpdate {
+  string param_id = 1;
+  double value = 2;
+  string display_text = 3;
+}
+
+message ParameterUpdates {
+  repeated ParameterUpdate updates = 1;
+}
+

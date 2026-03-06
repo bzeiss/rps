@@ -239,6 +239,17 @@ rps::gui::IPluginGuiHost::OpenResult ClapGuiHost::open(const boost::filesystem::
     }
     spdlog::info("  plugin->init() succeeded");
 
+    // 5b. Query params extension (optional — used for parameter streaming)
+    m_params = static_cast<const clap_plugin_params*>(
+        m_plugin->get_extension(m_plugin, CLAP_EXT_PARAMS));
+    if (m_params) {
+        spdlog::info("  Params extension found (count={} get_info={} get_value={} value_to_text={})",
+                     m_params->count != nullptr, m_params->get_info != nullptr,
+                     m_params->get_value != nullptr, m_params->value_to_text != nullptr);
+    } else {
+        spdlog::info("  No params extension — parameter streaming disabled");
+    }
+
     // 6. Query GUI extension
     spdlog::info("  Step 6: Querying CLAP_EXT_GUI...");
     m_gui = static_cast<const clap_plugin_gui*>(
@@ -348,7 +359,9 @@ rps::gui::IPluginGuiHost::OpenResult ClapGuiHost::open(const boost::filesystem::
     return OpenResult{m_pluginName, w, h};
 }
 
-void ClapGuiHost::runEventLoop(std::function<void(const std::string& reason)> closedCb) {
+void ClapGuiHost::runEventLoop(
+    std::function<void(const std::string& reason)> closedCb,
+    std::function<void(std::vector<rps::ipc::ParameterValueUpdate>)> paramChangeCb) {
     spdlog::info("ClapGuiHost::runEventLoop() starting");
 
     auto resizeHandler = [this](uint32_t newWidth, uint32_t newHeight) {
@@ -372,7 +385,22 @@ void ClapGuiHost::runEventLoop(std::function<void(const std::string& reason)> cl
         }
     };
 
+    auto lastParamPoll = std::chrono::steady_clock::now();
+    constexpr auto kParamPollInterval = std::chrono::milliseconds(50);
+
     while (m_window.pollEvents(resizeHandler)) {
+        // Parameter polling at ~20Hz
+        if (paramChangeCb) {
+            auto now = std::chrono::steady_clock::now();
+            if (now - lastParamPoll >= kParamPollInterval) {
+                auto changes = pollParameterChanges();
+                if (!changes.empty()) {
+                    paramChangeCb(std::move(changes));
+                }
+                lastParamPoll = now;
+            }
+        }
+
         std::this_thread::sleep_for(std::chrono::milliseconds(8));
     }
 
@@ -386,6 +414,117 @@ void ClapGuiHost::runEventLoop(std::function<void(const std::string& reason)> cl
 void ClapGuiHost::requestClose() {
     spdlog::info("ClapGuiHost::requestClose()");
     m_window.requestClose();
+}
+
+std::vector<rps::ipc::PluginParameterInfo> ClapGuiHost::getParameters() {
+    std::vector<rps::ipc::PluginParameterInfo> result;
+    if (!m_params || !m_params->count || !m_params->get_info) {
+        spdlog::info("getParameters: params extension not available");
+        return result;
+    }
+
+    uint32_t count = m_params->count(m_plugin);
+    spdlog::info("getParameters: plugin has {} parameters", count);
+    result.reserve(count);
+    m_cachedParams.clear();
+    m_cachedParams.reserve(count);
+
+    for (uint32_t i = 0; i < count; ++i) {
+        clap_param_info_t info{};
+        if (!m_params->get_info(m_plugin, i, &info)) {
+            spdlog::warn("  get_info({}) failed, skipping", i);
+            continue;
+        }
+
+        rps::ipc::PluginParameterInfo p;
+        p.id = std::to_string(info.id);
+        p.index = i;
+        p.name = info.name;
+        p.module = info.module;
+        p.minValue = info.min_value;
+        p.maxValue = info.max_value;
+        p.defaultValue = info.default_value;
+
+        // Get current value
+        double val = info.default_value;
+        if (m_params->get_value) {
+            m_params->get_value(m_plugin, info.id, &val);
+        }
+        p.currentValue = val;
+
+        // Get display text
+        if (m_params->value_to_text) {
+            char buf[256] = {};
+            if (m_params->value_to_text(m_plugin, info.id, val, buf, sizeof(buf))) {
+                p.displayText = buf;
+            }
+        }
+
+        // Map CLAP flags to universal flags
+        uint32_t flags = 0;
+        if (info.flags & CLAP_PARAM_IS_STEPPED)  flags |= rps::ipc::kParamFlagStepped;
+        if (info.flags & CLAP_PARAM_IS_HIDDEN)   flags |= rps::ipc::kParamFlagHidden;
+        if (info.flags & CLAP_PARAM_IS_READONLY) flags |= rps::ipc::kParamFlagReadOnly;
+        if (info.flags & CLAP_PARAM_IS_BYPASS)   flags |= rps::ipc::kParamFlagBypass;
+        if (info.flags & CLAP_PARAM_IS_ENUM)     flags |= rps::ipc::kParamFlagEnum;
+        p.flags = flags;
+
+        result.push_back(p);
+
+        // Cache for polling
+        m_cachedParams.push_back({p.id, val});
+    }
+
+    return result;
+}
+
+std::vector<rps::ipc::ParameterValueUpdate> ClapGuiHost::pollParameterChanges() {
+    std::vector<rps::ipc::ParameterValueUpdate> updates;
+    if (!m_params || !m_params->count || !m_params->get_info || !m_params->get_value) {
+        return updates;
+    }
+
+    uint32_t count = m_params->count(m_plugin);
+
+    // If the parameter count changed (e.g. preset load), reinitialize
+    if (count != static_cast<uint32_t>(m_cachedParams.size())) {
+        spdlog::info("pollParameterChanges: param count changed ({} -> {}), full rescan needed",
+                     m_cachedParams.size(), count);
+        m_cachedParams.clear();
+        return updates; // The caller should call getParameters() again
+    }
+
+    for (uint32_t i = 0; i < count; ++i) {
+        clap_param_info_t info{};
+        if (!m_params->get_info(m_plugin, i, &info)) {
+            continue;
+        }
+
+        double val = 0.0;
+        if (!m_params->get_value(m_plugin, info.id, &val)) {
+            continue;
+        }
+
+        // Compare with cached value (epsilon for floating-point noise)
+        if (i < m_cachedParams.size() && std::abs(val - m_cachedParams[i].lastValue) > 1e-9) {
+            rps::ipc::ParameterValueUpdate u;
+            u.paramId = m_cachedParams[i].id;
+            u.value = val;
+
+            // Get updated display text
+            if (m_params->value_to_text) {
+                char buf[256] = {};
+                if (m_params->value_to_text(m_plugin, info.id, val, buf, sizeof(buf))) {
+                    u.displayText = buf;
+                }
+            }
+
+            m_cachedParams[i].lastValue = val;
+            updates.push_back(std::move(u));
+        }
+    }
+
+    return updates;
 }
 
 } // namespace rps::scanner

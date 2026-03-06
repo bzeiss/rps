@@ -172,6 +172,82 @@ CloseGuiRequest tag_invoke(boost::json::value_to_tag<CloseGuiRequest>, const boo
     return {};
 }
 
+// --- Parameter streaming messages ---
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const PluginParameterInfo& p) {
+    jv = {
+        {"id", p.id},
+        {"index", p.index},
+        {"name", p.name},
+        {"module", p.module},
+        {"minValue", p.minValue},
+        {"maxValue", p.maxValue},
+        {"defaultValue", p.defaultValue},
+        {"currentValue", p.currentValue},
+        {"displayText", p.displayText},
+        {"flags", p.flags}
+    };
+}
+
+PluginParameterInfo tag_invoke(boost::json::value_to_tag<PluginParameterInfo>, const boost::json::value& jv) {
+    auto const& obj = jv.as_object();
+    PluginParameterInfo p;
+    p.id = boost::json::value_to<std::string>(obj.at("id"));
+    p.index = obj.at("index").to_number<uint32_t>();
+    p.name = boost::json::value_to<std::string>(obj.at("name"));
+    if (obj.contains("module")) p.module = boost::json::value_to<std::string>(obj.at("module"));
+    p.minValue = obj.at("minValue").to_number<double>();
+    p.maxValue = obj.at("maxValue").to_number<double>();
+    p.defaultValue = obj.at("defaultValue").to_number<double>();
+    p.currentValue = obj.at("currentValue").to_number<double>();
+    if (obj.contains("displayText")) p.displayText = boost::json::value_to<std::string>(obj.at("displayText"));
+    p.flags = obj.at("flags").to_number<uint32_t>();
+    return p;
+}
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const ParameterListEvent& evt) {
+    jv = {
+        {"parameters", boost::json::value_from(evt.parameters)}
+    };
+}
+
+ParameterListEvent tag_invoke(boost::json::value_to_tag<ParameterListEvent>, const boost::json::value& jv) {
+    auto const& obj = jv.as_object();
+    return {
+        boost::json::value_to<std::vector<PluginParameterInfo>>(obj.at("parameters"))
+    };
+}
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const ParameterValueUpdate& u) {
+    jv = {
+        {"paramId", u.paramId},
+        {"value", u.value},
+        {"displayText", u.displayText}
+    };
+}
+
+ParameterValueUpdate tag_invoke(boost::json::value_to_tag<ParameterValueUpdate>, const boost::json::value& jv) {
+    auto const& obj = jv.as_object();
+    return {
+        boost::json::value_to<std::string>(obj.at("paramId")),
+        obj.at("value").to_number<double>(),
+        boost::json::value_to<std::string>(obj.at("displayText"))
+    };
+}
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const ParameterValuesEvent& evt) {
+    jv = {
+        {"updates", boost::json::value_from(evt.updates)}
+    };
+}
+
+ParameterValuesEvent tag_invoke(boost::json::value_to_tag<ParameterValuesEvent>, const boost::json::value& jv) {
+    auto const& obj = jv.as_object();
+    return {
+        boost::json::value_to<std::vector<ParameterValueUpdate>>(obj.at("updates"))
+    };
+}
+
 void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const Message& msg) {
     boost::json::object obj;
     obj["type"] = static_cast<int>(msg.type);
@@ -215,6 +291,12 @@ Message tag_invoke(boost::json::value_to_tag<Message>, const boost::json::value&
             break;
         case MessageType::CloseGuiRequest:
             msg.payload = boost::json::value_to<CloseGuiRequest>(payload_val);
+            break;
+        case MessageType::ParameterListEvent:
+            msg.payload = boost::json::value_to<rps::ipc::ParameterListEvent>(payload_val);
+            break;
+        case MessageType::ParameterValuesEvent:
+            msg.payload = boost::json::value_to<rps::ipc::ParameterValuesEvent>(payload_val);
             break;
         default:
             throw std::runtime_error("Unknown MessageType");

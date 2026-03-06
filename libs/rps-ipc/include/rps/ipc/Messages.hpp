@@ -26,7 +26,10 @@ enum class MessageType {
     OpenGuiRequest,
     GuiOpenedEvent,
     GuiClosedEvent,
-    CloseGuiRequest
+    CloseGuiRequest,
+    // Parameter streaming
+    ParameterListEvent,
+    ParameterValuesEvent
 };
 
 struct ScanRequest {
@@ -67,7 +70,7 @@ struct ErrorMessage {
     std::string details;
 };
 
-// GUI lifecycle messages (server ↔ plugin host worker)
+// GUI lifecycle messages (server <-> plugin host worker)
 struct OpenGuiRequest {
     std::string pluginPath;
     std::string format;
@@ -84,6 +87,52 @@ struct GuiClosedEvent {
 };
 
 struct CloseGuiRequest {};
+
+// ---------------------------------------------------------------------------
+// Parameter streaming messages (plugin host worker -> server)
+// ---------------------------------------------------------------------------
+
+/// Flags for PluginParameterInfo
+enum PluginParameterFlags : uint32_t {
+    kParamFlagNone     = 0,
+    kParamFlagStepped  = 1 << 0,  // Integer/discrete values only
+    kParamFlagHidden   = 1 << 1,  // Should not be shown to user
+    kParamFlagReadOnly = 1 << 2,  // Cannot be changed by host
+    kParamFlagBypass   = 1 << 3,  // Bypass parameter
+    kParamFlagEnum     = 1 << 4,  // Enumerated values (also implies stepped)
+};
+
+/// Universal parameter descriptor, format-agnostic.
+/// All values are in plain scale (not normalized).
+struct PluginParameterInfo {
+    std::string id;           // Unique identifier (string for cross-format compat)
+    uint32_t index = 0;       // Positional index
+    std::string name;         // Human-readable display name
+    std::string module;       // Hierarchical group path, empty if N/A
+    double minValue = 0.0;
+    double maxValue = 1.0;
+    double defaultValue = 0.0;
+    double currentValue = 0.0;
+    std::string displayText;  // Formatted display (e.g. "2.3 kHz")
+    uint32_t flags = 0;       // PluginParameterFlags bitmask
+};
+
+/// Sent once after the plugin GUI opens, containing the full parameter list.
+struct ParameterListEvent {
+    std::vector<PluginParameterInfo> parameters;
+};
+
+/// Single parameter value change.
+struct ParameterValueUpdate {
+    std::string paramId;
+    double value = 0.0;
+    std::string displayText;
+};
+
+/// Sent periodically: delta updates for changed parameter values.
+struct ParameterValuesEvent {
+    std::vector<ParameterValueUpdate> updates;
+};
 
 // JSON Serialization Declarations
 void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const ScanRequest& req);
@@ -113,11 +162,24 @@ GuiClosedEvent tag_invoke(boost::json::value_to_tag<GuiClosedEvent>, const boost
 void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const CloseGuiRequest& req);
 CloseGuiRequest tag_invoke(boost::json::value_to_tag<CloseGuiRequest>, const boost::json::value& jv);
 
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const PluginParameterInfo& p);
+PluginParameterInfo tag_invoke(boost::json::value_to_tag<PluginParameterInfo>, const boost::json::value& jv);
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const ParameterListEvent& evt);
+ParameterListEvent tag_invoke(boost::json::value_to_tag<ParameterListEvent>, const boost::json::value& jv);
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const ParameterValueUpdate& u);
+ParameterValueUpdate tag_invoke(boost::json::value_to_tag<ParameterValueUpdate>, const boost::json::value& jv);
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const ParameterValuesEvent& evt);
+ParameterValuesEvent tag_invoke(boost::json::value_to_tag<ParameterValuesEvent>, const boost::json::value& jv);
+
 // Wrapper for any message
 struct Message {
     MessageType type;
     std::variant<ScanRequest, ScanResult, ProgressEvent, ErrorMessage,
-                 OpenGuiRequest, GuiOpenedEvent, GuiClosedEvent, CloseGuiRequest> payload;
+                 OpenGuiRequest, GuiOpenedEvent, GuiClosedEvent, CloseGuiRequest,
+                 ParameterListEvent, ParameterValuesEvent> payload;
 };
 
 void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const Message& msg);

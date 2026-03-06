@@ -182,6 +182,40 @@ void GuiSessionManager::openGui(const std::string& pluginPath, const std::string
                 done = true;
                 break;
             }
+            case rps::ipc::MessageType::ParameterListEvent: {
+                auto& evt = std::get<rps::ipc::ParameterListEvent>(msg->payload);
+                rps::v1::PluginGuiEvent event;
+                auto* paramList = event.mutable_parameter_list();
+                for (const auto& p : evt.parameters) {
+                    auto* pp = paramList->add_parameters();
+                    pp->set_id(p.id);
+                    pp->set_index(p.index);
+                    pp->set_name(p.name);
+                    pp->set_module(p.module);
+                    pp->set_min_value(p.minValue);
+                    pp->set_max_value(p.maxValue);
+                    pp->set_default_value(p.defaultValue);
+                    pp->set_current_value(p.currentValue);
+                    pp->set_display_text(p.displayText);
+                    pp->set_flags(p.flags);
+                }
+                writer->Write(event);
+                spdlog::info("Sent ParameterList ({} params)", evt.parameters.size());
+                break;
+            }
+            case rps::ipc::MessageType::ParameterValuesEvent: {
+                auto& evt = std::get<rps::ipc::ParameterValuesEvent>(msg->payload);
+                rps::v1::PluginGuiEvent event;
+                auto* updates = event.mutable_parameter_updates();
+                for (const auto& u : evt.updates) {
+                    auto* pu = updates->add_updates();
+                    pu->set_param_id(u.paramId);
+                    pu->set_value(u.value);
+                    pu->set_display_text(u.displayText);
+                }
+                writer->Write(event);
+                break;
+            }
             default:
                 break;
         }
