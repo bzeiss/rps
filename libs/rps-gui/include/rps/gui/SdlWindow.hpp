@@ -83,6 +83,11 @@ public:
     /// Set callback for when a preset is selected from the sidebar.
     void setPresetSelectedCallback(PresetSelectedCallback cb);
 
+    /// Reposition the first child HWND to account for the sidebar offset.
+    /// Called automatically by handleResize() on Windows. Format hosts do NOT need
+    /// to manage child HWND positioning themselves.
+    void repositionChildHwnd(uint32_t pluginW, uint32_t pluginH);
+
 private:
     SDL_Window* m_window = nullptr;
     SDL_Renderer* m_renderer = nullptr;

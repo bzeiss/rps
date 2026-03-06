@@ -407,20 +407,9 @@ rps::gui::IPluginGuiHost::OpenResult ClapGuiHost::open(const boost::filesystem::
         spdlog::info("  show() succeeded — plugin GUI is now visible");
     }
 
-    // 12b. Offset plugin child window to the right of the sidebar
-    if (m_window.getSidebarWidth() > 0) {
-#ifdef _WIN32
-        // Find the plugin's child HWND inside our SDL window
-        HWND parentHwnd = static_cast<HWND>(nativeHandle);
-        HWND child = GetWindow(parentHwnd, GW_CHILD);
-        if (child) {
-            int sidebarW = static_cast<int>(m_window.getSidebarWidth());
-            SetWindowPos(child, nullptr, sidebarW, 0, static_cast<int>(w), static_cast<int>(h),
-                         SWP_NOZORDER | SWP_NOACTIVATE);
-            spdlog::info("  Offset plugin child window right by {} pixels (sidebar)", sidebarW);
-        }
-#endif
-    }
+
+    // 12b. Initial child HWND offset for sidebar (handled by SdlWindow::repositionChildHwnd)
+    m_window.repositionChildHwnd(w, h);
 
     // 12c. Populate sidebar presets
     if (!m_presets.empty()) {
@@ -459,19 +448,8 @@ void ClapGuiHost::runEventLoop(
             m_window.resize(adjustedW, adjustedH);
         }
 
-#ifdef _WIN32
-        // If the sidebar was resized or the window was resized, ensure the child HWND 
-        // respects the new sidebar offset and new width/height boundaries.
-        if (m_window.getSidebarWidth() > 0) {
-            HWND parentHwnd = static_cast<HWND>(m_window.getNativeHandle());
-            HWND child = GetWindow(parentHwnd, GW_CHILD);
-            if (child) {
-                int sidebarW = static_cast<int>(m_window.getSidebarWidth());
-                SetWindowPos(child, nullptr, sidebarW, 0, static_cast<int>(adjustedW), static_cast<int>(adjustedH),
-                             SWP_NOZORDER | SWP_NOACTIVATE);
-            }
-        }
-#endif
+
+        // Child HWND repositioning is handled automatically by SdlWindow::handleResize()
     };
     // Register resize handler via event watcher for live resize during drag
     m_window.setResizeCallback(resizeHandler);

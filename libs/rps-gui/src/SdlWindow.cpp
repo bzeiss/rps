@@ -1,3 +1,10 @@
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 #include <rps/gui/SdlWindow.hpp>
 #include <SDL3/SDL.h>
 #include <stdexcept>
@@ -512,25 +519,44 @@ void SdlWindow::handleResize(uint32_t width, uint32_t height) {
     m_prevWinX = curX;
     m_prevWinW = curW;
 
+    uint32_t effSidebar = getSidebarWidth();
+    uint32_t pluginWidth = width;
+    if (m_sidebarEnabled && width > effSidebar) {
+        pluginWidth -= effSidebar;
+    }
+
     if (leftEdgeDragged) {
-        // Left-edge drag: do NOT resize the plugin, only sidebar absorbed the change.
-        // But we still need to update the child HWND X-offset.
+        // Left-edge drag: sidebar absorbed the change, but still update child HWND offset
         if (m_resizeCb) {
-            uint32_t effSidebar = getSidebarWidth();
-            uint32_t pluginWidth = (width > effSidebar) ? width - effSidebar : 0;
             m_resizeCb(pluginWidth, height);
         }
     } else {
         // Normal resize (right/top/bottom edge or programmatic)
         if (m_resizeCb) {
-            uint32_t effSidebar = getSidebarWidth();
-            uint32_t pluginWidth = width;
-            if (m_sidebarEnabled && width > effSidebar) {
-                pluginWidth -= effSidebar;
-            }
             m_resizeCb(pluginWidth, height);
         }
     }
+
+    // Reposition the plugin's child window to account for sidebar offset
+    repositionChildHwnd(pluginWidth, height);
+}
+
+void SdlWindow::repositionChildHwnd(uint32_t pluginW, uint32_t pluginH) {
+#ifdef _WIN32
+    if (!m_window || !m_sidebarEnabled) return;
+
+    HWND parentHwnd = static_cast<HWND>(getNativeHandle());
+    HWND child = GetWindow(parentHwnd, GW_CHILD);
+    if (child) {
+        int sidebarW = static_cast<int>(getSidebarWidth());
+        SetWindowPos(child, nullptr, sidebarW, 0,
+                     static_cast<int>(pluginW), static_cast<int>(pluginH),
+                     SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+#else
+    (void)pluginW;
+    (void)pluginH;
+#endif
 }
 
 void SdlWindow::toggleSidebar(bool collapse) {

@@ -36,8 +36,10 @@ boost::filesystem::path GuiSessionManager::resolveHostBinary(const std::string& 
     std::string binaryName;
     if (format == "clap") {
         binaryName = "rps-pluginhost-clap";
+    } else if (format == "vst3") {
+        binaryName = "rps-pluginhost-vst3";
     } else {
-        // Future: "vst3" -> "rps-pluginhost-vst3", etc.
+        // Future: "vst2" -> "rps-pluginhost-vst2", etc.
         return {};
     }
 

@@ -98,7 +98,7 @@ target_link_libraries(rps-server
 )
 
 # Ensure the scanner and plugin host are built before we try to copy them
-add_dependencies(rps-server rps-pluginscanner rps-pluginhost-clap)
+add_dependencies(rps-server rps-pluginscanner rps-pluginhost-clap rps-pluginhost-vst3)
 
 add_custom_target(rps-server-deps ALL
     # Copy scanner next to server
@@ -116,10 +116,18 @@ add_custom_target(rps-server-deps ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:rps-server>
         "${CMAKE_SOURCE_DIR}/examples/java/$<TARGET_FILE_NAME:rps-server>"
-    # Copy plugin host to Python example directory
+    # Copy plugin host (CLAP) to Python example directory
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:rps-pluginhost-clap>
         "${CMAKE_SOURCE_DIR}/examples/python/$<TARGET_FILE_NAME:rps-pluginhost-clap>"
-    DEPENDS rps-server rps-pluginscanner rps-pluginhost-clap
+    # Copy plugin host (VST3) next to server
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:rps-pluginhost-vst3>
+        "$<TARGET_FILE_DIR:rps-server>/$<TARGET_FILE_NAME:rps-pluginhost-vst3>"
+    # Copy plugin host (VST3) to Python example directory
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:rps-pluginhost-vst3>
+        "${CMAKE_SOURCE_DIR}/examples/python/$<TARGET_FILE_NAME:rps-pluginhost-vst3>"
+    DEPENDS rps-server rps-pluginscanner rps-pluginhost-clap rps-pluginhost-vst3
     COMMENT "Ensuring binaries are present for server and examples"
 )
