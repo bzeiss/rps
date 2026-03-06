@@ -127,14 +127,47 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
         // We also need to poll IPC for CloseGuiRequest
         std::atomic<bool> ipcClosed{false};
 
-        // IPC listener thread: watches for CloseGuiRequest
+        // IPC listener thread: watches for CloseGuiRequest and state commands
         std::thread ipcThread([&]() {
             while (!ipcClosed.load(std::memory_order_relaxed)) {
                 auto msg = connection->receiveMessage(200);
-                if (msg && msg->type == rps::ipc::MessageType::CloseGuiRequest) {
+                if (!msg) continue;
+
+                if (msg->type == rps::ipc::MessageType::CloseGuiRequest) {
                     spdlog::info("Received CloseGuiRequest via IPC");
                     host->requestClose();
                     break;
+                }
+
+                if (msg->type == rps::ipc::MessageType::GetStateRequest) {
+                    spdlog::info("Received GetStateRequest via IPC");
+                    auto resp = host->saveState();
+                    rps::ipc::Message respMsg;
+                    respMsg.type = rps::ipc::MessageType::GetStateResponse;
+                    respMsg.payload = std::move(resp);
+                    connection->sendMessage(respMsg);
+                    continue;
+                }
+
+                if (msg->type == rps::ipc::MessageType::SetStateRequest) {
+                    spdlog::info("Received SetStateRequest via IPC");
+                    auto& req = std::get<rps::ipc::SetStateRequest>(msg->payload);
+                    auto resp = host->loadState(req.stateData);
+                    rps::ipc::Message respMsg;
+                    respMsg.type = rps::ipc::MessageType::SetStateResponse;
+                    respMsg.payload = std::move(resp);
+                    connection->sendMessage(respMsg);
+
+                    // After successful state load, re-send parameter list
+                    if (resp.success) {
+                        auto params = host->getParameters();
+                        spdlog::info("Re-sending ParameterListEvent ({} params) after state restore", params.size());
+                        rps::ipc::Message paramMsg;
+                        paramMsg.type = rps::ipc::MessageType::ParameterListEvent;
+                        paramMsg.payload = rps::ipc::ParameterListEvent{std::move(params)};
+                        connection->sendMessage(paramMsg);
+                    }
+                    continue;
                 }
             }
         });

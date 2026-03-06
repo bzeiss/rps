@@ -86,6 +86,18 @@ class RpsClient:
             rps_pb2.ClosePluginGuiRequest(plugin_path=plugin_path)
         )
 
+    def get_plugin_state(self, plugin_path: str) -> rps_pb2.GetPluginStateResponse:
+        """Get the complete state of a running plugin as an opaque binary blob."""
+        return self._stub.GetPluginState(
+            rps_pb2.GetPluginStateRequest(plugin_path=plugin_path)
+        )
+
+    def set_plugin_state(self, plugin_path: str, state_data: bytes) -> rps_pb2.SetPluginStateResponse:
+        """Restore plugin state from a previously saved binary blob."""
+        return self._stub.SetPluginState(
+            rps_pb2.SetPluginStateRequest(plugin_path=plugin_path, state_data=state_data)
+        )
+
     def __enter__(self):
         self.connect()
         return self

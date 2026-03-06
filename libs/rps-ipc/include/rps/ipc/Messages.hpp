@@ -29,7 +29,12 @@ enum class MessageType {
     CloseGuiRequest,
     // Parameter streaming
     ParameterListEvent,
-    ParameterValuesEvent
+    ParameterValuesEvent,
+    // State save/restore
+    GetStateRequest,
+    GetStateResponse,
+    SetStateRequest,
+    SetStateResponse
 };
 
 struct ScanRequest {
@@ -134,6 +139,31 @@ struct ParameterValuesEvent {
     std::vector<ParameterValueUpdate> updates;
 };
 
+// ---------------------------------------------------------------------------
+// State save/restore messages (server <-> plugin host worker)
+// ---------------------------------------------------------------------------
+
+/// Request from server to host to save state.
+struct GetStateRequest {};
+
+/// Response from host with serialized plugin state.
+struct GetStateResponse {
+    std::vector<uint8_t> stateData;  // Opaque binary blob from the plugin
+    bool success = false;
+    std::string error;
+};
+
+/// Request from server to host to restore state.
+struct SetStateRequest {
+    std::vector<uint8_t> stateData;
+};
+
+/// Response from host confirming state restore.
+struct SetStateResponse {
+    bool success = false;
+    std::string error;
+};
+
 // JSON Serialization Declarations
 void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const ScanRequest& req);
 ScanRequest tag_invoke(boost::json::value_to_tag<ScanRequest>, const boost::json::value& jv);
@@ -174,12 +204,25 @@ ParameterValueUpdate tag_invoke(boost::json::value_to_tag<ParameterValueUpdate>,
 void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const ParameterValuesEvent& evt);
 ParameterValuesEvent tag_invoke(boost::json::value_to_tag<ParameterValuesEvent>, const boost::json::value& jv);
 
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const GetStateRequest& req);
+GetStateRequest tag_invoke(boost::json::value_to_tag<GetStateRequest>, const boost::json::value& jv);
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const GetStateResponse& resp);
+GetStateResponse tag_invoke(boost::json::value_to_tag<GetStateResponse>, const boost::json::value& jv);
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const SetStateRequest& req);
+SetStateRequest tag_invoke(boost::json::value_to_tag<SetStateRequest>, const boost::json::value& jv);
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const SetStateResponse& resp);
+SetStateResponse tag_invoke(boost::json::value_to_tag<SetStateResponse>, const boost::json::value& jv);
+
 // Wrapper for any message
 struct Message {
     MessageType type;
     std::variant<ScanRequest, ScanResult, ProgressEvent, ErrorMessage,
                  OpenGuiRequest, GuiOpenedEvent, GuiClosedEvent, CloseGuiRequest,
-                 ParameterListEvent, ParameterValuesEvent> payload;
+                 ParameterListEvent, ParameterValuesEvent,
+                 GetStateRequest, GetStateResponse, SetStateRequest, SetStateResponse> payload;
 };
 
 void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const Message& msg);

@@ -201,5 +201,41 @@ void RpsServiceImpl::stopScan() {
     m_engine.stop();
 }
 
+grpc::Status RpsServiceImpl::GetPluginState(grpc::ServerContext* /*context*/,
+                                             const rps::v1::GetPluginStateRequest* request,
+                                             rps::v1::GetPluginStateResponse* response) {
+    auto pluginPath = request->plugin_path();
+    spdlog::info("GetPluginState: path={}", pluginPath);
+
+    auto result = m_guiManager.getState(pluginPath);
+    response->set_state_data(result.stateData.data(), result.stateData.size());
+    response->set_success(result.success);
+    if (!result.error.empty()) {
+        response->set_error(result.error);
+    }
+    // TODO: set format from session info
+    response->set_format("clap");
+
+    spdlog::info("GetPluginState: success={} size={}", result.success, result.stateData.size());
+    return grpc::Status::OK;
+}
+
+grpc::Status RpsServiceImpl::SetPluginState(grpc::ServerContext* /*context*/,
+                                             const rps::v1::SetPluginStateRequest* request,
+                                             rps::v1::SetPluginStateResponse* response) {
+    auto pluginPath = request->plugin_path();
+    spdlog::info("SetPluginState: path={} size={}", pluginPath, request->state_data().size());
+
+    std::vector<uint8_t> stateData(request->state_data().begin(), request->state_data().end());
+    auto result = m_guiManager.setState(pluginPath, stateData);
+    response->set_success(result.success);
+    if (!result.error.empty()) {
+        response->set_error(result.error);
+    }
+
+    spdlog::info("SetPluginState: success={}", result.success);
+    return grpc::Status::OK;
+}
+
 } // namespace rps::server
 

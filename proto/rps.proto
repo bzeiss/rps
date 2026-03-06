@@ -25,6 +25,12 @@ service RpsService {
 
   // Close a currently open plugin GUI.
   rpc ClosePluginGui(ClosePluginGuiRequest) returns (ClosePluginGuiResponse);
+
+  // Get the complete state of a running plugin GUI as an opaque binary blob.
+  rpc GetPluginState(GetPluginStateRequest) returns (GetPluginStateResponse);
+
+  // Restore plugin state from a previously saved binary blob.
+  rpc SetPluginState(SetPluginStateRequest) returns (SetPluginStateResponse);
 }
 
 // ---------------------------------------------------------------------------
@@ -264,3 +270,27 @@ message ParameterUpdates {
   repeated ParameterUpdate updates = 1;
 }
 
+// ---------------------------------------------------------------------------
+// Plugin State Save/Restore
+// ---------------------------------------------------------------------------
+
+message GetPluginStateRequest {
+  string plugin_path = 1;
+}
+
+message GetPluginStateResponse {
+  bytes state_data = 1;    // Opaque binary blob from the plugin
+  string format = 2;       // Plugin format (e.g. "clap") for validation
+  bool success = 3;
+  string error = 4;
+}
+
+message SetPluginStateRequest {
+  string plugin_path = 1;
+  bytes state_data = 2;
+}
+
+message SetPluginStateResponse {
+  bool success = 1;
+  string error = 2;
+}

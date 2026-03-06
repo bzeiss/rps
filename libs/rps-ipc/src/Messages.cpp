@@ -1,5 +1,6 @@
 #include <rps/ipc/Messages.hpp>
 #include <stdexcept>
+#include <algorithm>
 
 namespace rps::ipc {
 
@@ -248,6 +249,126 @@ ParameterValuesEvent tag_invoke(boost::json::value_to_tag<ParameterValuesEvent>,
     };
 }
 
+// --- Base64 helpers for binary state blobs ---
+namespace {
+static constexpr char kBase64Chars[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+std::string base64Encode(const std::vector<uint8_t>& data) {
+    std::string result;
+    result.reserve(4 * ((data.size() + 2) / 3));
+    size_t i = 0;
+    for (; i + 2 < data.size(); i += 3) {
+        result += kBase64Chars[(data[i] >> 2) & 0x3F];
+        result += kBase64Chars[((data[i] & 0x3) << 4) | ((data[i+1] >> 4) & 0xF)];
+        result += kBase64Chars[((data[i+1] & 0xF) << 2) | ((data[i+2] >> 6) & 0x3)];
+        result += kBase64Chars[data[i+2] & 0x3F];
+    }
+    if (i < data.size()) {
+        result += kBase64Chars[(data[i] >> 2) & 0x3F];
+        if (i + 1 < data.size()) {
+            result += kBase64Chars[((data[i] & 0x3) << 4) | ((data[i+1] >> 4) & 0xF)];
+            result += kBase64Chars[((data[i+1] & 0xF) << 2)];
+        } else {
+            result += kBase64Chars[((data[i] & 0x3) << 4)];
+            result += '=';
+        }
+        result += '=';
+    }
+    return result;
+}
+
+std::vector<uint8_t> base64Decode(const std::string& encoded) {
+    static constexpr uint8_t kDecodeTable[256] = {
+        64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,
+        64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,
+        64,64,64,64,64,64,64,64,64,64,64,62,64,64,64,63,
+        52,53,54,55,56,57,58,59,60,61,64,64,64, 0,64,64,
+        64, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,
+        15,16,17,18,19,20,21,22,23,24,25,64,64,64,64,64,
+        64,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
+        41,42,43,44,45,46,47,48,49,50,51,64,64,64,64,64,
+        64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,
+        64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,
+        64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,
+        64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,
+        64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,
+        64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,
+        64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,
+        64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,64
+    };
+    std::vector<uint8_t> result;
+    result.reserve(3 * encoded.size() / 4);
+    uint32_t buf = 0;
+    int bits = 0;
+    for (char c : encoded) {
+        if (c == '=' || c == '\n' || c == '\r') continue;
+        uint8_t d = kDecodeTable[static_cast<uint8_t>(c)];
+        if (d == 64) continue;
+        buf = (buf << 6) | d;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            result.push_back(static_cast<uint8_t>((buf >> bits) & 0xFF));
+        }
+    }
+    return result;
+}
+} // anonymous namespace
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const GetStateRequest&) {
+    jv = boost::json::object{};
+}
+
+GetStateRequest tag_invoke(boost::json::value_to_tag<GetStateRequest>, const boost::json::value&) {
+    return {};
+}
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const GetStateResponse& resp) {
+    jv = {
+        {"stateData", base64Encode(resp.stateData)},
+        {"success", resp.success},
+        {"error", resp.error}
+    };
+}
+
+GetStateResponse tag_invoke(boost::json::value_to_tag<GetStateResponse>, const boost::json::value& jv) {
+    auto const& obj = jv.as_object();
+    GetStateResponse resp;
+    resp.stateData = base64Decode(boost::json::value_to<std::string>(obj.at("stateData")));
+    resp.success = obj.at("success").as_bool();
+    if (obj.contains("error")) resp.error = boost::json::value_to<std::string>(obj.at("error"));
+    return resp;
+}
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const SetStateRequest& req) {
+    jv = {
+        {"stateData", base64Encode(req.stateData)}
+    };
+}
+
+SetStateRequest tag_invoke(boost::json::value_to_tag<SetStateRequest>, const boost::json::value& jv) {
+    auto const& obj = jv.as_object();
+    return {
+        base64Decode(boost::json::value_to<std::string>(obj.at("stateData")))
+    };
+}
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const SetStateResponse& resp) {
+    jv = {
+        {"success", resp.success},
+        {"error", resp.error}
+    };
+}
+
+SetStateResponse tag_invoke(boost::json::value_to_tag<SetStateResponse>, const boost::json::value& jv) {
+    auto const& obj = jv.as_object();
+    SetStateResponse resp;
+    resp.success = obj.at("success").as_bool();
+    if (obj.contains("error")) resp.error = boost::json::value_to<std::string>(obj.at("error"));
+    return resp;
+}
+
 void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const Message& msg) {
     boost::json::object obj;
     obj["type"] = static_cast<int>(msg.type);
@@ -297,6 +418,18 @@ Message tag_invoke(boost::json::value_to_tag<Message>, const boost::json::value&
             break;
         case MessageType::ParameterValuesEvent:
             msg.payload = boost::json::value_to<rps::ipc::ParameterValuesEvent>(payload_val);
+            break;
+        case MessageType::GetStateRequest:
+            msg.payload = boost::json::value_to<GetStateRequest>(payload_val);
+            break;
+        case MessageType::GetStateResponse:
+            msg.payload = boost::json::value_to<GetStateResponse>(payload_val);
+            break;
+        case MessageType::SetStateRequest:
+            msg.payload = boost::json::value_to<SetStateRequest>(payload_val);
+            break;
+        case MessageType::SetStateResponse:
+            msg.payload = boost::json::value_to<SetStateResponse>(payload_val);
             break;
         default:
             throw std::runtime_error("Unknown MessageType");

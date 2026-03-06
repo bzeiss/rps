@@ -42,6 +42,14 @@ public:
                                 const rps::v1::ClosePluginGuiRequest* request,
                                 rps::v1::ClosePluginGuiResponse* response) override;
 
+    grpc::Status GetPluginState(grpc::ServerContext* context,
+                                const rps::v1::GetPluginStateRequest* request,
+                                rps::v1::GetPluginStateResponse* response) override;
+
+    grpc::Status SetPluginState(grpc::ServerContext* context,
+                                const rps::v1::SetPluginStateRequest* request,
+                                rps::v1::SetPluginStateResponse* response) override;
+
     // Called by main to set the server pointer for shutdown
     void setServer(grpc::Server* server);
 

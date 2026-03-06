@@ -12,6 +12,7 @@
 #include <clap/clap.h>
 #include <clap/ext/gui.h>
 #include <clap/ext/params.h>
+#include <clap/ext/state.h>
 
 #include <spdlog/spdlog.h>
 #include <stdexcept>
@@ -248,6 +249,16 @@ rps::gui::IPluginGuiHost::OpenResult ClapGuiHost::open(const boost::filesystem::
                      m_params->get_value != nullptr, m_params->value_to_text != nullptr);
     } else {
         spdlog::info("  No params extension — parameter streaming disabled");
+    }
+
+    // 5c. Query state extension (optional — used for state save/restore)
+    m_state = static_cast<const clap_plugin_state*>(
+        m_plugin->get_extension(m_plugin, CLAP_EXT_STATE));
+    if (m_state) {
+        spdlog::info("  State extension found (save={} load={})",
+                     m_state->save != nullptr, m_state->load != nullptr);
+    } else {
+        spdlog::info("  No state extension — state save/restore disabled");
     }
 
     // 6. Query GUI extension
@@ -525,6 +536,86 @@ std::vector<rps::ipc::ParameterValueUpdate> ClapGuiHost::pollParameterChanges() 
     }
 
     return updates;
+}
+
+rps::ipc::GetStateResponse ClapGuiHost::saveState() {
+    rps::ipc::GetStateResponse resp;
+
+    if (!m_state || !m_state->save) {
+        resp.success = false;
+        resp.error = "Plugin does not support state extension";
+        spdlog::warn("saveState: state extension not available");
+        return resp;
+    }
+
+    // Memory-backed output stream
+    std::vector<uint8_t> buffer;
+    clap_ostream_t ostream{};
+    ostream.ctx = &buffer;
+    ostream.write = [](const clap_ostream_t* stream, const void* data, uint64_t size) -> int64_t {
+        auto* buf = static_cast<std::vector<uint8_t>*>(stream->ctx);
+        auto* bytes = static_cast<const uint8_t*>(data);
+        buf->insert(buf->end(), bytes, bytes + size);
+        return static_cast<int64_t>(size);
+    };
+
+    spdlog::info("saveState: saving plugin state...");
+    if (!m_state->save(m_plugin, &ostream)) {
+        resp.success = false;
+        resp.error = "Plugin save() returned false";
+        spdlog::error("saveState: plugin save() failed");
+        return resp;
+    }
+
+    resp.stateData = std::move(buffer);
+    resp.success = true;
+    spdlog::info("saveState: saved {} bytes", resp.stateData.size());
+    return resp;
+}
+
+rps::ipc::SetStateResponse ClapGuiHost::loadState(const std::vector<uint8_t>& stateData) {
+    rps::ipc::SetStateResponse resp;
+
+    if (!m_state || !m_state->load) {
+        resp.success = false;
+        resp.error = "Plugin does not support state extension";
+        spdlog::warn("loadState: state extension not available");
+        return resp;
+    }
+
+    // Memory-backed input stream
+    struct ReadCtx {
+        const std::vector<uint8_t>* data;
+        size_t pos = 0;
+    };
+    ReadCtx readCtx{&stateData, 0};
+
+    clap_istream_t istream{};
+    istream.ctx = &readCtx;
+    istream.read = [](const clap_istream_t* stream, void* buffer, uint64_t size) -> int64_t {
+        auto* ctx = static_cast<ReadCtx*>(stream->ctx);
+        size_t remaining = ctx->data->size() - ctx->pos;
+        size_t toRead = std::min(static_cast<size_t>(size), remaining);
+        if (toRead == 0) return 0; // EOF
+        std::memcpy(buffer, ctx->data->data() + ctx->pos, toRead);
+        ctx->pos += toRead;
+        return static_cast<int64_t>(toRead);
+    };
+
+    spdlog::info("loadState: loading {} bytes...", stateData.size());
+    if (!m_state->load(m_plugin, &istream)) {
+        resp.success = false;
+        resp.error = "Plugin load() returned false";
+        spdlog::error("loadState: plugin load() failed");
+        return resp;
+    }
+
+    // Clear cached params so next poll re-queries everything
+    m_cachedParams.clear();
+
+    resp.success = true;
+    spdlog::info("loadState: state restored successfully");
+    return resp;
 }
 
 } // namespace rps::scanner

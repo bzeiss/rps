@@ -1,8 +1,7 @@
 """Open a plugin's native GUI via gRPC and display lifecycle events with parameter dump."""
 
-import sys
+import threading
 
-import click
 from rich.console import Console
 from rich.table import Table
 
@@ -131,42 +130,131 @@ def run_open_gui(client: RpsClient, format_filter: str = "") -> None:
 
     plugin_path, fmt = selection
     console.print(f"\n[bold]Opening GUI:[/bold] {plugin_path} ({fmt})")
-    console.print("[dim]Press Ctrl+C to close...[/dim]\n")
 
     store = ParameterStore()
     plugin_name = ""
+    gui_closed = threading.Event()
 
-    try:
-        event_stream = client.open_plugin_gui(plugin_path, fmt)
-        for event in event_stream:
-            if event.HasField("gui_opened"):
-                g = event.gui_opened
-                plugin_name = g.plugin_name
-                console.print(
-                    f"[green]✓ GUI Opened:[/green] {g.plugin_name} "
-                    f"({g.width}×{g.height})"
-                )
-            elif event.HasField("parameter_list"):
-                store.load_list(event.parameter_list)
-                store.print_table(plugin_name)
-                console.print()
-            elif event.HasField("parameter_updates"):
-                changed = store.apply_updates(event.parameter_updates)
-                for p in changed:
-                    val_str = p['display'] or f"{p['value']:.4f}"
+    def _stream_consumer():
+        """Background thread: consumes gRPC event stream."""
+        nonlocal plugin_name
+        try:
+            event_stream = client.open_plugin_gui(plugin_path, fmt)
+            for event in event_stream:
+                if gui_closed.is_set():
+                    break
+                if event.HasField("gui_opened"):
+                    g = event.gui_opened
+                    plugin_name = g.plugin_name
                     console.print(
-                        f"  [cyan]⟳[/cyan] {p['name']}: [bold]{val_str}[/bold]"
+                        f"[green]✓ GUI Opened:[/green] {g.plugin_name} "
+                        f"({g.width}×{g.height})"
                     )
-            elif event.HasField("gui_closed"):
-                console.print(
-                    f"\n[yellow]✗ GUI Closed:[/yellow] {event.gui_closed.reason}"
-                )
+                    console.print(
+                        "[dim]Commands: save-state <file>, load-state <file>, "
+                        "params, help, quit[/dim]\n"
+                    )
+                elif event.HasField("parameter_list"):
+                    store.load_list(event.parameter_list)
+                    store.print_table(plugin_name)
+                    console.print()
+                elif event.HasField("parameter_updates"):
+                    changed = store.apply_updates(event.parameter_updates)
+                    for p in changed:
+                        val_str = p['display'] or f"{p['value']:.4f}"
+                        console.print(
+                            f"  [cyan]⟳[/cyan] {p['name']}: [bold]{val_str}[/bold]"
+                        )
+                elif event.HasField("gui_closed"):
+                    console.print(
+                        f"\n[yellow]✗ GUI Closed:[/yellow] {event.gui_closed.reason}"
+                    )
+                    gui_closed.set()
+                    break
+                elif event.HasField("gui_error"):
+                    e = event.gui_error
+                    console.print(f"[red]✗ Error:[/red] {e.error}")
+                    if e.details:
+                        console.print(f"  [dim]{e.details}[/dim]")
+        except Exception as e:
+            if not gui_closed.is_set():
+                console.print(f"[red]Stream error: {e}[/red]")
+                gui_closed.set()
+
+    # Start stream consumer thread
+    stream_thread = threading.Thread(target=_stream_consumer, daemon=True)
+    stream_thread.start()
+
+    # Main thread: accept commands
+    try:
+        while not gui_closed.is_set():
+            try:
+                line = input("").strip()
+            except EOFError:
                 break
-            elif event.HasField("gui_error"):
-                e = event.gui_error
-                console.print(f"[red]✗ Error:[/red] {e.error}")
-                if e.details:
-                    console.print(f"  [dim]{e.details}[/dim]")
+            if not line:
+                continue
+
+            parts = line.split(maxsplit=1)
+            cmd = parts[0].lower()
+
+            if cmd in ("quit", "exit", "close", "q"):
+                console.print("[yellow]Closing GUI...[/yellow]")
+                try:
+                    client.close_plugin_gui(plugin_path)
+                except Exception:
+                    pass
+                gui_closed.set()
+                break
+
+            elif cmd == "save-state" and len(parts) == 2:
+                filepath = parts[1]
+                try:
+                    resp = client.get_plugin_state(plugin_path)
+                    if resp.success:
+                        with open(filepath, "wb") as f:
+                            f.write(resp.state_data)
+                        console.print(
+                            f"[green]✓ State saved:[/green] "
+                            f"{len(resp.state_data)} bytes → {filepath}"
+                        )
+                    else:
+                        console.print(f"[red]✗ Save failed:[/red] {resp.error}")
+                except Exception as e:
+                    console.print(f"[red]✗ Save error:[/red] {e}")
+
+            elif cmd == "load-state" and len(parts) == 2:
+                filepath = parts[1]
+                try:
+                    with open(filepath, "rb") as f:
+                        state_data = f.read()
+                    console.print(
+                        f"[dim]Loading {len(state_data)} bytes from {filepath}...[/dim]"
+                    )
+                    resp = client.set_plugin_state(plugin_path, state_data)
+                    if resp.success:
+                        console.print("[green]✓ State restored[/green]")
+                    else:
+                        console.print(f"[red]✗ Load failed:[/red] {resp.error}")
+                except FileNotFoundError:
+                    console.print(f"[red]✗ File not found:[/red] {filepath}")
+                except Exception as e:
+                    console.print(f"[red]✗ Load error:[/red] {e}")
+
+            elif cmd == "params":
+                store.print_table(plugin_name)
+
+            elif cmd == "help":
+                console.print("[bold]Available commands:[/bold]")
+                console.print("  save-state <file>  — Save plugin state to file")
+                console.print("  load-state <file>  — Restore plugin state from file")
+                console.print("  params             — Print all parameters")
+                console.print("  quit               — Close the GUI and exit")
+
+            else:
+                console.print(
+                    f"[dim]Unknown command: '{cmd}'. Type 'help' for commands.[/dim]"
+                )
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Closing GUI...[/yellow]")
@@ -174,6 +262,6 @@ def run_open_gui(client: RpsClient, format_filter: str = "") -> None:
             client.close_plugin_gui(plugin_path)
         except Exception:
             pass
-    except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
-        sys.exit(1)
+        gui_closed.set()
+
+    stream_thread.join(timeout=3)

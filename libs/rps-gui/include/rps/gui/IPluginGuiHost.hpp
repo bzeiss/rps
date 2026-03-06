@@ -52,6 +52,12 @@ public:
     /// Poll for parameter value changes since the last call.
     /// Returns only parameters whose values have changed.
     virtual std::vector<rps::ipc::ParameterValueUpdate> pollParameterChanges() = 0;
+
+    /// Save the complete plugin state as an opaque binary blob.
+    virtual rps::ipc::GetStateResponse saveState() = 0;
+
+    /// Load plugin state from a previously saved binary blob.
+    virtual rps::ipc::SetStateResponse loadState(const std::vector<uint8_t>& stateData) = 0;
 };
 
 } // namespace rps::gui

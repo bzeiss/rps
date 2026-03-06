@@ -168,6 +168,58 @@ def open_gui(ctx, format_filter):
         sys.exit(1)
 
 
+@cli.command("save-state")
+@click.argument("plugin_path")
+@click.argument("output_file")
+@click.pass_context
+def save_state(ctx, plugin_path, output_file):
+    """Save the state of a running plugin GUI to a binary file."""
+    server_addr = ctx.obj["server"] or f"localhost:{ctx.obj['port']}"
+
+    try:
+        with RpsClient(server_addr) as client:
+            resp = client.get_plugin_state(plugin_path)
+            if not resp.success:
+                click.echo(f"Error: {resp.error}", err=True)
+                sys.exit(1)
+
+            with open(output_file, "wb") as f:
+                f.write(resp.state_data)
+
+            click.echo(f"✓ State saved: {len(resp.state_data)} bytes → {output_file}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command("load-state")
+@click.argument("plugin_path")
+@click.argument("input_file")
+@click.pass_context
+def load_state(ctx, plugin_path, input_file):
+    """Load plugin state from a previously saved binary file."""
+    server_addr = ctx.obj["server"] or f"localhost:{ctx.obj['port']}"
+
+    try:
+        with open(input_file, "rb") as f:
+            state_data = f.read()
+
+        click.echo(f"Loading {len(state_data)} bytes from {input_file}...")
+
+        with RpsClient(server_addr) as client:
+            resp = client.set_plugin_state(plugin_path, state_data)
+            if not resp.success:
+                click.echo(f"Error: {resp.error}", err=True)
+                sys.exit(1)
+
+            click.echo("✓ State restored successfully")
+    except FileNotFoundError:
+        click.echo(f"Error: File not found: {input_file}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
 def _find_server_bin() -> str | None:
     """Try to locate rps-server binary next to this script or in CWD."""
     # Check common binary names

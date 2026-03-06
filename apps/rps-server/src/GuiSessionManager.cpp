@@ -23,6 +23,7 @@
 
 #include <chrono>
 #include <thread>
+#include <future> // Added for promise/future
 
 namespace bp = boost::process::v1;
 
@@ -134,16 +135,16 @@ void GuiSessionManager::openGui(const std::string& pluginPath, const std::string
     // Wait for events from the worker via IPC and forward to gRPC
     bool done = false;
     while (!done) {
-        rps::ipc::MessageQueueConnection* conn = nullptr;
+        Session* currentSession = nullptr;
         {
             std::lock_guard<std::mutex> lock(m_mutex);
             auto it = m_sessions.find(pluginPath);
             if (it == m_sessions.end()) break;
-            conn = it->second->connection.get();
+            currentSession = it->second.get();
         }
-        if (!conn) break;
+        if (!currentSession) break;
 
-        auto msg = conn->receiveMessage(500);
+        auto msg = currentSession->connection->receiveMessage(500);
         if (!msg) {
             // Check if process is still running
             std::lock_guard<std::mutex> lock(m_mutex);
@@ -216,6 +217,26 @@ void GuiSessionManager::openGui(const std::string& pluginPath, const std::string
                 writer->Write(event);
                 break;
             }
+            case rps::ipc::MessageType::GetStateResponse: {
+                auto& resp = std::get<rps::ipc::GetStateResponse>(msg->payload);
+                std::lock_guard<std::mutex> slock(currentSession->stateMutex);
+                if (currentSession->pendingGetState) {
+                    currentSession->pendingGetState->set_value(std::move(resp));
+                    currentSession->pendingGetState.reset();
+                    spdlog::info("Fulfilled pendingGetState");
+                }
+                break;
+            }
+            case rps::ipc::MessageType::SetStateResponse: {
+                auto& resp = std::get<rps::ipc::SetStateResponse>(msg->payload);
+                std::lock_guard<std::mutex> slock(currentSession->stateMutex);
+                if (currentSession->pendingSetState) {
+                    currentSession->pendingSetState->set_value(std::move(resp));
+                    currentSession->pendingSetState.reset();
+                    spdlog::info("Fulfilled pendingSetState");
+                }
+                break;
+            }
             default:
                 break;
         }
@@ -272,6 +293,73 @@ void GuiSessionManager::closeAll() {
         }
     }
     m_sessions.clear();
+}
+
+rps::ipc::GetStateResponse GuiSessionManager::getState(const std::string& pluginPath) {
+    std::future<rps::ipc::GetStateResponse> future;
+
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto it = m_sessions.find(pluginPath);
+        if (it == m_sessions.end()) {
+            return {{}, false, "No active GUI session for: " + pluginPath};
+        }
+        auto* session = it->second.get();
+
+        // Install promise and get future (under session lock)
+        {
+            std::lock_guard<std::mutex> slock(session->stateMutex);
+            session->pendingGetState.emplace();
+            future = session->pendingGetState->get_future();
+        }
+
+        // Send GetStateRequest
+        rps::ipc::Message req;
+        req.type = rps::ipc::MessageType::GetStateRequest;
+        req.payload = rps::ipc::GetStateRequest{};
+        session->connection->sendMessage(req);
+    }
+
+    // Wait for response (unlocked — relay loop will fulfill the promise)
+    if (future.wait_for(std::chrono::seconds(5)) == std::future_status::ready) {
+        spdlog::info("GetState completed");
+        return future.get();
+    }
+    return {{}, false, "Timeout waiting for state response"};
+}
+
+rps::ipc::SetStateResponse GuiSessionManager::setState(const std::string& pluginPath,
+                                                       const std::vector<uint8_t>& stateData) {
+    std::future<rps::ipc::SetStateResponse> future;
+
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto it = m_sessions.find(pluginPath);
+        if (it == m_sessions.end()) {
+            return {false, "No active GUI session for: " + pluginPath};
+        }
+        auto* session = it->second.get();
+
+        // Install promise and get future (under session lock)
+        {
+            std::lock_guard<std::mutex> slock(session->stateMutex);
+            session->pendingSetState.emplace();
+            future = session->pendingSetState->get_future();
+        }
+
+        // Send SetStateRequest
+        rps::ipc::Message req;
+        req.type = rps::ipc::MessageType::SetStateRequest;
+        req.payload = rps::ipc::SetStateRequest{stateData};
+        session->connection->sendMessage(req);
+    }
+
+    // Wait for response (unlocked — relay loop will fulfill the promise)
+    if (future.wait_for(std::chrono::seconds(5)) == std::future_status::ready) {
+        spdlog::info("SetState completed");
+        return future.get();
+    }
+    return {false, "Timeout waiting for state response"};
 }
 
 } // namespace rps::server

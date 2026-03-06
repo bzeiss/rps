@@ -10,6 +10,7 @@ struct clap_plugin;
 struct clap_plugin_entry;
 struct clap_plugin_gui;
 struct clap_plugin_params;
+struct clap_plugin_state;
 struct clap_host;
 
 namespace rps::scanner {
@@ -28,6 +29,8 @@ public:
     void requestClose() override;
     std::vector<rps::ipc::PluginParameterInfo> getParameters() override;
     std::vector<rps::ipc::ParameterValueUpdate> pollParameterChanges() override;
+    rps::ipc::GetStateResponse saveState() override;
+    rps::ipc::SetStateResponse loadState(const std::vector<uint8_t>& stateData) override;
 
     /// Called by the hostGuiRequestResize callback when the plugin requests a resize.
     void onPluginRequestResize(uint32_t width, uint32_t height);
@@ -39,6 +42,7 @@ private:
     const clap_plugin* m_plugin = nullptr;
     const clap_plugin_gui* m_gui = nullptr;
     const clap_plugin_params* m_params = nullptr;
+    const clap_plugin_state* m_state = nullptr;
 
     // SDL Window
     rps::gui::SdlWindow m_window;
