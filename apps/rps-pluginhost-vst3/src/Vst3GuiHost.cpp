@@ -243,8 +243,11 @@ rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::
         throw std::runtime_error("Failed to create IComponent for " + m_pluginName);
     }
 
-    if (m_component->initialize(&s_hostApp) != kResultOk) {
-        throw std::runtime_error("IComponent::initialize() failed for " + m_pluginName);
+    auto initResult = m_component->initialize(&s_hostApp);
+    if (initResult != kResultOk) {
+        spdlog::error("  IComponent::initialize() returned {} for {}", initResult, m_pluginName);
+        throw std::runtime_error("IComponent::initialize() failed (result=" +
+                                 std::to_string(initResult) + ") for " + m_pluginName);
     }
     spdlog::info("  IComponent created and initialized");
 
@@ -270,9 +273,9 @@ rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::
             m_controller = factory.createInstance<IEditController>(controllerUID);
             spdlog::info("  createInstance<IEditController> = {}", m_controller != nullptr);
             if (m_controller) {
-                auto initResult = m_controller->initialize(&s_hostApp);
-                spdlog::info("  IEditController::initialize() = {}", initResult);
-                if (initResult != kResultOk) {
+                auto ctrlInitResult = m_controller->initialize(&s_hostApp);
+                spdlog::info("  IEditController::initialize() = {}", ctrlInitResult);
+                if (ctrlInitResult < 0) {
                     spdlog::warn("  IEditController::initialize() failed (non-fatal for some plugins)");
                 }
                 spdlog::info("  Separate IEditController created");
@@ -291,9 +294,10 @@ rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::
     // 5b. Set component handler so the controller can report parameter changes
     m_controller->setComponentHandler(&s_componentHandler);
 
-    // 5c. Connect component and controller via IConnectionPoint
-    //     JUCE plugins require messages to flow during createView().
-    //     We connect them directly, then disconnect after view creation
+    // 5c. Connect component and controller via IConnectionPoint.
+    //     Direct connection is needed during initialization — JUCE plugins
+    //     require messages like 'JuceVST3EditController' to flow during
+    //     createView(). After view creation, we switch to ConnectionStub
     //     to prevent async recursive message bouncing during the event loop.
     FUnknownPtr<IConnectionPoint> componentCP(m_component);
     FUnknownPtr<IConnectionPoint> controllerCP(m_controller);
@@ -322,17 +326,23 @@ rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::
     spdlog::default_logger()->flush();
 
 #ifdef _WIN32
-    // Use SEH to catch access violations in buggy plugins
+    // Use SEH to catch access violations in buggy plugins.
+    // Only catch fatal exceptions — NOT C++ exceptions (0xE06D7363) which
+    // should propagate normally through try/catch.
     __try {
 #endif
         m_view = owned(m_controller->createView(ViewType::kEditor));
 #ifdef _WIN32
-    } __except(EXCEPTION_EXECUTE_HANDLER) {
+    } __except(GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ||
+               GetExceptionCode() == EXCEPTION_STACK_OVERFLOW
+               ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
         DWORD code = GetExceptionCode();
         spdlog::error("  createView() caused SEH exception: 0x{:08X}", code);
         spdlog::default_logger()->flush();
-        throw std::runtime_error("createView() crashed with SEH exception 0x" +
-                                 std::to_string(code) + " for " + m_pluginName);
+        char hexBuf[32];
+        snprintf(hexBuf, sizeof(hexBuf), "0x%08lX", code);
+        throw std::runtime_error(std::string("createView() crashed with SEH exception ") +
+                                 hexBuf + " for " + m_pluginName);
     }
 #endif
 
@@ -341,8 +351,10 @@ rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::
     }
     spdlog::info("  Editor view created");
 
-    // 6b. Disconnect the direct connection to prevent async recursion during event loop.
-    //     Reconnect via stub so the connection state is valid but messages are dropped.
+    // 6b. Switch to ConnectionStub for the event loop.
+    //     Direct connection during the event loop can cause async recursive
+    //     message bouncing. The stub satisfies the connection contract while
+    //     safely dropping messages.
     if (componentCP && controllerCP) {
         componentCP->disconnect(controllerCP);
         controllerCP->disconnect(componentCP);
