@@ -19,6 +19,13 @@ public:
     SdlWindow();
     ~SdlWindow();
 
+    /// Set the callback for window resize events.
+    /// This is called both during and after resize (including live drag on Windows).
+    void setResizeCallback(ResizeCallback cb);
+
+    /// Called by the SDL event watcher. Do not call directly.
+    void handleResize(uint32_t width, uint32_t height);
+
     // Non-copyable, non-movable
     SdlWindow(const SdlWindow&) = delete;
     SdlWindow& operator=(const SdlWindow&) = delete;
@@ -38,6 +45,9 @@ public:
     /// Set minimum window size constraint.
     void setMinimumSize(uint32_t width, uint32_t height);
 
+    /// Set maximum window size constraint.
+    void setMaximumSize(uint32_t width, uint32_t height);
+
     /// Process pending SDL events. Returns false if quit/close was requested.
     /// If a resize callback is provided, it will be called when the window is resized.
     bool pollEvents(ResizeCallback resizeCb = nullptr);
@@ -51,6 +61,7 @@ public:
 private:
     SDL_Window* m_window = nullptr;
     std::atomic<bool> m_closeRequested{false};
+    ResizeCallback m_resizeCb;
 };
 
 } // namespace rps::gui

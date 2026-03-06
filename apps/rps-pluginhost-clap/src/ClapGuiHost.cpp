@@ -323,8 +323,20 @@ rps::gui::IPluginGuiHost::OpenResult ClapGuiHost::open(const boost::filesystem::
     m_window.create(m_pluginName, w, h, m_canResize);
     spdlog::info("  SDL3 window created");
 
-    if (m_canResize) {
-        m_window.setMinimumSize(100, 100);
+    if (m_canResize && m_gui->adjust_size) {
+        // Discover the plugin's minimum size by requesting a very small size.
+        // adjust_size will snap to the nearest valid dimensions.
+        uint32_t minW = 1, minH = 1;
+        if (m_gui->adjust_size(m_plugin, &minW, &minH)) {
+            spdlog::info("  Plugin minimum size: {}x{}", minW, minH);
+            m_window.setMinimumSize(minW, minH);
+        } else {
+            m_window.setMinimumSize(w, h);
+        }
+    } else if (!m_canResize) {
+        // Non-resizable: lock both min and max to the initial size
+        m_window.setMinimumSize(w, h);
+        m_window.setMaximumSize(w, h);
     }
 
     // 11. Set parent (embed plugin GUI into SDL window)
@@ -395,11 +407,13 @@ void ClapGuiHost::runEventLoop(
             m_window.resize(adjustedW, adjustedH);
         }
     };
+    // Register resize handler via event watcher for live resize during drag
+    m_window.setResizeCallback(resizeHandler);
 
     auto lastParamPoll = std::chrono::steady_clock::now();
     constexpr auto kParamPollInterval = std::chrono::milliseconds(50);
 
-    while (m_window.pollEvents(resizeHandler)) {
+    while (m_window.pollEvents()) {
         // Parameter polling at ~20Hz
         if (paramChangeCb) {
             auto now = std::chrono::steady_clock::now();
