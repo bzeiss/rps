@@ -22,6 +22,7 @@
 #include "public.sdk/source/vst/hosting/module.h"
 #include "public.sdk/source/vst/hosting/hostclasses.h"
 #include "public.sdk/source/vst/hosting/pluginterfacesupport.h"
+#include "public.sdk/source/common/memorystream.h"
 
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -82,6 +83,31 @@ public:
     }
 };
 
+// ---------------------------------------------------------------------------
+// ConnectionStub — accepts IConnectionPoint registration but drops messages.
+// JUCE-based plugins require IConnectionPoint to be connected before
+// createView() works, but forwarding messages causes async recursion
+// through JUCE's internal message queue. The stub satisfies the connection
+// requirement without causing recursion.
+// ---------------------------------------------------------------------------
+class ConnectionStub : public U::ImplementsNonDestroyable<U::Directly<IConnectionPoint>> {
+public:
+    tresult PLUGIN_API connect(IConnectionPoint* /*other*/) override {
+        return kResultTrue;
+    }
+    tresult PLUGIN_API disconnect(IConnectionPoint* /*other*/) override {
+        return kResultTrue;
+    }
+    tresult PLUGIN_API notify(IMessage* message) override {
+        if (message) {
+            spdlog::debug("ConnectionStub::notify(id='{}')", message->getMessageID() ? message->getMessageID() : "null");
+        }
+        return kResultOk;
+    }
+};
+
+static ConnectionStub s_connectionStub;
+
 // Static instances — lifetime tied to the process
 static Vst3ComponentHandler s_componentHandler;
 static Steinberg::Vst::HostApplication s_hostApp;
@@ -106,6 +132,26 @@ void Vst3GuiHost::cleanup() {
         m_view = nullptr;
     }
 
+    // Disconnect IConnectionPoint stubs
+    {
+        FUnknownPtr<IConnectionPoint> componentCP(m_component);
+        FUnknownPtr<IConnectionPoint> controllerCP(m_controller);
+        if (componentCP) componentCP->disconnect(&s_connectionStub);
+        if (controllerCP) controllerCP->disconnect(&s_connectionStub);
+    }
+
+#ifdef _WIN32
+    if (m_pluginHwnd) {
+        DestroyWindow(m_pluginHwnd);
+        m_pluginHwnd = nullptr;
+    }
+#endif
+
+    // Deactivate before terminating
+    if (m_component) {
+        m_component->setActive(false);
+    }
+
     if (m_controller) {
         spdlog::debug("  releasing controller");
         m_controller->terminate();
@@ -125,29 +171,36 @@ void Vst3GuiHost::cleanup() {
 }
 
 void Vst3GuiHost::onPluginRequestResize(ViewRect* newSize) {
-    if (!newSize) return;
+    if (!newSize || m_inResize) return;
+    m_inResize = true;
 
     uint32_t w = static_cast<uint32_t>(newSize->right - newSize->left);
     uint32_t h = static_cast<uint32_t>(newSize->bottom - newSize->top);
     spdlog::info("onPluginRequestResize: {}x{}", w, h);
 
+    // Update window constraints to allow the new size
+    // (canResize=false means the HOST shouldn't offer edge-drag resizing,
+    //  but the plugin can still request resizes via IPlugFrame::resizeView)
     m_window.setMinimumSize(w, h);
+    m_window.setMaximumSize(w, h);
+
+    // Resize the window to fit the plugin's requested size
     m_window.resize(w, h);
 
-    // Re-discover minimum size for future user resizing
-    if (m_canResize && m_view) {
-        ViewRect minRect{0, 0, 1, 1};
-        if (m_view->checkSizeConstraint(&minRect) == kResultTrue) {
-            uint32_t minW = static_cast<uint32_t>(minRect.right - minRect.left);
-            uint32_t minH = static_cast<uint32_t>(minRect.bottom - minRect.top);
-            m_window.setMinimumSize(minW, minH);
-        }
+#ifdef _WIN32
+    // Resize the child HWND to match
+    if (m_pluginHwnd) {
+        SetWindowPos(m_pluginHwnd, nullptr, 0, 0, static_cast<int>(w), static_cast<int>(h),
+                     SWP_NOZORDER | SWP_NOMOVE | SWP_NOACTIVATE);
     }
+#endif
 
-    // Notify the view of the new size
+    // Per VST3 spec: host must call onSize() after resizeView()
     if (m_view) {
         m_view->onSize(newSize);
     }
+
+    m_inResize = false;
 }
 
 rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::path& pluginPath) {
@@ -239,27 +292,64 @@ rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::
     m_controller->setComponentHandler(&s_componentHandler);
 
     // 5c. Connect component and controller via IConnectionPoint
-    //     Many plugins require this before createView() works.
+    //     JUCE plugins require messages to flow during createView().
+    //     We connect them directly, then disconnect after view creation
+    //     to prevent async recursive message bouncing during the event loop.
+    FUnknownPtr<IConnectionPoint> componentCP(m_component);
+    FUnknownPtr<IConnectionPoint> controllerCP(m_controller);
+    if (componentCP && controllerCP) {
+        componentCP->connect(controllerCP);
+        controllerCP->connect(componentCP);
+        spdlog::info("  Component and controller connected (direct)");
+    }
+
+    // 5d. Sync component state to controller
+    //     Some plugins crash during createView() without this.
     {
-        FUnknownPtr<IConnectionPoint> componentCP(m_component);
-        FUnknownPtr<IConnectionPoint> controllerCP(m_controller);
-        if (componentCP && controllerCP) {
-            componentCP->connect(controllerCP);
-            controllerCP->connect(componentCP);
-            spdlog::info("  Component and controller connected via IConnectionPoint");
+        auto* stream = new MemoryStream();
+        if (m_component->getState(stream) == kResultTrue) {
+            stream->seek(0, IBStream::kIBSeekSet, nullptr);
+            m_controller->setComponentState(stream);
+            spdlog::info("  Component state synced to controller ({} bytes)", stream->getSize());
         } else {
-            spdlog::info("  IConnectionPoint not supported (component={}, controller={})",
-                         componentCP != nullptr, controllerCP != nullptr);
+            spdlog::info("  getState() not supported (non-fatal)");
         }
+        stream->release();
     }
 
     // 6. Create the editor view
     spdlog::info("  Step 5: Creating editor view...");
-    m_view = owned(m_controller->createView(ViewType::kEditor));
+    spdlog::default_logger()->flush();
+
+#ifdef _WIN32
+    // Use SEH to catch access violations in buggy plugins
+    __try {
+#endif
+        m_view = owned(m_controller->createView(ViewType::kEditor));
+#ifdef _WIN32
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        DWORD code = GetExceptionCode();
+        spdlog::error("  createView() caused SEH exception: 0x{:08X}", code);
+        spdlog::default_logger()->flush();
+        throw std::runtime_error("createView() crashed with SEH exception 0x" +
+                                 std::to_string(code) + " for " + m_pluginName);
+    }
+#endif
+
     if (!m_view) {
         throw std::runtime_error("IEditController::createView(kEditor) returned nullptr for " + m_pluginName);
     }
     spdlog::info("  Editor view created");
+
+    // 6b. Disconnect the direct connection to prevent async recursion during event loop.
+    //     Reconnect via stub so the connection state is valid but messages are dropped.
+    if (componentCP && controllerCP) {
+        componentCP->disconnect(controllerCP);
+        controllerCP->disconnect(componentCP);
+        componentCP->connect(&s_connectionStub);
+        controllerCP->connect(&s_connectionStub);
+        spdlog::info("  Switched to ConnectionStub (async-safe)");
+    }
 
     // 7. Check platform type support
 #ifdef _WIN32
@@ -316,19 +406,91 @@ rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::
     static Vst3PlugFrame plugFrame(*this);
     m_view->setFrame(&plugFrame);
 
+#ifdef _WIN32
+    // Create a dedicated child HWND for the plugin's view.
+    // JUCE's VST3 wrapper subclasses its parent HWND's WndProc — if we pass
+    // SDL's HWND directly, JUCE's hooks conflict with SDL's internal message
+    // processing, causing re-entrant DispatchMessage and stack overflow.
+    {
+        static bool classRegistered = false;
+        static const wchar_t* className = L"RPS_Vst3PluginChild";
+        if (!classRegistered) {
+            WNDCLASSEXW wc{};
+            wc.cbSize = sizeof(WNDCLASSEXW);
+            wc.style = CS_DBLCLKS;
+            wc.lpfnWndProc = DefWindowProcW;
+            wc.hInstance = GetModuleHandleW(nullptr);
+            wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512)); // IDC_ARROW
+            wc.lpszClassName = className;
+            RegisterClassExW(&wc);
+            classRegistered = true;
+        }
+
+        HWND parentHwnd = static_cast<HWND>(m_window.getNativeHandle());
+        m_pluginHwnd = CreateWindowExW(
+            0, className, L"", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+            0, 0, static_cast<int>(w), static_cast<int>(h),
+            parentHwnd, nullptr, GetModuleHandleW(nullptr), nullptr);
+
+        if (!m_pluginHwnd) {
+            throw std::runtime_error("Failed to create child HWND for plugin view");
+        }
+        spdlog::info("  Created child HWND {:p} (parent {:p})",
+                     static_cast<void*>(m_pluginHwnd), static_cast<void*>(parentHwnd));
+
+        // Disable IMM (Input Method Manager) for the plugin window.
+        // Stack trace shows JUCE's WndProc and IMM32.dll enter infinite
+        // recursion on WM_IME_* messages: JUCE handles IMM msg → triggers
+        // another IMM msg → JUCE handles again → stack overflow.
+        ImmAssociateContext(m_pluginHwnd, nullptr);
+    }
+    void* nativeHandle = static_cast<void*>(m_pluginHwnd);
+#else
     void* nativeHandle = m_window.getNativeHandle();
+#endif
+
     if (m_view->attached(nativeHandle, platformType) != kResultTrue) {
         throw std::runtime_error("IPlugView::attached() failed for " + m_pluginName);
     }
     spdlog::info("  View attached to native window at {:p}", nativeHandle);
 
-    // 12. Set initial size on the view
+    // 12. Re-query size after attachment — plugins may call resizeView() during
+    //     attached(), changing their size (e.g. Roland XV-5080: 400x100 → 1877x247).
+    //     Use the post-attach size for onSize() and the return value.
+    ViewRect postAttachRect{};
+    if (m_view->getSize(&postAttachRect) == kResultTrue) {
+        uint32_t postW = static_cast<uint32_t>(postAttachRect.right - postAttachRect.left);
+        uint32_t postH = static_cast<uint32_t>(postAttachRect.bottom - postAttachRect.top);
+        if (postW != w || postH != h) {
+            spdlog::info("  Size changed after attach: {}x{} -> {}x{}", w, h, postW, postH);
+            w = postW;
+            h = postH;
+            rect = postAttachRect;
+        }
+    }
     if (m_view->onSize(&rect) != kResultTrue) {
         spdlog::warn("  onSize() returned error (non-fatal)");
     }
 
     // 13. Initial child HWND positioning for sidebar
     m_window.repositionChildHwnd(w, h);
+
+    // 14. Activate the audio processor (AFTER view attachment)
+    //     Some plugins (e.g. UAD) tie their GUI state to the processing state.
+    //     Done after view creation to avoid interfering with createView().
+    {
+        m_processor = m_component;
+        if (m_processor) {
+            ProcessSetup setup{};
+            setup.processMode = kRealtime;
+            setup.symbolicSampleSize = kSample32;
+            setup.maxSamplesPerBlock = 512;
+            setup.sampleRate = 44100.0;
+            m_processor->setupProcessing(setup);
+        }
+        m_component->setActive(true);
+        spdlog::info("  Audio processor activated");
+    }
 
     return OpenResult{m_pluginName, w, h};
 }
@@ -339,24 +501,37 @@ void Vst3GuiHost::runEventLoop(
     spdlog::info("Vst3GuiHost::runEventLoop() starting");
 
     auto resizeHandler = [this](uint32_t newWidth, uint32_t newHeight) {
-        if (!m_canResize || !m_view) return;
+        if (!m_canResize || !m_view || m_inResize) return;
+        m_inResize = true;
 
         spdlog::debug("Window resized to {}x{}, syncing with VST3 view...", newWidth, newHeight);
 
         ViewRect rect{0, 0, static_cast<int32>(newWidth), static_cast<int32>(newHeight)};
 
         // Let the plugin adjust to valid dimensions
-        if (m_view->checkSizeConstraint(&rect) == kResultTrue) {
-            uint32_t adjustedW = static_cast<uint32_t>(rect.right - rect.left);
-            uint32_t adjustedH = static_cast<uint32_t>(rect.bottom - rect.top);
+        m_view->checkSizeConstraint(&rect);
+        uint32_t adjustedW = static_cast<uint32_t>(rect.right - rect.left);
+        uint32_t adjustedH = static_cast<uint32_t>(rect.bottom - rect.top);
 
-            if (adjustedW != newWidth || adjustedH != newHeight) {
-                spdlog::debug("  checkSizeConstraint: {}x{} -> {}x{}", newWidth, newHeight, adjustedW, adjustedH);
-                m_window.resize(adjustedW, adjustedH);
-            }
+        // Tell the plugin its new size
+        m_view->onSize(&rect);
+
+#ifdef _WIN32
+        // Resize the child HWND to match
+        if (m_pluginHwnd) {
+            SetWindowPos(m_pluginHwnd, nullptr, 0, 0,
+                         static_cast<int>(adjustedW), static_cast<int>(adjustedH),
+                         SWP_NOZORDER | SWP_NOMOVE | SWP_NOACTIVATE);
+        }
+#endif
+
+        // If the plugin adjusted the size, resize the window to match
+        if (adjustedW != newWidth || adjustedH != newHeight) {
+            spdlog::debug("  checkSizeConstraint: {}x{} -> {}x{}", newWidth, newHeight, adjustedW, adjustedH);
+            m_window.resize(adjustedW, adjustedH);
         }
 
-        m_view->onSize(&rect);
+        m_inResize = false;
 
         // Child HWND repositioning is handled automatically by SdlWindow::handleResize()
     };

@@ -21,7 +21,7 @@ MIOConsole3d.log
 rps-plugins.db-shm
 rps-plugins.db-wal
 # Python example client artifacts
-__pycache__/
+__pycache__/11
 *.egg-info/
 examples/python/.venv/
 examples/python/rps_client/proto/rps_pb2*.py
@@ -49,3 +49,9 @@ build_ninja_msvc/CMakeFiles/cmake.check_cache
 _private
 examples/python/rps-pluginhost-clap.exe
 examples/python/rps-pluginhost-clap.log
+examples/python/rps-pluginhost-vst3.log
+examples/python/rps-pluginhost-vst3.exe
+examples/python/rps_client/proto/__pycache__
+examples/python/rps_client/proto/__pycache__/*
+examples/python/rps_client/__pycache__
+examples/python/rps_client/__pycache__/*

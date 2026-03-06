@@ -3,15 +3,32 @@
 #include <rps/gui/IPluginGuiHost.hpp>
 #include <rps/gui/SdlWindow.hpp>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <imm.h>    // ImmAssociateContext — needed to disable IMM on plugin HWND
+#pragma comment(lib, "imm32.lib")
+#endif
+
 #include "pluginterfaces/base/funknown.h"
 #include "pluginterfaces/base/funknownimpl.h"
 #include "pluginterfaces/gui/iplugview.h"
 #include "pluginterfaces/vst/ivstcomponent.h"
 #include "pluginterfaces/vst/ivsteditcontroller.h"
+#include "pluginterfaces/vst/ivstaudioprocessor.h"
 #include "public.sdk/source/vst/hosting/module.h"
 
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 namespace rps::scanner {
 
@@ -43,6 +60,7 @@ private:
     Steinberg::IPtr<Steinberg::Vst::IComponent> m_component;
     Steinberg::IPtr<Steinberg::Vst::IEditController> m_controller;
     Steinberg::IPtr<Steinberg::IPlugView> m_view;
+    Steinberg::FUnknownPtr<Steinberg::Vst::IAudioProcessor> m_processor;
 
     // SDL Window
     rps::gui::SdlWindow m_window;
@@ -50,6 +68,13 @@ private:
     // Host state
     std::string m_pluginName;
     bool m_canResize = false;
+    bool m_inResize = false;  // re-entrancy guard for resize
+
+#ifdef _WIN32
+    // Dedicated child HWND for plugin view — isolates JUCE's WndProc
+    // subclassing from SDL's internal WndProc to prevent stack overflow.
+    HWND m_pluginHwnd = nullptr;
+#endif
 
     void cleanup();
 };
