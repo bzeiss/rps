@@ -54,6 +54,10 @@ public:
     rps::ipc::SetStateResponse setState(const std::string& pluginPath,
                                         const std::vector<uint8_t>& stateData);
 
+    /// Load a preset on a running plugin by its preset id.
+    rps::ipc::LoadPresetResponse loadPreset(const std::string& pluginPath,
+                                            const std::string& presetId);
+
 private:
     struct Session {
         std::string pluginPath;
@@ -61,10 +65,11 @@ private:
         std::unique_ptr<rps::ipc::MessageQueueConnection> connection;
         std::unique_ptr<boost::process::v1::child> process;
 
-        // State response channels — set by getState/setState, fulfilled by openGui relay loop
+        // Response channels — set by callers, fulfilled by openGui relay loop
         std::mutex stateMutex;
         std::optional<std::promise<rps::ipc::GetStateResponse>> pendingGetState;
         std::optional<std::promise<rps::ipc::SetStateResponse>> pendingSetState;
+        std::optional<std::promise<rps::ipc::LoadPresetResponse>> pendingLoadPreset;
     };
 
     std::string m_hostBinDir;

@@ -16,7 +16,11 @@
     "grpc",
     "protobuf",
     "spdlog",
-    "sdl3"
+    "sdl3",
+    {
+      "name": "imgui",
+      "features": ["sdl3-binding", "sdl3-renderer-binding", "docking-experimental"]
+    }
   ],
   "overrides": [
     {

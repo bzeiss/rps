@@ -50,6 +50,10 @@ public:
                                 const rps::v1::SetPluginStateRequest* request,
                                 rps::v1::SetPluginStateResponse* response) override;
 
+    grpc::Status LoadPreset(grpc::ServerContext* context,
+                            const rps::v1::LoadPresetRequest* request,
+                            rps::v1::LoadPresetResponse* response) override;
+
     // Called by main to set the server pointer for shutdown
     void setServer(grpc::Server* server);
 

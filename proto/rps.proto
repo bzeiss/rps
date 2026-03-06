@@ -31,6 +31,9 @@ service RpsService {
 
   // Restore plugin state from a previously saved binary blob.
   rpc SetPluginState(SetPluginStateRequest) returns (SetPluginStateResponse);
+
+  // Load a preset by its id within a running plugin GUI.
+  rpc LoadPreset(LoadPresetRequest) returns (LoadPresetResponse);
 }
 
 // ---------------------------------------------------------------------------
@@ -213,6 +216,8 @@ message PluginGuiEvent {
     GuiError gui_error = 3;
     ParameterList parameter_list = 4;       // Full param list, sent once after open
     ParameterUpdates parameter_updates = 5; // Delta updates, streamed
+    PresetList preset_list = 6;             // Available presets, sent once after open
+    PresetLoaded preset_loaded = 7;         // Preset was loaded (via GUI or API)
   }
 }
 
@@ -291,6 +296,38 @@ message SetPluginStateRequest {
 }
 
 message SetPluginStateResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Preset Enumeration / Loading
+// ---------------------------------------------------------------------------
+
+message PresetInfo {
+  string id = 1;                // Unique key (load_key for CLAP, program index for VST3, etc.)
+  string name = 2;              // Human-readable display name
+  string category = 3;          // Category/module path from plugin features
+  string creator = 4;           // Preset author (optional)
+  uint32 index = 5;             // Ordering index
+  uint32 flags = 6;             // Bitmask: FACTORY=1, USER=2, FAVORITE=4
+}
+
+message PresetList {
+  repeated PresetInfo presets = 1;
+}
+
+message PresetLoaded {
+  string preset_id = 1;
+  string preset_name = 2;
+}
+
+message LoadPresetRequest {
+  string plugin_path = 1;
+  string preset_id = 2;
+}
+
+message LoadPresetResponse {
   bool success = 1;
   string error = 2;
 }

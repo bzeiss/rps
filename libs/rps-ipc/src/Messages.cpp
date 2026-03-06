@@ -369,6 +369,93 @@ SetStateResponse tag_invoke(boost::json::value_to_tag<SetStateResponse>, const b
     return resp;
 }
 
+// ---------------------------------------------------------------------------
+// Preset enumeration/loading serialization
+// ---------------------------------------------------------------------------
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const PresetInfo& p) {
+    jv = {
+        {"id", p.id},
+        {"name", p.name},
+        {"category", p.category},
+        {"creator", p.creator},
+        {"location", p.location},
+        {"locationKind", p.locationKind},
+        {"index", p.index},
+        {"flags", p.flags}
+    };
+}
+
+PresetInfo tag_invoke(boost::json::value_to_tag<PresetInfo>, const boost::json::value& jv) {
+    auto const& obj = jv.as_object();
+    PresetInfo p;
+    p.id = boost::json::value_to<std::string>(obj.at("id"));
+    p.name = boost::json::value_to<std::string>(obj.at("name"));
+    if (obj.contains("category")) p.category = boost::json::value_to<std::string>(obj.at("category"));
+    if (obj.contains("creator")) p.creator = boost::json::value_to<std::string>(obj.at("creator"));
+    if (obj.contains("location")) p.location = boost::json::value_to<std::string>(obj.at("location"));
+    if (obj.contains("locationKind")) p.locationKind = boost::json::value_to<uint32_t>(obj.at("locationKind"));
+    if (obj.contains("index")) p.index = boost::json::value_to<uint32_t>(obj.at("index"));
+    if (obj.contains("flags")) p.flags = boost::json::value_to<uint32_t>(obj.at("flags"));
+    return p;
+}
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const PresetListEvent& evt) {
+    boost::json::array arr;
+    for (const auto& p : evt.presets) {
+        arr.push_back(boost::json::value_from(p));
+    }
+    jv = {{"presets", std::move(arr)}};
+}
+
+PresetListEvent tag_invoke(boost::json::value_to_tag<PresetListEvent>, const boost::json::value& jv) {
+    auto const& obj = jv.as_object();
+    PresetListEvent evt;
+    for (const auto& v : obj.at("presets").as_array()) {
+        evt.presets.push_back(boost::json::value_to<PresetInfo>(v));
+    }
+    return evt;
+}
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const LoadPresetRequest& req) {
+    jv = {{"presetId", req.presetId}};
+}
+
+LoadPresetRequest tag_invoke(boost::json::value_to_tag<LoadPresetRequest>, const boost::json::value& jv) {
+    auto const& obj = jv.as_object();
+    return {boost::json::value_to<std::string>(obj.at("presetId"))};
+}
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const LoadPresetResponse& resp) {
+    jv = {
+        {"success", resp.success},
+        {"error", resp.error}
+    };
+}
+
+LoadPresetResponse tag_invoke(boost::json::value_to_tag<LoadPresetResponse>, const boost::json::value& jv) {
+    auto const& obj = jv.as_object();
+    LoadPresetResponse resp;
+    resp.success = obj.at("success").as_bool();
+    if (obj.contains("error")) resp.error = boost::json::value_to<std::string>(obj.at("error"));
+    return resp;
+}
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const PresetLoadedEvent& evt) {
+    jv = {
+        {"presetId", evt.presetId},
+        {"presetName", evt.presetName}
+    };
+}
+
+PresetLoadedEvent tag_invoke(boost::json::value_to_tag<PresetLoadedEvent>, const boost::json::value& jv) {
+    auto const& obj = jv.as_object();
+    PresetLoadedEvent evt;
+    evt.presetId = boost::json::value_to<std::string>(obj.at("presetId"));
+    if (obj.contains("presetName")) evt.presetName = boost::json::value_to<std::string>(obj.at("presetName"));
+    return evt;
+}
+
 void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const Message& msg) {
     boost::json::object obj;
     obj["type"] = static_cast<int>(msg.type);
@@ -430,6 +517,18 @@ Message tag_invoke(boost::json::value_to_tag<Message>, const boost::json::value&
             break;
         case MessageType::SetStateResponse:
             msg.payload = boost::json::value_to<SetStateResponse>(payload_val);
+            break;
+        case MessageType::PresetListEvent:
+            msg.payload = boost::json::value_to<rps::ipc::PresetListEvent>(payload_val);
+            break;
+        case MessageType::LoadPresetRequest:
+            msg.payload = boost::json::value_to<LoadPresetRequest>(payload_val);
+            break;
+        case MessageType::LoadPresetResponse:
+            msg.payload = boost::json::value_to<LoadPresetResponse>(payload_val);
+            break;
+        case MessageType::PresetLoadedEvent:
+            msg.payload = boost::json::value_to<PresetLoadedEvent>(payload_val);
             break;
         default:
             throw std::runtime_error("Unknown MessageType");

@@ -34,7 +34,12 @@ enum class MessageType {
     GetStateRequest,
     GetStateResponse,
     SetStateRequest,
-    SetStateResponse
+    SetStateResponse,
+    // Preset enumeration/loading
+    PresetListEvent,
+    LoadPresetRequest,
+    LoadPresetResponse,
+    PresetLoadedEvent
 };
 
 struct ScanRequest {
@@ -164,6 +169,52 @@ struct SetStateResponse {
     std::string error;
 };
 
+// ---------------------------------------------------------------------------
+// Preset enumeration/loading messages (server <-> plugin host worker)
+// ---------------------------------------------------------------------------
+
+/// Flags for PresetInfo
+enum PresetFlags : uint32_t {
+    kPresetFlagNone    = 0,
+    kPresetFlagFactory = 1 << 0,  // Factory/built-in preset
+    kPresetFlagUser    = 1 << 1,  // User-created preset
+    kPresetFlagFavorite= 1 << 2,  // Marked as favorite
+};
+
+/// Universal preset descriptor, format-agnostic.
+struct PresetInfo {
+    std::string id;        // Unique key: load_key (CLAP), program index (VST3), etc.
+    std::string name;      // Human-readable display name
+    std::string category;  // Category/module path
+    std::string creator;   // Author (optional)
+    std::string location;  // File path or container (for CLAP location-based loading)
+    uint32_t locationKind = 0; // CLAP location kind (file=0, plugin=1)
+    uint32_t index = 0;    // Ordering index
+    uint32_t flags = 0;    // PresetFlags bitmask
+};
+
+/// Sent once after the plugin GUI opens, containing available presets.
+struct PresetListEvent {
+    std::vector<PresetInfo> presets;
+};
+
+/// Request from server to host to load a preset.
+struct LoadPresetRequest {
+    std::string presetId;  // The id from PresetInfo
+};
+
+/// Response from host confirming preset load.
+struct LoadPresetResponse {
+    bool success = false;
+    std::string error;
+};
+
+/// Notification that a preset was loaded (e.g. user picked one in plugin UI).
+struct PresetLoadedEvent {
+    std::string presetId;
+    std::string presetName;
+};
+
 // JSON Serialization Declarations
 void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const ScanRequest& req);
 ScanRequest tag_invoke(boost::json::value_to_tag<ScanRequest>, const boost::json::value& jv);
@@ -216,13 +267,29 @@ SetStateRequest tag_invoke(boost::json::value_to_tag<SetStateRequest>, const boo
 void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const SetStateResponse& resp);
 SetStateResponse tag_invoke(boost::json::value_to_tag<SetStateResponse>, const boost::json::value& jv);
 
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const PresetInfo& p);
+PresetInfo tag_invoke(boost::json::value_to_tag<PresetInfo>, const boost::json::value& jv);
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const PresetListEvent& evt);
+PresetListEvent tag_invoke(boost::json::value_to_tag<PresetListEvent>, const boost::json::value& jv);
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const LoadPresetRequest& req);
+LoadPresetRequest tag_invoke(boost::json::value_to_tag<LoadPresetRequest>, const boost::json::value& jv);
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const LoadPresetResponse& resp);
+LoadPresetResponse tag_invoke(boost::json::value_to_tag<LoadPresetResponse>, const boost::json::value& jv);
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const PresetLoadedEvent& evt);
+PresetLoadedEvent tag_invoke(boost::json::value_to_tag<PresetLoadedEvent>, const boost::json::value& jv);
+
 // Wrapper for any message
 struct Message {
     MessageType type;
     std::variant<ScanRequest, ScanResult, ProgressEvent, ErrorMessage,
                  OpenGuiRequest, GuiOpenedEvent, GuiClosedEvent, CloseGuiRequest,
                  ParameterListEvent, ParameterValuesEvent,
-                 GetStateRequest, GetStateResponse, SetStateRequest, SetStateResponse> payload;
+                 GetStateRequest, GetStateResponse, SetStateRequest, SetStateResponse,
+                 PresetListEvent, LoadPresetRequest, LoadPresetResponse, PresetLoadedEvent> payload;
 };
 
 void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const Message& msg);

@@ -237,5 +237,22 @@ grpc::Status RpsServiceImpl::SetPluginState(grpc::ServerContext* /*context*/,
     return grpc::Status::OK;
 }
 
+grpc::Status RpsServiceImpl::LoadPreset(grpc::ServerContext* /*context*/,
+                                         const rps::v1::LoadPresetRequest* request,
+                                         rps::v1::LoadPresetResponse* response) {
+    auto pluginPath = request->plugin_path();
+    auto presetId = request->preset_id();
+    spdlog::info("LoadPreset: path={} preset_id={}", pluginPath, presetId);
+
+    auto result = m_guiManager.loadPreset(pluginPath, presetId);
+    response->set_success(result.success);
+    if (!result.error.empty()) {
+        response->set_error(result.error);
+    }
+
+    spdlog::info("LoadPreset: success={}", result.success);
+    return grpc::Status::OK;
+}
+
 } // namespace rps::server
 

@@ -11,6 +11,7 @@ struct clap_plugin_entry;
 struct clap_plugin_gui;
 struct clap_plugin_params;
 struct clap_plugin_state;
+struct clap_plugin_preset_load;
 struct clap_host;
 
 namespace rps::scanner {
@@ -31,6 +32,8 @@ public:
     std::vector<rps::ipc::ParameterValueUpdate> pollParameterChanges() override;
     rps::ipc::GetStateResponse saveState() override;
     rps::ipc::SetStateResponse loadState(const std::vector<uint8_t>& stateData) override;
+    std::vector<rps::ipc::PresetInfo> getPresets() override;
+    rps::ipc::LoadPresetResponse loadPreset(const std::string& presetId) override;
 
     /// Called by the hostGuiRequestResize callback when the plugin requests a resize.
     void onPluginRequestResize(uint32_t width, uint32_t height);
@@ -59,7 +62,12 @@ private:
     };
     std::vector<CachedParam> m_cachedParams;
 
+    // Preset discovery
+    const clap_plugin_preset_load* m_presetLoad = nullptr;
+    std::vector<rps::ipc::PresetInfo> m_presets;
+
     void cleanup();
+    void discoverPresets();  // Crawl CLAP preset discovery factory
 };
 
 } // namespace rps::scanner

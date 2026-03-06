@@ -237,6 +237,33 @@ void GuiSessionManager::openGui(const std::string& pluginPath, const std::string
                 }
                 break;
             }
+            case rps::ipc::MessageType::PresetListEvent: {
+                auto& evt = std::get<rps::ipc::PresetListEvent>(msg->payload);
+                rps::v1::PluginGuiEvent event;
+                auto* presetList = event.mutable_preset_list();
+                for (const auto& p : evt.presets) {
+                    auto* pp = presetList->add_presets();
+                    pp->set_id(p.id);
+                    pp->set_name(p.name);
+                    pp->set_category(p.category);
+                    pp->set_creator(p.creator);
+                    pp->set_index(p.index);
+                    pp->set_flags(p.flags);
+                }
+                writer->Write(event);
+                spdlog::info("Sent PresetList ({} presets)", evt.presets.size());
+                break;
+            }
+            case rps::ipc::MessageType::LoadPresetResponse: {
+                auto& resp = std::get<rps::ipc::LoadPresetResponse>(msg->payload);
+                std::lock_guard<std::mutex> slock(currentSession->stateMutex);
+                if (currentSession->pendingLoadPreset) {
+                    currentSession->pendingLoadPreset->set_value(std::move(resp));
+                    currentSession->pendingLoadPreset.reset();
+                    spdlog::info("Fulfilled pendingLoadPreset");
+                }
+                break;
+            }
             default:
                 break;
         }
@@ -360,6 +387,40 @@ rps::ipc::SetStateResponse GuiSessionManager::setState(const std::string& plugin
         return future.get();
     }
     return {false, "Timeout waiting for state response"};
+}
+
+rps::ipc::LoadPresetResponse GuiSessionManager::loadPreset(const std::string& pluginPath,
+                                                           const std::string& presetId) {
+    std::future<rps::ipc::LoadPresetResponse> future;
+
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto it = m_sessions.find(pluginPath);
+        if (it == m_sessions.end()) {
+            return {false, "No active GUI session for: " + pluginPath};
+        }
+        auto* session = it->second.get();
+
+        // Install promise and get future
+        {
+            std::lock_guard<std::mutex> slock(session->stateMutex);
+            session->pendingLoadPreset.emplace();
+            future = session->pendingLoadPreset->get_future();
+        }
+
+        // Send LoadPresetRequest
+        rps::ipc::Message req;
+        req.type = rps::ipc::MessageType::LoadPresetRequest;
+        req.payload = rps::ipc::LoadPresetRequest{presetId};
+        session->connection->sendMessage(req);
+    }
+
+    // Wait for response (unlocked — relay loop will fulfill the promise)
+    if (future.wait_for(std::chrono::seconds(5)) == std::future_status::ready) {
+        spdlog::info("LoadPreset completed");
+        return future.get();
+    }
+    return {false, "Timeout waiting for preset load response"};
 }
 
 } // namespace rps::server

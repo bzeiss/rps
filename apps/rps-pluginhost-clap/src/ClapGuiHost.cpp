@@ -13,6 +13,8 @@
 #include <clap/ext/gui.h>
 #include <clap/ext/params.h>
 #include <clap/ext/state.h>
+#include <clap/ext/preset-load.h>
+#include <clap/factory/preset-discovery.h>
 
 #include <spdlog/spdlog.h>
 #include <stdexcept>
@@ -20,6 +22,7 @@
 #include <cstring>
 #include <thread>
 #include <chrono>
+#include <filesystem>
 
 namespace rps::scanner {
 
@@ -272,6 +275,19 @@ rps::gui::IPluginGuiHost::OpenResult ClapGuiHost::open(const boost::filesystem::
         spdlog::info("  No state extension — state save/restore disabled");
     }
 
+    // 5d. Query preset-load extension (optional)
+    m_presetLoad = static_cast<const clap_plugin_preset_load*>(
+        m_plugin->get_extension(m_plugin, CLAP_EXT_PRESET_LOAD));
+    if (m_presetLoad) {
+        spdlog::info("  Preset-load extension found (from_location={})",
+                     m_presetLoad->from_location != nullptr);
+    } else {
+        spdlog::info("  No preset-load extension");
+    }
+
+    // 5e. Discover presets via preset_discovery_factory
+    discoverPresets();
+
     // 6. Query GUI extension
     spdlog::info("  Step 6: Querying CLAP_EXT_GUI...");
     m_gui = static_cast<const clap_plugin_gui*>(
@@ -331,7 +347,8 @@ rps::gui::IPluginGuiHost::OpenResult ClapGuiHost::open(const boost::filesystem::
 
     // 10. Create SDL3 window
     spdlog::info("  Step 10: Creating SDL3 window (resizable={})...", m_canResize);
-    m_window.create(m_pluginName, w, h, m_canResize);
+    bool hasPresets = !m_presets.empty();
+    m_window.create(m_pluginName, w, h, m_canResize, hasPresets);
     spdlog::info("  SDL3 window created");
 
     if (m_canResize && m_gui->adjust_size) {
@@ -390,6 +407,30 @@ rps::gui::IPluginGuiHost::OpenResult ClapGuiHost::open(const boost::filesystem::
         spdlog::info("  show() succeeded — plugin GUI is now visible");
     }
 
+    // 12b. Offset plugin child window to the right of the sidebar
+    if (m_window.getSidebarWidth() > 0) {
+#ifdef _WIN32
+        // Find the plugin's child HWND inside our SDL window
+        HWND parentHwnd = static_cast<HWND>(nativeHandle);
+        HWND child = GetWindow(parentHwnd, GW_CHILD);
+        if (child) {
+            int sidebarW = static_cast<int>(m_window.getSidebarWidth());
+            SetWindowPos(child, nullptr, sidebarW, 0, static_cast<int>(w), static_cast<int>(h),
+                         SWP_NOZORDER | SWP_NOACTIVATE);
+            spdlog::info("  Offset plugin child window right by {} pixels (sidebar)", sidebarW);
+        }
+#endif
+    }
+
+    // 12c. Populate sidebar presets
+    if (!m_presets.empty()) {
+        m_window.setPresets(m_presets);
+        m_window.setPresetSelectedCallback([this](const std::string& presetId) {
+            spdlog::info("Sidebar preset selected: {}", presetId);
+            loadPreset(presetId);
+        });
+    }
+
     return OpenResult{m_pluginName, w, h};
 }
 
@@ -417,6 +458,20 @@ void ClapGuiHost::runEventLoop(
             spdlog::debug("  SDL window resize correction to {}x{}", adjustedW, adjustedH);
             m_window.resize(adjustedW, adjustedH);
         }
+
+#ifdef _WIN32
+        // If the sidebar was resized or the window was resized, ensure the child HWND 
+        // respects the new sidebar offset and new width/height boundaries.
+        if (m_window.getSidebarWidth() > 0) {
+            HWND parentHwnd = static_cast<HWND>(m_window.getNativeHandle());
+            HWND child = GetWindow(parentHwnd, GW_CHILD);
+            if (child) {
+                int sidebarW = static_cast<int>(m_window.getSidebarWidth());
+                SetWindowPos(child, nullptr, sidebarW, 0, static_cast<int>(adjustedW), static_cast<int>(adjustedH),
+                             SWP_NOZORDER | SWP_NOACTIVATE);
+            }
+        }
+#endif
     };
     // Register resize handler via event watcher for live resize during drag
     m_window.setResizeCallback(resizeHandler);
@@ -641,6 +696,281 @@ rps::ipc::SetStateResponse ClapGuiHost::loadState(const std::vector<uint8_t>& st
     resp.success = true;
     spdlog::info("loadState: state restored successfully");
     return resp;
+}
+
+std::vector<rps::ipc::PresetInfo> ClapGuiHost::getPresets() {
+    return m_presets;
+}
+
+rps::ipc::LoadPresetResponse ClapGuiHost::loadPreset(const std::string& presetId) {
+    rps::ipc::LoadPresetResponse resp;
+
+    if (!m_presetLoad || !m_presetLoad->from_location) {
+        resp.success = false;
+        resp.error = "Plugin does not support preset-load extension";
+        return resp;
+    }
+
+    // Find the preset by id
+    auto it = std::find_if(m_presets.begin(), m_presets.end(),
+        [&presetId](const rps::ipc::PresetInfo& p) { return p.id == presetId; });
+    if (it == m_presets.end()) {
+        resp.success = false;
+        resp.error = "Preset not found: " + presetId;
+        return resp;
+    }
+
+    spdlog::info("loadPreset: loading '{}' from '{}' (key='{}')",
+                 it->name, it->location, it->id);
+
+    bool ok = m_presetLoad->from_location(
+        m_plugin, it->locationKind, it->location.c_str(),
+        it->id.empty() ? nullptr : it->id.c_str());
+
+    if (!ok) {
+        resp.success = false;
+        resp.error = "Plugin from_location() returned false";
+        spdlog::error("loadPreset: from_location() failed");
+        return resp;
+    }
+
+    // Clear param cache so we re-read everything
+    m_cachedParams.clear();
+
+    resp.success = true;
+    spdlog::info("loadPreset: '{}' loaded successfully", it->name);
+    return resp;
+}
+
+void ClapGuiHost::discoverPresets() {
+    if (!m_entry) return;
+
+    // Get the preset discovery factory from clap_entry
+    auto* discoveryFactory = static_cast<const clap_preset_discovery_factory_t*>(
+        m_entry->get_factory(CLAP_PRESET_DISCOVERY_FACTORY_ID));
+    if (!discoveryFactory) {
+        spdlog::info("  No preset discovery factory — no presets available");
+        return;
+    }
+
+    uint32_t providerCount = discoveryFactory->count(discoveryFactory);
+    spdlog::info("  Preset discovery: {} provider(s)", providerCount);
+    if (providerCount == 0) return;
+
+    // Storage for declared locations and file types
+    struct DiscoveryContext {
+        std::vector<clap_preset_discovery_location_t> locations;
+        std::vector<clap_preset_discovery_filetype_t> filetypes;
+    };
+    DiscoveryContext ctx;
+
+    // Create an indexer that receives declarations
+    clap_preset_discovery_indexer_t indexer{};
+    indexer.clap_version = CLAP_VERSION;
+    indexer.name = "RPS";
+    indexer.vendor = "RPS";
+    indexer.url = nullptr;
+    indexer.version = "1.0";
+    indexer.indexer_data = &ctx;
+
+    indexer.declare_filetype = [](const clap_preset_discovery_indexer_t* idx,
+                                  const clap_preset_discovery_filetype_t* ft) -> bool {
+        auto* c = static_cast<DiscoveryContext*>(idx->indexer_data);
+        c->filetypes.push_back(*ft);
+        spdlog::debug("  Declared filetype: '{}' ext='{}'",
+                      ft->name ? ft->name : "?", ft->file_extension ? ft->file_extension : "*");
+        return true;
+    };
+
+    indexer.declare_location = [](const clap_preset_discovery_indexer_t* idx,
+                                  const clap_preset_discovery_location_t* loc) -> bool {
+        auto* c = static_cast<DiscoveryContext*>(idx->indexer_data);
+        c->locations.push_back(*loc);
+        spdlog::info("  Declared location: '{}' kind={} path='{}'",
+                     loc->name ? loc->name : "?", loc->kind,
+                     loc->location ? loc->location : "(plugin-internal)");
+        return true;
+    };
+
+    indexer.declare_soundpack = [](const clap_preset_discovery_indexer_t*,
+                                   const clap_preset_discovery_soundpack_t*) -> bool {
+        return true; // Acknowledge but skip soundpack metadata for now
+    };
+
+    indexer.get_extension = [](const clap_preset_discovery_indexer_t*,
+                               const char*) -> const void* {
+        return nullptr;
+    };
+
+    // For each provider, init + crawl
+    for (uint32_t i = 0; i < providerCount; ++i) {
+        auto* desc = discoveryFactory->get_descriptor(discoveryFactory, i);
+        if (!desc) continue;
+
+        spdlog::info("  Provider: '{}' (id='{}')", desc->name, desc->id);
+
+        auto* provider = discoveryFactory->create(discoveryFactory, &indexer, desc->id);
+        if (!provider) {
+            spdlog::warn("  Failed to create provider '{}'", desc->id);
+            continue;
+        }
+
+        if (!provider->init(provider)) {
+            spdlog::warn("  Provider init failed for '{}'", desc->id);
+            provider->destroy(provider);
+            continue;
+        }
+
+        // Crawl each declared location
+        uint32_t presetIndex = 0;
+        for (const auto& loc : ctx.locations) {
+            if (loc.kind == CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN) {
+                // Plugin-internal presets: location is null
+                struct MetadataCtx {
+                    std::vector<rps::ipc::PresetInfo>* presets;
+                    uint32_t* index;
+                    uint32_t locationKind;
+                    std::string location;
+                    uint32_t flags;
+                };
+                MetadataCtx mctx{&m_presets, &presetIndex,
+                                 loc.kind, "", loc.flags};
+
+                clap_preset_discovery_metadata_receiver_t receiver{};
+                receiver.receiver_data = &mctx;
+                receiver.on_error = [](const clap_preset_discovery_metadata_receiver_t*, int32_t, const char* msg) {
+                    spdlog::warn("  Preset metadata error: {}", msg ? msg : "unknown");
+                };
+                receiver.begin_preset = [](const clap_preset_discovery_metadata_receiver_t* r,
+                                           const char* name, const char* load_key) -> bool {
+                    auto* mc = static_cast<MetadataCtx*>(r->receiver_data);
+                    rps::ipc::PresetInfo info;
+                    info.id = load_key ? load_key : "";
+                    info.name = name ? name : "Unnamed";
+                    info.location = mc->location;
+                    info.locationKind = mc->locationKind;
+                    info.index = (*mc->index)++;
+                    info.flags = mc->flags;
+                    mc->presets->push_back(std::move(info));
+                    return true;
+                };
+                receiver.add_plugin_id = [](const clap_preset_discovery_metadata_receiver_t*, const clap_universal_plugin_id_t*) {};
+                receiver.set_soundpack_id = [](const clap_preset_discovery_metadata_receiver_t*, const char*) {};
+                receiver.set_flags = [](const clap_preset_discovery_metadata_receiver_t* r, uint32_t flags) {
+                    auto* mc = static_cast<MetadataCtx*>(r->receiver_data);
+                    if (!mc->presets->empty()) mc->presets->back().flags = flags;
+                };
+                receiver.add_creator = [](const clap_preset_discovery_metadata_receiver_t* r, const char* creator) {
+                    auto* mc = static_cast<MetadataCtx*>(r->receiver_data);
+                    if (!mc->presets->empty() && creator) mc->presets->back().creator = creator;
+                };
+                receiver.set_description = [](const clap_preset_discovery_metadata_receiver_t*, const char*) {};
+                receiver.set_timestamps = [](const clap_preset_discovery_metadata_receiver_t*, clap_timestamp, clap_timestamp) {};
+                receiver.add_feature = [](const clap_preset_discovery_metadata_receiver_t* r, const char* feature) {
+                    auto* mc = static_cast<MetadataCtx*>(r->receiver_data);
+                    if (!mc->presets->empty() && feature) {
+                        auto& cat = mc->presets->back().category;
+                        if (!cat.empty()) cat += "/";
+                        cat += feature;
+                    }
+                };
+                receiver.add_extra_info = [](const clap_preset_discovery_metadata_receiver_t*, const char*, const char*) {};
+
+                provider->get_metadata(provider, loc.kind, nullptr, &receiver);
+
+            } else if (loc.kind == CLAP_PRESET_DISCOVERY_LOCATION_FILE && loc.location) {
+                // File-based presets: crawl directory
+                std::filesystem::path locPath(loc.location);
+                if (!std::filesystem::exists(locPath)) {
+                    spdlog::debug("  Location does not exist: {}", loc.location);
+                    continue;
+                }
+
+                auto crawlFile = [&](const std::filesystem::path& filePath) {
+                    // Check file extension against declared filetypes
+                    bool extensionMatch = ctx.filetypes.empty(); // empty = match all
+                    std::string ext = filePath.extension().string();
+                    if (!ext.empty() && ext[0] == '.') ext = ext.substr(1);
+                    for (const auto& ft : ctx.filetypes) {
+                        if (!ft.file_extension || ft.file_extension[0] == '\0' || ext == ft.file_extension) {
+                            extensionMatch = true;
+                            break;
+                        }
+                    }
+                    if (!extensionMatch) return;
+
+                    struct MetadataCtx {
+                        std::vector<rps::ipc::PresetInfo>* presets;
+                        uint32_t* index;
+                        uint32_t locationKind;
+                        std::string location;
+                        uint32_t flags;
+                    };
+                    MetadataCtx mctx{&m_presets, &presetIndex,
+                                     loc.kind, filePath.string(), loc.flags};
+
+                    clap_preset_discovery_metadata_receiver_t receiver{};
+                    receiver.receiver_data = &mctx;
+                    receiver.on_error = [](const clap_preset_discovery_metadata_receiver_t*, int32_t, const char* msg) {
+                        spdlog::debug("  Preset file error: {}", msg ? msg : "unknown");
+                    };
+                    receiver.begin_preset = [](const clap_preset_discovery_metadata_receiver_t* r,
+                                               const char* name, const char* load_key) -> bool {
+                        auto* mc = static_cast<MetadataCtx*>(r->receiver_data);
+                        rps::ipc::PresetInfo info;
+                        info.id = load_key ? load_key : mc->location;
+                        info.name = name ? name : std::filesystem::path(mc->location).stem().string();
+                        info.location = mc->location;
+                        info.locationKind = mc->locationKind;
+                        info.index = (*mc->index)++;
+                        info.flags = mc->flags;
+                        mc->presets->push_back(std::move(info));
+                        return true;
+                    };
+                    receiver.add_plugin_id = [](const clap_preset_discovery_metadata_receiver_t*, const clap_universal_plugin_id_t*) {};
+                    receiver.set_soundpack_id = [](const clap_preset_discovery_metadata_receiver_t*, const char*) {};
+                    receiver.set_flags = [](const clap_preset_discovery_metadata_receiver_t* r, uint32_t flags) {
+                        auto* mc = static_cast<MetadataCtx*>(r->receiver_data);
+                        if (!mc->presets->empty()) mc->presets->back().flags = flags;
+                    };
+                    receiver.add_creator = [](const clap_preset_discovery_metadata_receiver_t* r, const char* creator) {
+                        auto* mc = static_cast<MetadataCtx*>(r->receiver_data);
+                        if (!mc->presets->empty() && creator) mc->presets->back().creator = creator;
+                    };
+                    receiver.set_description = [](const clap_preset_discovery_metadata_receiver_t*, const char*) {};
+                    receiver.set_timestamps = [](const clap_preset_discovery_metadata_receiver_t*, clap_timestamp, clap_timestamp) {};
+                    receiver.add_feature = [](const clap_preset_discovery_metadata_receiver_t* r, const char* feature) {
+                        auto* mc = static_cast<MetadataCtx*>(r->receiver_data);
+                        if (!mc->presets->empty() && feature) {
+                            auto& cat = mc->presets->back().category;
+                            if (!cat.empty()) cat += "/";
+                            cat += feature;
+                        }
+                    };
+                    receiver.add_extra_info = [](const clap_preset_discovery_metadata_receiver_t*, const char*, const char*) {};
+
+                    provider->get_metadata(provider, loc.kind, filePath.string().c_str(), &receiver);
+                };
+
+                std::error_code ec;
+                if (std::filesystem::is_directory(locPath, ec)) {
+                    for (const auto& entry : std::filesystem::recursive_directory_iterator(locPath, ec)) {
+                        if (entry.is_regular_file()) {
+                            crawlFile(entry.path());
+                        }
+                    }
+                } else if (std::filesystem::is_regular_file(locPath, ec)) {
+                    crawlFile(locPath);
+                }
+            }
+        }
+
+        provider->destroy(provider);
+        ctx.locations.clear();
+        ctx.filetypes.clear();
+    }
+
+    spdlog::info("  Preset discovery complete: {} preset(s) found", m_presets.size());
 }
 
 } // namespace rps::scanner

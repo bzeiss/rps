@@ -98,6 +98,12 @@ class RpsClient:
             rps_pb2.SetPluginStateRequest(plugin_path=plugin_path, state_data=state_data)
         )
 
+    def load_preset(self, plugin_path: str, preset_id: str) -> rps_pb2.LoadPresetResponse:
+        """Load a preset by its id on a running plugin GUI."""
+        return self._stub.LoadPreset(
+            rps_pb2.LoadPresetRequest(plugin_path=plugin_path, preset_id=preset_id)
+        )
+
     def __enter__(self):
         self.connect()
         return self

@@ -58,6 +58,12 @@ public:
 
     /// Load plugin state from a previously saved binary blob.
     virtual rps::ipc::SetStateResponse loadState(const std::vector<uint8_t>& stateData) = 0;
+
+    /// Get available presets/programs for this plugin.
+    virtual std::vector<rps::ipc::PresetInfo> getPresets() = 0;
+
+    /// Load a preset by its id.
+    virtual rps::ipc::LoadPresetResponse loadPreset(const std::string& presetId) = 0;
 };
 
 } // namespace rps::gui

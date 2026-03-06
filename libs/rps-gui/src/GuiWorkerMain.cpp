@@ -123,6 +123,16 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
             connection->sendMessage(paramListMsg);
         }
 
+        // Query and send preset list
+        auto presets = host->getPresets();
+        if (!presets.empty()) {
+            spdlog::info("Sending PresetListEvent ({} presets)", presets.size());
+            rps::ipc::Message presetListMsg;
+            presetListMsg.type = rps::ipc::MessageType::PresetListEvent;
+            presetListMsg.payload = rps::ipc::PresetListEvent{std::move(presets)};
+            connection->sendMessage(presetListMsg);
+        }
+
         // Run the GUI event loop — this blocks until the window is closed
         // We also need to poll IPC for CloseGuiRequest
         std::atomic<bool> ipcClosed{false};
@@ -162,6 +172,27 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
                     if (resp.success) {
                         auto params = host->getParameters();
                         spdlog::info("Re-sending ParameterListEvent ({} params) after state restore", params.size());
+                        rps::ipc::Message paramMsg;
+                        paramMsg.type = rps::ipc::MessageType::ParameterListEvent;
+                        paramMsg.payload = rps::ipc::ParameterListEvent{std::move(params)};
+                        connection->sendMessage(paramMsg);
+                    }
+                    continue;
+                }
+
+                if (msg->type == rps::ipc::MessageType::LoadPresetRequest) {
+                    spdlog::info("Received LoadPresetRequest via IPC");
+                    auto& req = std::get<rps::ipc::LoadPresetRequest>(msg->payload);
+                    auto resp = host->loadPreset(req.presetId);
+                    rps::ipc::Message respMsg;
+                    respMsg.type = rps::ipc::MessageType::LoadPresetResponse;
+                    respMsg.payload = std::move(resp);
+                    connection->sendMessage(respMsg);
+
+                    // After successful preset load, re-send parameter list
+                    if (resp.success) {
+                        auto params = host->getParameters();
+                        spdlog::info("Re-sending ParameterListEvent ({} params) after preset load", params.size());
                         rps::ipc::Message paramMsg;
                         paramMsg.type = rps::ipc::MessageType::ParameterListEvent;
                         paramMsg.payload = rps::ipc::ParameterListEvent{std::move(params)};
