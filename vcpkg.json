@@ -15,7 +15,8 @@
     "sqlite3",
     "grpc",
     "protobuf",
-    "spdlog"
+    "spdlog",
+    "sdl3"
   ],
   "overrides": [
     {
@@ -69,6 +70,10 @@
     {
       "name": "sqlite3",
       "version": "3.51.2"
+    },
+    {
+      "name": "sdl3",
+      "version": "3.4.2"
     }
   ]
 }

@@ -116,12 +116,15 @@ endif()
 add_subdirectory(libs/rps-core)
 add_subdirectory(libs/rps-ipc)
 add_subdirectory(libs/rps-engine)
+add_subdirectory(libs/rps-gui)
 
 # Include directories for applications
 add_subdirectory(apps/rps-standalone)
 add_subdirectory(apps/rps-pluginscanner)
 add_subdirectory(apps/rps-server)
 add_subdirectory(apps/rps-vstscannermaster)
+add_subdirectory(apps/rps-pluginhost-clap)
 
 # Example clients
 add_subdirectory(examples/cpp)
+
