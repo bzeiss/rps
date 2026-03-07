@@ -345,7 +345,125 @@ void SdlWindow::renderSidebar() {
         ImGui::Separator();
         ImGui::Spacing();
 
-        // Search bar: stretch to full sidebar content width
+        // --- Category tree dropdown ---
+        // Build category tree from preset data
+        struct CatNode {
+            std::string fullPath;
+            int count = 0;  // Number of presets at this exact category
+            std::map<std::string, CatNode> children;
+
+            // Recursive total: this node + all descendants
+            int totalCount() const {
+                int total = count;
+                for (const auto& [_, c] : children) total += c.totalCount();
+                return total;
+            }
+        };
+        CatNode catRoot;
+        for (const auto& preset : m_presets) {
+            if (preset.category.empty()) continue;
+            // Split by '|' (VST3) or '/' (CLAP)
+            std::string cat = preset.category;
+            CatNode* node = &catRoot;
+            std::string pathSoFar;
+            size_t start = 0;
+            while (start < cat.size()) {
+                size_t sepPipe = cat.find('|', start);
+                size_t sepSlash = cat.find('/', start);
+                size_t sep = std::min(sepPipe, sepSlash);
+                std::string part = (sep == std::string::npos) ? cat.substr(start) : cat.substr(start, sep - start);
+                if (!part.empty()) {
+                    if (!pathSoFar.empty()) pathSoFar += '|';
+                    pathSoFar += part;
+                    auto& child = node->children[part];
+                    child.fullPath = pathSoFar;
+                    node = &child;
+                }
+                start = (sep == std::string::npos) ? cat.size() : sep + 1;
+            }
+            // Increment count on the leaf node
+            node->count++;
+        }
+
+        // Determine preview text for the combobox
+        std::string comboPreview;
+        if (m_allCategoriesSelected) {
+            comboPreview = "All";
+        } else if (m_selectedCategories.empty()) {
+            comboPreview = "None";
+        } else if (m_selectedCategories.size() == 1) {
+            comboPreview = *m_selectedCategories.begin();
+        } else {
+            comboPreview = std::to_string(m_selectedCategories.size()) + " selected";
+        }
+
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        // Allow the combo popup to grow tall for deep category trees
+        ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, static_cast<float>(winH) * 0.8f));
+        if (ImGui::BeginCombo("##CatFilter", comboPreview.c_str())) {
+            // "All" toggle at the top
+            bool allChecked = m_allCategoriesSelected;
+            if (ImGui::Checkbox("All", &allChecked)) {
+                m_allCategoriesSelected = allChecked;
+                if (allChecked) {
+                    m_selectedCategories.clear();
+                }
+            }
+            ImGui::Separator();
+
+            if (catRoot.children.empty()) {
+                ImGui::TextDisabled("No categories available");
+            } else {
+                // Recursive tree rendering lambda
+                std::function<void(const std::map<std::string, CatNode>&)> renderTree;
+                renderTree = [&](const std::map<std::string, CatNode>& children) {
+                    for (const auto& [label, child] : children) {
+                        bool isSelected = m_selectedCategories.contains(child.fullPath);
+                        int total = child.totalCount();
+                        std::string displayLabel = label + " (" + std::to_string(total) + ")";
+
+                        if (child.children.empty()) {
+                            // Leaf node: just a checkbox
+                            bool checked = isSelected;
+                            if (ImGui::Checkbox(displayLabel.c_str(), &checked)) {
+                                m_allCategoriesSelected = false;
+                                if (checked) {
+                                    m_selectedCategories.insert(child.fullPath);
+                                } else {
+                                    m_selectedCategories.erase(child.fullPath);
+                                }
+                            }
+                        } else {
+                            // Branch node: tree node with checkbox
+                            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen;
+                            bool nodeOpen = ImGui::TreeNodeEx(("##tree_" + child.fullPath).c_str(), flags);
+
+                            ImGui::SameLine();
+                            bool checked = isSelected;
+                            if (ImGui::Checkbox(displayLabel.c_str(), &checked)) {
+                                m_allCategoriesSelected = false;
+                                if (checked) {
+                                    m_selectedCategories.insert(child.fullPath);
+                                } else {
+                                    m_selectedCategories.erase(child.fullPath);
+                                }
+                            }
+
+                            if (nodeOpen) {
+                                renderTree(child.children);
+                                ImGui::TreePop();
+                            }
+                        }
+                    }
+                };
+                renderTree(catRoot.children);
+            }
+
+            ImGui::EndCombo();
+        }
+        ImGui::Spacing();
+
+        // Search bar
         ImGui::SetNextItemWidth(-FLT_MIN);
         ImGui::InputTextWithHint("##Filter", "Search...", m_presetFilter, sizeof(m_presetFilter));
         ImGui::Spacing();
@@ -365,16 +483,44 @@ void SdlWindow::renderSidebar() {
             for (int i = 0; i < static_cast<int>(m_presets.size()); ++i) {
                 const auto& preset = m_presets[static_cast<size_t>(i)];
 
+                // Category filter
+                if (!m_allCategoriesSelected) {
+                    if (m_selectedCategories.empty()) {
+                        // "None" selected — hide everything
+                        continue;
+                    }
+                    // Check if preset's category matches any selected category
+                    bool catMatch = false;
+                    if (!preset.category.empty()) {
+                        // Normalize to '|' separator to match tree paths
+                        std::string cat = preset.category;
+                        std::replace(cat.begin(), cat.end(), '/', '|');
+                        // Check exact match
+                        if (m_selectedCategories.contains(cat)) {
+                            catMatch = true;
+                        }
+                        // Check parent path matches (e.g., if "Fx" is selected, "Fx|EQ" matches)
+                        if (!catMatch) {
+                            for (const auto& sel : m_selectedCategories) {
+                                if (cat.starts_with(sel + "|")) {
+                                    catMatch = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    // Uncategorized presets don't match any specific category
+                    if (!catMatch) continue;
+                }
+
+                // Text filter
                 if (!filterLower.empty()) {
                     std::string nameLower = preset.name;
-                    std::string catLower = preset.category;
                     std::string authorLower = preset.creator;
                     std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(), ::tolower);
-                    std::transform(catLower.begin(), catLower.end(), catLower.begin(), ::tolower);
                     std::transform(authorLower.begin(), authorLower.end(), authorLower.begin(), ::tolower);
 
                     if (nameLower.find(filterLower) == std::string::npos &&
-                        catLower.find(filterLower) == std::string::npos &&
                         authorLower.find(filterLower) == std::string::npos) {
                         continue;
                     }
@@ -382,19 +528,16 @@ void SdlWindow::renderSidebar() {
                 filteredIndices.push_back(i);
             }
 
-            if (ImGui::BeginTable("PresetsTable", 3,
-                ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable |
-                ImGuiTableFlags_Sortable | ImGuiTableFlags_SortMulti |
+            if (ImGui::BeginTable("PresetsTable", 1,
+                ImGuiTableFlags_Sortable |
                 ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersOuter |
-                ImGuiTableFlags_BordersV | ImGuiTableFlags_ScrollY)) {
+                ImGuiTableFlags_ScrollY)) {
 
                 ImGui::TableSetupScrollFreeze(0, 1);
                 ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Category", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Author", ImGuiTableColumnFlags_WidthStretch);
                 ImGui::TableHeadersRow();
 
-                // Sort by column specs
+                // Sort
                 if (ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs()) {
                     if (sortSpecs->SpecsDirty || true) {
                         const auto& presets = m_presets;
@@ -402,21 +545,8 @@ void SdlWindow::renderSidebar() {
                             [&presets, sortSpecs](int lhs, int rhs) {
                                 for (int n = 0; n < sortSpecs->SpecsCount; ++n) {
                                     const ImGuiTableColumnSortSpecs& spec = sortSpecs->Specs[n];
-                                    int cmp = 0;
-                                    switch (spec.ColumnIndex) {
-                                        case 0:
-                                            cmp = presets[static_cast<size_t>(lhs)].name.compare(
-                                                  presets[static_cast<size_t>(rhs)].name);
-                                            break;
-                                        case 1:
-                                            cmp = presets[static_cast<size_t>(lhs)].category.compare(
-                                                  presets[static_cast<size_t>(rhs)].category);
-                                            break;
-                                        case 2:
-                                            cmp = presets[static_cast<size_t>(lhs)].creator.compare(
-                                                  presets[static_cast<size_t>(rhs)].creator);
-                                            break;
-                                    }
+                                    int cmp = presets[static_cast<size_t>(lhs)].name.compare(
+                                              presets[static_cast<size_t>(rhs)].name);
                                     if (cmp != 0) {
                                         return (spec.SortDirection == ImGuiSortDirection_Ascending) ? cmp < 0 : cmp > 0;
                                     }
@@ -435,6 +565,7 @@ void SdlWindow::renderSidebar() {
 
                     const bool isSelected = (m_selectedPresetIndex == idx);
 
+                    // Build display text: "Name" or "Name  — Author"
                     ImGui::PushID(idx);
                     if (ImGui::Selectable(preset.name.c_str(), isSelected, ImGuiSelectableFlags_SpanAllColumns)) {
                         m_selectedPresetIndex = idx;
@@ -442,17 +573,19 @@ void SdlWindow::renderSidebar() {
                             m_presetSelectedCb(preset.id);
                         }
                     }
+
+                    // Append dimmed author suffix on the same line
+                    if (!preset.creator.empty()) {
+                        ImGui::SameLine();
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+                        ImGui::TextUnformatted(preset.creator.c_str());
+                        ImGui::PopStyleColor();
+                    }
                     ImGui::PopID();
 
                     if (isSelected && ImGui::IsWindowAppearing()) {
                         ImGui::SetScrollHereY();
                     }
-
-                    ImGui::TableNextColumn();
-                    ImGui::TextUnformatted(preset.category.c_str());
-
-                    ImGui::TableNextColumn();
-                    ImGui::TextUnformatted(preset.creator.c_str());
                 }
                 ImGui::EndTable();
             }

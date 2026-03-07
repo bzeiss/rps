@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <atomic>
 #include <functional>
+#include <set>
+#include <map>
 
 struct SDL_Window;
 struct SDL_Renderer;
@@ -109,6 +111,10 @@ private:
     int m_selectedPresetIndex = -1;
     char m_presetFilter[256] = {};
     PresetSelectedCallback m_presetSelectedCb;
+
+    // Category tree filter state
+    bool m_allCategoriesSelected = true;
+    std::set<std::string> m_selectedCategories;  // Full category paths that are checked
 
     void initImGui();
     void shutdownImGui();
