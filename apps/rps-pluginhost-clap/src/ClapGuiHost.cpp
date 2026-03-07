@@ -238,7 +238,7 @@ std::optional<rps::gui::AudioBusLayout> ClapGuiHost::setupAudioProcessing(
     // Per CLAP spec, start_processing() must be called from the [audio-thread].
     // It is called lazily on the first processAudioBlock() call.
 
-    // 5. Allocate de-interleaved channel buffers for the main port
+    // 4. Allocate de-interleaved channel buffers for the main port
     m_audioInputChannels = inCh;
     m_audioOutputChannels = outCh;
     m_audioBlockSize = blockSize;
@@ -257,7 +257,7 @@ std::optional<rps::gui::AudioBusLayout> ClapGuiHost::setupAudioProcessing(
         m_outputPtrs[c] = m_outputChannelBuffers[c].data();
     }
 
-    // 5b. Allocate silent buffers for extra ports (e.g., sidechain)
+    // 5. Allocate silent buffers for extra ports (e.g., sidechain)
     // Plugins like FabFilter Pro-C access audio_inputs[1] for sidechain;
     // if we don't provide it, they crash.
     m_extraInputBuses.clear();
@@ -319,38 +319,19 @@ bool ClapGuiHost::processAudioBlock(
 
     // Lazy start_processing() — MUST be called from the audio thread per CLAP spec.
     if (!m_processingStarted) {
-        spdlog::info("  [STEP] calling start_processing() from audio thread");
+        spdlog::info("start_processing() from audio thread");
         if (!m_plugin->start_processing(m_plugin)) {
-            spdlog::error("  start_processing() failed");
-            spdlog::default_logger()->flush();
+            spdlog::error("start_processing() failed");
             return false;
         }
         m_processingStarted = true;
-        spdlog::info("  [STEP] start_processing() succeeded");
-        spdlog::default_logger()->flush();
     }
-
-    auto logStep = [&](const char* step) {
-        if (firstCall) {
-            spdlog::info("  [STEP] {}", step);
-            spdlog::default_logger()->flush();
-        }
-    };
 
     if (firstCall) {
-        spdlog::info("processAudioBlock: FIRST CALL in={} out={} bs={} "
-                     "inputBufs={} outputBufs={} inputPtrs={} outputPtrs={} "
-                     "plugin={:p}",
+        spdlog::info("processAudioBlock: first call in={} out={} bs={} ports={}/{}",
                      numInputChannels, numOutputChannels, numSamples,
-                     m_inputChannelBuffers.size(), m_outputChannelBuffers.size(),
-                     m_inputPtrs.size(), m_outputPtrs.size(),
-                     static_cast<const void*>(m_plugin));
-        spdlog::info("  m_plugin->process={:p}",
-                     reinterpret_cast<const void*>(m_plugin->process));
-        spdlog::default_logger()->flush();
+                     m_numInputPorts, m_numOutputPorts);
     }
-
-    logStep("de-interleave input");
 
     // 1. De-interleave input
     for (uint32_t s = 0; s < numSamples; ++s) {
@@ -359,15 +340,11 @@ bool ClapGuiHost::processAudioBlock(
         }
     }
 
-    logStep("clear output buffers");
-
     // Clear output buffers
     for (uint32_t c = 0; c < numOutputChannels; ++c) {
         std::fill(m_outputChannelBuffers[c].begin(),
                   m_outputChannelBuffers[c].begin() + numSamples, 0.0f);
     }
-
-    logStep("setup CLAP audio buffers");
 
     // 2. Set up CLAP audio buffers for ALL ports (main + sidechain etc.)
     std::vector<clap_audio_buffer_t> clapInputs(m_numInputPorts);
@@ -414,12 +391,8 @@ bool ClapGuiHost::processAudioBlock(
     outEvents.ctx = nullptr;
     outEvents.try_push = [](const clap_output_events*, const clap_event_header_t*) -> bool { return true; };
 
-    logStep("setup process struct");
-
     // 4. Set up process struct
-    // Use nullptr transport like the reference CLAP host (clap-host).
-    // Per spec: "If null, then this is a free running host, no transport events will be provided"
-
+    // Per CLAP spec: transport=nullptr means "free running host, no transport events"
     clap_process_t process{};
     process.steady_time = -1;
     process.frames_count = numSamples;
@@ -431,46 +404,17 @@ bool ClapGuiHost::processAudioBlock(
     process.in_events = &inEvents;
     process.out_events = &outEvents;
 
-    logStep("calling m_plugin->process()");
-
-    if (firstCall) {
-        // Dump all process struct pointers for crash diagnosis
-        spdlog::info("  process.frames_count={}", process.frames_count);
-        spdlog::info("  process.steady_time={}", process.steady_time);
-        spdlog::info("  process.audio_inputs={:p}, audio_inputs_count={}",
-                     static_cast<const void*>(process.audio_inputs), process.audio_inputs_count);
-        spdlog::info("  process.audio_outputs={:p}, audio_outputs_count={}",
-                     static_cast<const void*>(process.audio_outputs), process.audio_outputs_count);
-        spdlog::info("  process.in_events={:p} (size={:p}, get={:p})",
-                     static_cast<const void*>(process.in_events),
-                     reinterpret_cast<const void*>(process.in_events->size),
-                     reinterpret_cast<const void*>(process.in_events->get));
-        spdlog::info("  process.out_events={:p} (try_push={:p})",
-                     static_cast<const void*>(process.out_events),
-                     reinterpret_cast<const void*>(process.out_events->try_push));
-        spdlog::info("  process.transport={:p}", static_cast<const void*>(process.transport));
-        for (uint32_t p = 0; p < m_numInputPorts; ++p) {
-            spdlog::info("  clapInput[{}].data32={:p}, ch={}", p,
-                         static_cast<const void*>(clapInputs[p].data32), clapInputs[p].channel_count);
-        }
-        for (uint32_t p = 0; p < m_numOutputPorts; ++p) {
-            spdlog::info("  clapOutput[{}].data32={:p}, ch={}", p,
-                         static_cast<const void*>(clapOutputs[p].data32), clapOutputs[p].channel_count);
-        }
-        spdlog::default_logger()->flush();
-    }
-
     // 5. Call plugin's process
     auto status = m_plugin->process(m_plugin, &process);
 
-    logStep("process() returned");
-
-    if (status == CLAP_PROCESS_ERROR) {
+    if (firstCall) {
+        spdlog::info("  process() returned status={}", status);
         firstCall = false;
-        return false;
     }
 
-    logStep("re-interleave output");
+    if (status == CLAP_PROCESS_ERROR) {
+        return false;
+    }
 
     // 6. Re-interleave output
     for (uint32_t s = 0; s < numSamples; ++s) {
@@ -479,7 +423,6 @@ bool ClapGuiHost::processAudioBlock(
         }
     }
 
-    firstCall = false;
     return true;
 }
 

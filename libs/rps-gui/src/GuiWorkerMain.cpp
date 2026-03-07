@@ -32,7 +32,6 @@
 #endif
 #include <windows.h>
 #include <avrt.h>
-#include <process.h>  // _beginthreadex
 #pragma comment(lib, "Avrt.lib")
 #endif
 

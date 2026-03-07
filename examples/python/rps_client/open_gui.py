@@ -464,6 +464,120 @@ def _handle_play_audio(ring: AudioRing, filepath: str, con: Console) -> None:
     )
 
 
+def _handle_play_audio_looped(ring: AudioRing, filepath: str, con: Console) -> None:
+    """Play a WAV file in a loop through the audio device until Enter is pressed."""
+    import os
+    import sys
+    import time
+    import threading
+
+    if not os.path.isfile(filepath):
+        con.print(f"[red]✗ File not found:[/red] {filepath}")
+        return
+
+    # Read input WAV
+    try:
+        samples, wav_sr, wav_ch = read_wav(filepath)
+    except Exception as e:
+        con.print(f"[red]✗ Cannot read WAV:[/red] {e}")
+        return
+
+    n_samples = len(samples)
+    duration_s = n_samples / (wav_sr * wav_ch)
+    con.print(
+        f"  [dim]Looping {n_samples // wav_ch} frames, {wav_ch}ch, "
+        f"{wav_sr}Hz ({duration_s:.1f}s)[/dim]"
+    )
+
+    if wav_sr != ring.sample_rate:
+        con.print(
+            f"  [yellow]⚠ Sample rate mismatch:[/yellow] "
+            f"WAV={wav_sr}Hz, ring={ring.sample_rate}Hz — proceeding anyway"
+        )
+
+    # Pad samples to full blocks
+    block_floats = ring.block_size * ring.num_channels
+    total_blocks = (n_samples + block_floats - 1) // block_floats
+    pad_len = total_blocks * block_floats - n_samples
+    if pad_len > 0:
+        samples.extend([0.0] * pad_len)
+
+    # Pre-convert to raw bytes
+    samples_bytes = samples.tobytes()
+    block_byte_size = block_floats * 4  # float32 = 4 bytes
+    block_duration_s = ring.block_size / ring.sample_rate
+
+    # Stop signal — set when user presses Enter
+    stop_event = threading.Event()
+
+    def _wait_for_key():
+        """Wait for Enter key press on a background thread."""
+        try:
+            if sys.platform == "win32":
+                import msvcrt
+                while not stop_event.is_set():
+                    if msvcrt.kbhit():
+                        key = msvcrt.getwch()
+                        if key in ("\r", "\n", "\x1b"):  # Enter or Escape
+                            stop_event.set()
+                            return
+                    time.sleep(0.05)
+            else:
+                import select
+                while not stop_event.is_set():
+                    rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
+                    if rlist:
+                        stop_event.set()
+                        return
+        except Exception:
+            stop_event.set()
+
+    key_thread = threading.Thread(target=_wait_for_key, daemon=True)
+    key_thread.start()
+
+    con.print(
+        f"  [bold green]▶ Looping[/bold green] {total_blocks} blocks "
+        f"({duration_s:.1f}s per loop) — press [bold]Enter[/bold] or [bold]Esc[/bold] to stop"
+    )
+
+    loop_count = 0
+    start_time = time.monotonic()
+
+    try:
+        while not stop_event.is_set():
+            loop_count += 1
+            blocks_sent = 0
+            loop_start = time.monotonic()
+
+            while blocks_sent < total_blocks and not stop_event.is_set():
+                offset = blocks_sent * block_byte_size
+                if ring.write_input_block(samples_bytes[offset:offset + block_byte_size]):
+                    blocks_sent += 1
+                else:
+                    time.sleep(block_duration_s * 0.25)
+                    continue
+
+                # Drain output ring
+                while ring.read_output_block() is not None:
+                    pass
+
+                # Pace: don't get too far ahead of real-time
+                target_time = loop_start + (blocks_sent - 4) * block_duration_s
+                now = time.monotonic()
+                if now < target_time:
+                    time.sleep(target_time - now)
+
+    except KeyboardInterrupt:
+        pass
+
+    stop_event.set()
+    elapsed = time.monotonic() - start_time
+    con.print(
+        f"  [green]■ Stopped[/green] after {loop_count} loop(s), "
+        f"{elapsed:.1f}s total"
+    )
+
+
 def _handle_send_audio_grpc(
     client: RpsClient, plugin_path: str, filepath: str, con: Console,
     block_size: int, num_channels: int, sample_rate: int,
@@ -613,7 +727,7 @@ def run_open_gui(
                         if enable_audio:
                             cmds += ", send-audio <file.wav>"
                             if audio_device:
-                                cmds += ", play-audio <file.wav>"
+                                cmds += ", play-audio <file.wav>, play-audio-looped <file.wav>"
                         cmds += ", help, quit[/dim]\n"
                         console.print(cmds)
                     elif event.HasField("parameter_list"):
@@ -768,6 +882,7 @@ def run_open_gui(
                         console.print("  send-audio-grpc <file.wav> — Process via gRPC stream (networked)")
                         if audio_device:
                             console.print("  play-audio <file.wav>  — Real-time playback through audio device")
+                            console.print("  play-audio-looped <file.wav> — Looped playback (Enter/Esc to stop)")
                     console.print("  quit                  — Close the GUI and exit")
 
                 elif cmd == "send-audio" and len(parts) == 2:
@@ -805,6 +920,20 @@ def run_open_gui(
                         )
                     else:
                         _handle_play_audio(audio_ring, parts[1], console)
+
+                elif cmd == "play-audio-looped" and len(parts) == 2:
+                    if not enable_audio or not audio_ring:
+                        console.print(
+                            "[red]✗ Audio not enabled.[/red] "
+                            "Use [bold]open-gui --audio[/bold] to enable."
+                        )
+                    elif not audio_device:
+                        console.print(
+                            "[red]✗ No audio device.[/red] "
+                            "Use [bold]open-gui --audio --audio-device sdl3[/bold] for real-time playback."
+                        )
+                    else:
+                        _handle_play_audio_looped(audio_ring, parts[1], console)
 
                 else:
                     console.print(

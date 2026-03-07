@@ -89,29 +89,38 @@ public:
 };
 
 // ---------------------------------------------------------------------------
-// ConnectionStub — accepts IConnectionPoint registration but drops messages.
-// JUCE-based plugins require IConnectionPoint to be connected before
-// createView() works, but forwarding messages causes async recursion
-// through JUCE's internal message queue. The stub satisfies the connection
-// requirement without causing recursion.
+// ConnectionProxy — forwards messages between component ↔ controller.
+// FabFilter plugins send FF_Msg_RealTimeRequest (~60/sec) to exchange
+// metering and waveform data. Dropping these (as the old ConnectionStub did)
+// causes stuck/broken meter displays.
+// A reentrancy guard prevents infinite recursive message bouncing
+// (which was the original problem with JUCE plugins and direct connections).
 // ---------------------------------------------------------------------------
-class ConnectionStub : public U::ImplementsNonDestroyable<U::Directly<IConnectionPoint>> {
+class ConnectionProxy : public U::ImplementsNonDestroyable<U::Directly<IConnectionPoint>> {
 public:
+    void setPeer(IConnectionPoint* peer) { m_peer = peer; }
+
     tresult PLUGIN_API connect(IConnectionPoint* /*other*/) override {
         return kResultTrue;
     }
     tresult PLUGIN_API disconnect(IConnectionPoint* /*other*/) override {
+        m_peer = nullptr;
         return kResultTrue;
     }
     tresult PLUGIN_API notify(IMessage* message) override {
-        if (message) {
-            spdlog::debug("ConnectionStub::notify(id='{}')", message->getMessageID() ? message->getMessageID() : "null");
-        }
-        return kResultOk;
+        if (!m_peer || m_inNotify) return kResultOk;
+        m_inNotify = true;
+        auto result = m_peer->notify(message);
+        m_inNotify = false;
+        return result;
     }
+private:
+    IConnectionPoint* m_peer = nullptr;
+    bool m_inNotify = false;  // reentrancy guard
 };
 
-static ConnectionStub s_connectionStub;
+static ConnectionProxy s_componentProxy;  // receives messages FROM controller, forwards TO component
+static ConnectionProxy s_controllerProxy; // receives messages FROM component, forwards TO controller
 
 // Static instances — lifetime tied to the process
 static Vst3ComponentHandler s_componentHandler;
@@ -382,40 +391,14 @@ bool Vst3GuiHost::processAudioBlock(
     processData.inputParameterChanges = &inputParamChanges;
     processData.outputParameterChanges = &outputParamChanges;
 
-    // First-call diagnostics
-    static bool firstCall = true;
-    if (firstCall) {
-        spdlog::info("processAudioBlock: FIRST CALL numInputs={} numOutputs={} numSamples={} "
-                     "inputs[0].ch={} outputs[0].ch={}",
-                     processData.numInputs, processData.numOutputs, processData.numSamples,
-                     inputBuses[0].numChannels, outputBuses[0].numChannels);
-        // Log input audio levels
-        float maxIn = 0.0f;
-        for (uint32_t c = 0; c < numInputChannels; ++c) {
-            for (uint32_t s = 0; s < numSamples; ++s) {
-                float v = std::abs(m_inputPtrs[c][s]);
-                if (v > maxIn) maxIn = v;
-            }
-        }
-        spdlog::info("  First block input peak: {:.6f}", maxIn);
-        spdlog::default_logger()->flush();
-    }
-
     // 6. Call plugin's process
+    static bool firstCall = true;
     auto result = m_processor->process(processData);
 
     if (firstCall) {
-        spdlog::info("  process() returned: {}", result);
-        // Log output audio levels
-        float maxOut = 0.0f;
-        for (uint32_t c = 0; c < numOutputChannels; ++c) {
-            for (uint32_t s = 0; s < numSamples; ++s) {
-                float v = std::abs(m_outputPtrs[c][s]);
-                if (v > maxOut) maxOut = v;
-            }
-        }
-        spdlog::info("  First block output peak: {:.6f}", maxOut);
-        spdlog::default_logger()->flush();
+        spdlog::info("processAudioBlock: first call buses={}/{} ch={}/{} result={}",
+                     m_numInputBuses, m_numOutputBuses,
+                     numInputChannels, numOutputChannels, result);
         firstCall = false;
     }
 
@@ -472,12 +455,14 @@ void Vst3GuiHost::cleanup() {
         m_view = nullptr;
     }
 
-    // Disconnect IConnectionPoint stubs
+    // Disconnect IConnectionPoint proxies
     {
         FUnknownPtr<IConnectionPoint> componentCP(m_component);
         FUnknownPtr<IConnectionPoint> controllerCP(m_controller);
-        if (componentCP) componentCP->disconnect(&s_connectionStub);
-        if (controllerCP) controllerCP->disconnect(&s_connectionStub);
+        if (componentCP) componentCP->disconnect(&s_controllerProxy);
+        if (controllerCP) controllerCP->disconnect(&s_componentProxy);
+        s_componentProxy.setPeer(nullptr);
+        s_controllerProxy.setPeer(nullptr);
     }
 
 
@@ -685,16 +670,19 @@ rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::
     }
     spdlog::info("  Editor view created");
 
-    // 6b. Switch to ConnectionStub for the event loop.
-    //     Direct connection during the event loop can cause async recursive
-    //     message bouncing. The stub satisfies the connection contract while
-    //     safely dropping messages.
+    // 6b. Switch to ConnectionProxy for the event loop.
+    //     Direct connection can cause async recursive message bouncing in
+    //     JUCE plugins. The proxy forwards messages with reentrancy protection.
     if (componentCP && controllerCP) {
         componentCP->disconnect(controllerCP);
         controllerCP->disconnect(componentCP);
-        componentCP->connect(&s_connectionStub);
-        controllerCP->connect(&s_connectionStub);
-        spdlog::info("  Switched to ConnectionStub (async-safe)");
+        // componentProxy forwards messages FROM controller TO component
+        s_componentProxy.setPeer(componentCP);
+        controllerCP->connect(&s_componentProxy);
+        // controllerProxy forwards messages FROM component TO controller
+        s_controllerProxy.setPeer(controllerCP);
+        componentCP->connect(&s_controllerProxy);
+        spdlog::info("  Switched to ConnectionProxy (message forwarding with reentrancy guard)");
     }
 
     // 7. Check platform type support
