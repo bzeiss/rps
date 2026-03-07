@@ -141,6 +141,17 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
         std::thread ipcThread([&]() {
             while (!ipcClosed.load(std::memory_order_relaxed)) {
                 auto msg = connection->receiveMessage(200);
+
+                // Check for async preset enrichment completion
+                if (host->hasEnrichedPresets()) {
+                    auto enriched = host->getEnrichedPresets();
+                    spdlog::info("Sending enriched PresetListEvent ({} presets)", enriched.size());
+                    rps::ipc::Message presetMsg;
+                    presetMsg.type = rps::ipc::MessageType::PresetListEvent;
+                    presetMsg.payload = rps::ipc::PresetListEvent{std::move(enriched)};
+                    connection->sendMessage(presetMsg);
+                }
+
                 if (!msg) continue;
 
                 if (msg->type == rps::ipc::MessageType::CloseGuiRequest) {

@@ -64,6 +64,13 @@ public:
 
     /// Load a preset by its id.
     virtual rps::ipc::LoadPresetResponse loadPreset(const std::string& presetId) = 0;
+
+    /// Returns true if async preset metadata enrichment has completed with new data.
+    /// Default returns false (no async enrichment). Override in hosts that support it.
+    virtual bool hasEnrichedPresets() const { return false; }
+
+    /// Returns the enriched preset list and clears the flag.
+    virtual std::vector<rps::ipc::PresetInfo> getEnrichedPresets() { return {}; }
 };
 
 } // namespace rps::gui

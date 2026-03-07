@@ -130,6 +130,11 @@ Vst3GuiHost::~Vst3GuiHost() {
 void Vst3GuiHost::cleanup() {
     spdlog::debug("Vst3GuiHost::cleanup()");
 
+    // Join background enrichment thread before releasing plugin state
+    if (m_presetEnrichThread.joinable()) {
+        m_presetEnrichThread.join();
+    }
+
     if (m_view) {
         spdlog::debug("  removing view");
         m_view->setFrame(nullptr);
@@ -825,11 +830,39 @@ std::vector<rps::ipc::PresetInfo> Vst3GuiHost::getPresets() {
                     preset.index = globalIndex++;
                     preset.flags = rps::ipc::kPresetFlagFactory;
 
-                    String128 categoryStr{};
-                    if (unitInfo->getProgramInfo(listInfo.id, pi,
-                            Steinberg::Vst::PresetAttributes::kInstrument, categoryStr) == kResultTrue) {
-                        preset.category = vst3String128ToUtf8(categoryStr);
+                    // Query category: try kPlugInCategory first, fall back to kInstrument, then kStyle
+                    String128 attrStr{};
+                    auto catResult = unitInfo->getProgramInfo(listInfo.id, pi,
+                            Steinberg::Vst::PresetAttributes::kPlugInCategory, attrStr);
+                    if (catResult == kResultTrue) {
+                        preset.category = vst3String128ToUtf8(attrStr);
                     }
+                    spdlog::debug("    [{}] kPlugInCategory: result={}, val='{}'",
+                                  preset.name, catResult, vst3String128ToUtf8(attrStr));
+
+                    if (preset.category.empty()) {
+                        std::memset(attrStr, 0, sizeof(attrStr));
+                        auto instrResult = unitInfo->getProgramInfo(listInfo.id, pi,
+                                Steinberg::Vst::PresetAttributes::kInstrument, attrStr);
+                        if (instrResult == kResultTrue) {
+                            preset.category = vst3String128ToUtf8(attrStr);
+                        }
+                        spdlog::debug("    [{}] kInstrument: result={}, val='{}'",
+                                      preset.name, instrResult, vst3String128ToUtf8(attrStr));
+                    }
+                    if (preset.category.empty()) {
+                        std::memset(attrStr, 0, sizeof(attrStr));
+                        auto styleResult = unitInfo->getProgramInfo(listInfo.id, pi,
+                                Steinberg::Vst::PresetAttributes::kStyle, attrStr);
+                        if (styleResult == kResultTrue) {
+                            preset.category = vst3String128ToUtf8(attrStr);
+                        }
+                        spdlog::debug("    [{}] kStyle: result={}, val='{}'",
+                                      preset.name, styleResult, vst3String128ToUtf8(attrStr));
+                    }
+
+                    spdlog::info("    preset[{}]: name='{}', category='{}', creator='{}'",
+                                 pi, preset.name, preset.category, preset.creator);
                     m_presets.push_back(std::move(preset));
                 }
             }
@@ -912,7 +945,133 @@ std::vector<rps::ipc::PresetInfo> Vst3GuiHost::getPresets() {
     }
 
     spdlog::info("getPresets: {} total preset(s) found", m_presets.size());
+
+    // Launch async enrichment for file-based presets (Phase 2)
+    // This parses MetaInfo chunks to fill in category/author.
+    if (m_presetEnrichThread.joinable()) {
+        m_presetEnrichThread.join();
+    }
+    m_presetsEnriched.store(false, std::memory_order_relaxed);
+    m_presetEnrichThread = std::thread([this]() { enrichPresetsFromFiles(); });
+
     return m_presets;
+}
+
+std::vector<rps::ipc::PresetInfo> Vst3GuiHost::getEnrichedPresets() {
+    m_presetsEnriched.store(false, std::memory_order_relaxed);
+    std::lock_guard lock(m_presetMutex);
+    return m_presets;
+}
+
+void Vst3GuiHost::enrichPresetsFromFiles() {
+    spdlog::info("enrichPresetsFromFiles: starting background MetaInfo parsing...");
+    int enriched = 0;
+
+    std::lock_guard lock(m_presetMutex);
+
+    for (auto& preset : m_presets) {
+        // Only process file-based presets
+        if (!preset.id.starts_with("file:")) continue;
+        auto filePath = preset.id.substr(5);
+
+        try {
+            std::ifstream file(filePath, std::ios::binary | std::ios::ate);
+            if (!file) continue;
+            auto fileSize = static_cast<size_t>(file.tellg());
+            if (fileSize < 48) continue;
+
+            // Read header to get chunk list offset
+            file.seekg(0);
+            char magic[4]{};
+            file.read(magic, 4);
+            if (std::memcmp(magic, "VST3", 4) != 0) continue;
+
+            file.seekg(40);
+            int64_t chunkListOffset = 0;
+            file.read(reinterpret_cast<char*>(&chunkListOffset), 8);
+            if (chunkListOffset < 48 || static_cast<size_t>(chunkListOffset) >= fileSize) continue;
+
+            // Read chunk list header: 'List' (4) + count (4)
+            file.seekg(chunkListOffset);
+            char listMagic[4]{};
+            file.read(listMagic, 4);
+            if (std::memcmp(listMagic, "List", 4) != 0) continue;
+
+            int32_t entryCount = 0;
+            file.read(reinterpret_cast<char*>(&entryCount), 4);
+            if (entryCount <= 0 || entryCount > 100) continue;
+
+            // Scan entries for 'Info' chunk: each entry = id(4) + offset(8) + size(8)
+            int64_t infoOffset = -1;
+            int64_t infoSize = 0;
+            for (int32_t i = 0; i < entryCount; ++i) {
+                char chunkId[4]{};
+                int64_t chunkOff = 0, chunkSz = 0;
+                file.read(chunkId, 4);
+                file.read(reinterpret_cast<char*>(&chunkOff), 8);
+                file.read(reinterpret_cast<char*>(&chunkSz), 8);
+                if (std::memcmp(chunkId, "Info", 4) == 0) {
+                    infoOffset = chunkOff;
+                    infoSize = chunkSz;
+                    break;
+                }
+            }
+
+            if (infoOffset < 0 || infoSize <= 0 || static_cast<size_t>(infoOffset + infoSize) > fileSize) continue;
+            if (infoSize > 64 * 1024) continue; // Sanity: MetaInfo shouldn't be > 64KB
+
+            // Read the MetaInfo XML
+            std::string xml(static_cast<size_t>(infoSize), '\0');
+            file.seekg(infoOffset);
+            file.read(xml.data(), infoSize);
+
+            // Parse XML attributes with simple string matching
+            // Lines look like: <Attribute id="PlugInCategory" value="Fx|EQ" type="string" />
+            bool updated = false;
+
+            auto extractAttr = [&](const std::string& xmlStr, const std::string& attrId) -> std::string {
+                std::string needle = "id=\"" + attrId + "\"";
+                auto pos = xmlStr.find(needle);
+                if (pos == std::string::npos) return {};
+                auto valPos = xmlStr.find("value=\"", pos);
+                if (valPos == std::string::npos) return {};
+                valPos += 7; // skip 'value="'
+                auto endPos = xmlStr.find('"', valPos);
+                if (endPos == std::string::npos) return {};
+                return xmlStr.substr(valPos, endPos - valPos);
+            };
+
+            // Category: try PlugInCategory, then MusicalInstrument, then MusicalStyle
+            if (preset.category.empty()) {
+                auto cat = extractAttr(xml, "PlugInCategory");
+                if (cat.empty()) cat = extractAttr(xml, "MusicalInstrument");
+                if (cat.empty()) cat = extractAttr(xml, "MusicalStyle");
+                if (!cat.empty()) {
+                    preset.category = cat;
+                    updated = true;
+                }
+            }
+
+            // Author: no standard key, but some presets use "Author" or "PlugInName"
+            if (preset.creator.empty()) {
+                auto author = extractAttr(xml, "Author");
+                if (!author.empty()) {
+                    preset.creator = author;
+                    updated = true;
+                }
+            }
+
+            if (updated) ++enriched;
+
+        } catch (const std::exception& e) {
+            spdlog::debug("enrichPresetsFromFiles: error reading {}: {}", filePath, e.what());
+        }
+    }
+
+    spdlog::info("enrichPresetsFromFiles: enriched {} preset(s)", enriched);
+    if (enriched > 0) {
+        m_presetsEnriched.store(true, std::memory_order_release);
+    }
 }
 
 rps::ipc::LoadPresetResponse Vst3GuiHost::loadPreset(const std::string& presetId) {

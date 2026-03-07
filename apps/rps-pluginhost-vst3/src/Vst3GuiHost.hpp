@@ -3,6 +3,10 @@
 #include <rps/gui/IPluginGuiHost.hpp>
 #include <rps/gui/SdlWindow.hpp>
 
+#include <thread>
+#include <mutex>
+#include <atomic>
+
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -51,6 +55,12 @@ public:
     std::vector<rps::ipc::PresetInfo> getPresets() override;
     rps::ipc::LoadPresetResponse loadPreset(const std::string& presetId) override;
 
+    /// Returns true if the async MetaInfo enrichment has new data available.
+    bool hasEnrichedPresets() const override { return m_presetsEnriched.load(std::memory_order_relaxed); }
+
+    /// Returns the enriched preset list and clears the flag.
+    std::vector<rps::ipc::PresetInfo> getEnrichedPresets() override;
+
     /// Called by our IPlugFrame implementation when the plugin requests a resize.
     void onPluginRequestResize(Steinberg::ViewRect* newSize);
 
@@ -83,6 +93,12 @@ private:
 
     // Preset list (populated by getPresets)
     std::vector<rps::ipc::PresetInfo> m_presets;
+    std::mutex m_presetMutex;
+    std::atomic<bool> m_presetsEnriched{false};
+    std::thread m_presetEnrichThread;
+
+    /// Background: parse .vstpreset MetaInfo chunks and update m_presets.
+    void enrichPresetsFromFiles();
 
     void cleanup();
 };
