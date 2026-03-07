@@ -54,6 +54,10 @@ public:
                             const rps::v1::LoadPresetRequest* request,
                             rps::v1::LoadPresetResponse* response) override;
 
+    grpc::Status StreamAudio(grpc::ServerContext* context,
+                             grpc::ServerReaderWriter<rps::v1::AudioOutputBlock,
+                                                     rps::v1::AudioInputBlock>* stream) override;
+
     // Called by main to set the server pointer for shutdown
     void setServer(grpc::Server* server);
 

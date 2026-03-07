@@ -123,6 +123,28 @@ class RpsClient:
             rps_pb2.LoadPresetRequest(plugin_path=plugin_path, preset_id=preset_id)
         )
 
+    def stream_audio(self, plugin_path: str, input_blocks: Iterator):
+        """Open a bidirectional audio stream through a hosted plugin.
+
+        Args:
+            plugin_path: The plugin path (must have an active audio GUI session).
+            input_blocks: Iterator of raw audio block bytes (interleaved float32).
+
+        Returns:
+            Iterator of AudioOutputBlock messages from the server.
+        """
+        def _generate():
+            seq = 0
+            for block_bytes in input_blocks:
+                yield rps_pb2.AudioInputBlock(
+                    plugin_path=plugin_path if seq == 0 else "",
+                    audio_data=block_bytes,
+                    sequence=seq,
+                )
+                seq += 1
+
+        return self._stub.StreamAudio(_generate())
+
     def __enter__(self):
         self.connect()
         return self

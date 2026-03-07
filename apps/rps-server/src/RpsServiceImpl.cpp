@@ -3,6 +3,8 @@
 #include <rps/engine/db/DatabaseManager.hpp>
 #include <sqlite3.h>
 #include <spdlog/spdlog.h>
+#include <thread>
+#include <atomic>
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -264,5 +266,98 @@ grpc::Status RpsServiceImpl::LoadPreset(grpc::ServerContext* /*context*/,
     return grpc::Status::OK;
 }
 
-} // namespace rps::server
+grpc::Status RpsServiceImpl::StreamAudio(
+        grpc::ServerContext* /*context*/,
+        grpc::ServerReaderWriter<rps::v1::AudioOutputBlock,
+                                rps::v1::AudioInputBlock>* stream) {
+    // Read the first block to determine which session to route to
+    rps::v1::AudioInputBlock firstBlock;
+    if (!stream->Read(&firstBlock)) {
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                            "No audio blocks received");
+    }
 
+    const auto& pluginPath = firstBlock.plugin_path();
+    auto* ring = m_guiManager.getAudioRing(pluginPath);
+    if (!ring) {
+        return grpc::Status(grpc::StatusCode::NOT_FOUND,
+                            "No audio session for plugin: " + pluginPath);
+    }
+
+    spdlog::info("StreamAudio started for: {}", pluginPath);
+
+    const uint32_t blockBytes = ring->blockSizeBytes();
+    std::atomic<uint64_t> blocksWritten{0};
+    std::atomic<bool> inputComplete{false};
+    std::atomic<bool> clientDisconnected{false};
+
+    // Reader thread: polls the output ring and sends AudioOutputBlock to client.
+    // Keeps running until all expected output blocks have been sent.
+    std::thread readerThread([&]() {
+        uint64_t blocksSent = 0;
+        std::vector<float> buf(ring->header().blockSize * ring->header().numChannels);
+
+        while (!clientDisconnected.load(std::memory_order_relaxed)) {
+            // Check if we've sent all expected output
+            if (inputComplete.load(std::memory_order_relaxed) &&
+                blocksSent >= blocksWritten.load(std::memory_order_relaxed)) {
+                break;
+            }
+
+            if (ring->waitForOutput(std::chrono::milliseconds(50))) {
+                if (ring->readOutputBlock(buf.data())) {
+                    rps::v1::AudioOutputBlock outBlock;
+                    outBlock.set_audio_data(buf.data(), buf.size() * sizeof(float));
+                    outBlock.set_sequence(blocksSent);
+                    if (!stream->Write(outBlock)) {
+                        clientDisconnected.store(true, std::memory_order_relaxed);
+                        break;
+                    }
+                    ++blocksSent;
+                }
+            }
+        }
+
+        spdlog::info("StreamAudio reader: sent {} output blocks", blocksSent);
+    });
+
+    // Process the first block
+    uint64_t totalWritten = 0;
+    if (firstBlock.audio_data().size() == blockBytes) {
+        const auto* data = reinterpret_cast<const float*>(firstBlock.audio_data().data());
+        while (!ring->writeInputBlock(data)) {
+            std::this_thread::yield();
+        }
+        ++totalWritten;
+        blocksWritten.store(totalWritten, std::memory_order_relaxed);
+    }
+
+    // Main loop: read input blocks from client, write to shared memory ring
+    rps::v1::AudioInputBlock inBlock;
+    while (stream->Read(&inBlock)) {
+        if (inBlock.audio_data().size() != blockBytes) {
+            spdlog::warn("StreamAudio: wrong block size {} (expected {})",
+                         inBlock.audio_data().size(), blockBytes);
+            continue;
+        }
+        const auto* data = reinterpret_cast<const float*>(inBlock.audio_data().data());
+
+        // Spin-wait until input ring has space
+        while (!ring->writeInputBlock(data)) {
+            std::this_thread::yield();
+        }
+        ++totalWritten;
+        blocksWritten.store(totalWritten, std::memory_order_relaxed);
+    }
+
+    // Signal that all input has been sent — reader thread will drain remaining output
+    inputComplete.store(true, std::memory_order_relaxed);
+    spdlog::info("StreamAudio: all {} input blocks written, waiting for output drain", totalWritten);
+
+    readerThread.join();
+
+    spdlog::info("StreamAudio ended for: {}", pluginPath);
+    return grpc::Status::OK;
+}
+
+} // namespace rps::server

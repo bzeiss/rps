@@ -139,10 +139,10 @@ We have successfully completed **Phase 1 (IPC Foundation)**, **Phase 2 (Process 
   - `src/ClapGuiHost.cpp`: Implements `IPluginGuiHost` for CLAP plugins. Handles CLAP plugin loading, GUI embedding, parameter discovery, preset discovery/loading via the CLAP preset-load extension, and **audio processing** (audio port negotiation, activation, processing via `clap_plugin.process()`).
 
 #### Proto
-- `proto/rps.proto`: gRPC service and message definitions. `ScanEvent` is a `oneof` union mirroring all `ScanObserver` callbacks 1:1. `PluginEvent` is a `oneof` union for GUI hosting events (gui_opened, gui_closed, parameter_list, parameter_updates, preset_list, preset_loaded, audio_ready, gui_error). `OpenPluginGuiRequest` includes optional audio parameters (`enable_audio`, `sample_rate`, `block_size`, `num_channels`).
+- `proto/rps.proto`: gRPC service and message definitions. `ScanEvent` is a `oneof` union mirroring all `ScanObserver` callbacks 1:1. `PluginEvent` is a `oneof` union for GUI hosting events (gui_opened, gui_closed, parameter_list, parameter_updates, preset_list, preset_loaded, audio_ready, gui_error). `OpenPluginGuiRequest` includes optional audio parameters (`enable_audio`, `sample_rate`, `block_size`, `num_channels`). `StreamAudio` is a bidirectional streaming RPC that proxies `AudioInputBlock`/`AudioOutputBlock` messages through the server’s shared memory ring for network-transparent audio processing.
 
 #### Example Clients
-- `examples/python/`: Python TUI client using `rich` for per-worker progress bars. Features an interactive `open-gui` command with an `InquirerPy` fuzzy plugin selector (arrow keys, Page-Up/Down for 20-entry jumps, cursor position memory). Supports shared memory audio processing via `open-gui --audio` and the interactive `send-audio <file.wav>` command. Spawns/kills `rps-server` as a subprocess.
+- `examples/python/`: Python TUI client using `rich` for per-worker progress bars. Features an interactive `open-gui` command with an `InquirerPy` fuzzy plugin selector (arrow keys, Page-Up/Down for 20-entry jumps, cursor position memory). Supports audio processing via `open-gui --audio` with two paths: `send-audio <file.wav>` (local shared memory) and `send-audio-grpc <file.wav>` (bidirectional gRPC streaming). Spawns/kills `rps-server` as a subprocess.
 - `examples/cpp/`: C++ gRPC client with ANSI terminal TUI. Same features as the Python client: auto-spawns server, per-worker progress bars, streaming results.
 
 ### 3.2 The IPC Protocol Schema
@@ -264,7 +264,10 @@ The example Python client (`examples/python/`) demonstrates the full gRPC workfl
    - Fuzzy plugin selector using `InquirerPy` with arrow-key navigation, Page-Up/Page-Down (20-entry jumps), and cursor position memory between sessions.
    - Non-blocking command loop using `msvcrt.kbhit()` (Windows) / `select.select()` (Unix) so the CLI detects GUI closure within 200ms without requiring an Enter press.
    - Live parameter display, preset browsing/loading, state save/restore commands.
-   - **`--audio` flag**: When enabled, opens the plugin with a shared memory ring buffer. The `send-audio <file.wav>` interactive command reads a WAV file, sends blocks through the SPSC ring buffer, collects processed output, and writes it to `<name>_processed.wav`.
+   - **`--audio` flag**: When enabled, opens the plugin with a shared memory ring buffer. Two audio processing paths:
+     - `send-audio <file.wav>`: Writes blocks directly to the SPSC ring buffer (minimal latency, local only).
+     - `send-audio-grpc <file.wav>`: Streams blocks via the `StreamAudio` bidirectional gRPC RPC (network-transparent, adds gRPC roundtrip latency). The server proxies audio to/from the same ring buffer.
+   - Both paths collect processed output and write it to `<name>_processed.wav`.
    - `rps_audio.py`: Pure-Python shared memory client using `ctypes` kernel32 APIs (Windows) or `/dev/shm` (POSIX) to access the lock-free ring buffer. No external dependencies.
    - Re-selection loop: after closing a plugin GUI, the user returns to the selector to open another.
 5. **`generate_proto.py`**: Generates Python gRPC stubs and patches the broken absolute import (`import rps_pb2`) to a relative import (`from . import rps_pb2`).

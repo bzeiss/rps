@@ -366,9 +366,12 @@ Defined in `proto/rps.proto`:
 | `GetPluginState` | Unary            | Save the complete state of a running plugin as a binary blob            |
 | `SetPluginState` | Unary            | Restore a plugin's state from a previously saved blob                   |
 | `LoadPreset`     | Unary            | Load a preset by ID on a running plugin GUI                             |
+| `StreamAudio`    | Bidi streaming   | Stream audio blocks through a hosted plugin via gRPC (networked)        |
 | `Shutdown`       | Unary            | Graceful server shutdown                                                |
 
 `OpenPluginGui` accepts optional audio parameters (`enable_audio`, `sample_rate`, `block_size`, `num_channels`). When audio is enabled, the stream emits an `AudioReady` event containing the shared memory segment name for the ring buffer.
+
+`StreamAudio` is a bidirectional streaming RPC for network-transparent audio processing. The client sends `AudioInputBlock` messages (with raw float32 audio data), and the server returns processed `AudioOutputBlock` messages. Requires an active GUI session with audio enabled. Adds gRPC network latency compared to the local shared memory path.
 
 Only one scan at a time is allowed. `StartScan` returns `ALREADY_EXISTS` if a scan is in progress.
 
@@ -390,7 +393,7 @@ Each example client has its own README.md in its directory.
 
 ### Python TUI Client — Audio Processing
 
-The Python client supports sending audio through plugins via shared memory:
+The Python client supports sending audio through plugins via shared memory or gRPC:
 
 ```bash
 cd examples/python
@@ -398,8 +401,9 @@ cd examples/python
 # Open a plugin with audio processing enabled
 uv run python -m rps_client open-gui --format vst3 --audio
 
-# Inside the interactive session, process a WAV file:
-#   send-audio test.wav
+# Inside the interactive session:
+#   send-audio test.wav          — process via shared memory (low latency)
+#   send-audio-grpc test.wav     — process via gRPC stream (networked)
 # Output is written to test_processed.wav
 ```
 

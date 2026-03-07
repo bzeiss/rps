@@ -365,6 +365,100 @@ def _handle_send_audio(ring: AudioRing, filepath: str, con: Console) -> None:
     )
 
 
+def _handle_send_audio_grpc(
+    client: RpsClient, plugin_path: str, filepath: str, con: Console,
+    block_size: int, num_channels: int, sample_rate: int,
+) -> None:
+    """Process a WAV file through the plugin via gRPC bidirectional streaming."""
+    import os
+    import array
+    import time
+
+    if not os.path.isfile(filepath):
+        con.print(f"[red]✗ File not found:[/red] {filepath}")
+        return
+
+    # Read input WAV
+    try:
+        samples, wav_sr, wav_ch = read_wav(filepath)
+    except Exception as e:
+        con.print(f"[red]✗ Cannot read WAV:[/red] {e}")
+        return
+
+    n_samples = len(samples)
+    n_frames = n_samples // wav_ch
+    con.print(f"  Read {n_frames} frames, {wav_ch}ch, {wav_sr}Hz")
+
+    if wav_sr != sample_rate:
+        con.print(
+            f"  [yellow]⚠ Sample rate mismatch: WAV={wav_sr}Hz, "
+            f"session={sample_rate}Hz — proceeding anyway[/yellow]"
+        )
+
+    block_floats = block_size * num_channels
+    total_blocks = (n_samples + block_floats - 1) // block_floats
+    pad_len = total_blocks * block_floats - n_samples
+    if pad_len > 0:
+        samples.extend([0.0] * pad_len)
+
+    samples_bytes = samples.tobytes()
+    block_byte_size = block_floats * 4
+
+    con.print(f"  Processing {total_blocks} blocks via gRPC...")
+
+    # Generator that yields raw block bytes
+    def _block_iter():
+        for i in range(total_blocks):
+            start = i * block_byte_size
+            end = start + block_byte_size
+            yield samples_bytes[start:end]
+
+    # Use the bidirectional stream
+    t0 = time.perf_counter()
+    output_parts: list[bytes] = []
+    try:
+        for out_block in client.stream_audio(plugin_path, _block_iter()):
+            output_parts.append(out_block.audio_data)
+    except Exception as e:
+        con.print(f"[red]✗ gRPC stream error:[/red] {e}")
+        return
+
+    elapsed = time.perf_counter() - t0
+
+    if not output_parts:
+        con.print("[red]✗ No output received from plugin.[/red]")
+        return
+
+    # Reassemble output
+    output = array.array("f")
+    for part in output_parts:
+        chunk = array.array("f")
+        chunk.frombytes(part)
+        output.extend(chunk)
+
+    # Trim padding
+    if pad_len > 0:
+        output = output[: n_samples]
+
+    # Compute RMS
+    in_rms = rms_db(samples)
+    out_rms = rms_db(output)
+
+    con.print(
+        f"  [green]✓ Processed {len(output_parts)} blocks in {elapsed:.2f}s[/green] [dim](gRPC)[/dim]"
+    )
+    con.print(f"  Input  RMS: {in_rms}")
+    con.print(f"  Output RMS: {out_rms}")
+
+    # Write output WAV
+    from pathlib import Path
+    stem = Path(filepath).stem
+    out_path = str(Path(filepath).parent / f"{stem}_processed.wav")
+    write_wav(out_path, output, wav_sr, wav_ch)
+    con.print(
+        f"  [green]✓ Written {len(output) // wav_ch} frames → {out_path}[/green]"
+    )
+
 def run_open_gui(
     client: RpsClient, format_filter: str = "", enable_audio: bool = False,
     sample_rate: int = 48000, num_channels: int = 2, block_size: int = 128,
@@ -567,7 +661,8 @@ def run_open_gui(
                     console.print("  load-preset <#|name>  — Load a preset by index or name")
                     console.print("  params                — Print all parameters")
                     if enable_audio:
-                        console.print("  send-audio <file.wav> — Process a WAV file through the plugin")
+                        console.print("  send-audio <file.wav> — Process via shared memory (low latency)")
+                        console.print("  send-audio-grpc <file.wav> — Process via gRPC stream (networked)")
                     console.print("  quit                  — Close the GUI and exit")
 
                 elif cmd == "send-audio" and len(parts) == 2:
@@ -578,6 +673,19 @@ def run_open_gui(
                         )
                     else:
                         _handle_send_audio(audio_ring, parts[1], console)
+
+                elif cmd == "send-audio-grpc" and len(parts) == 2:
+                    if not enable_audio:
+                        console.print(
+                            "[red]✗ Audio not enabled.[/red] "
+                            "Use [bold]open-gui --audio[/bold] to enable."
+                        )
+                    else:
+                        _handle_send_audio_grpc(
+                            client, plugin_path, parts[1], console,
+                            block_size=block_size, num_channels=num_channels,
+                            sample_rate=sample_rate,
+                        )
 
                 else:
                     console.print(

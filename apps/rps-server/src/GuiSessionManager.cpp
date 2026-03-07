@@ -469,4 +469,11 @@ rps::ipc::LoadPresetResponse GuiSessionManager::loadPreset(const std::string& pl
     return {false, "Timeout waiting for preset load response"};
 }
 
+rps::audio::SharedAudioRing* GuiSessionManager::getAudioRing(const std::string& pluginPath) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto it = m_sessions.find(pluginPath);
+    if (it == m_sessions.end() || !it->second->audioRing) return nullptr;
+    return it->second->audioRing.get();
+}
+
 } // namespace rps::server

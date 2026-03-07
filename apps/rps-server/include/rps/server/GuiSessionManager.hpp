@@ -68,6 +68,10 @@ public:
     rps::ipc::LoadPresetResponse loadPreset(const std::string& pluginPath,
                                             const std::string& presetId);
 
+    /// Get the audio ring for a session (for gRPC streaming proxy).
+    /// Returns nullptr if no audio ring exists for this session.
+    rps::audio::SharedAudioRing* getAudioRing(const std::string& pluginPath);
+
 private:
     struct Session {
         std::string pluginPath;

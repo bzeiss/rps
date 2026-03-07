@@ -34,6 +34,11 @@ service RpsService {
 
   // Load a preset by its id within a running plugin GUI.
   rpc LoadPreset(LoadPresetRequest) returns (LoadPresetResponse);
+
+  // Bidirectional audio streaming through a hosted plugin.
+  // Requires an active GUI session with audio enabled (OpenPluginGui with enable_audio=true).
+  // Adds gRPC network latency compared to the local shared memory path.
+  rpc StreamAudio(stream AudioInputBlock) returns (stream AudioOutputBlock);
 }
 
 // ---------------------------------------------------------------------------
@@ -234,6 +239,21 @@ message AudioReady {
   uint32 num_channels = 4;
   uint32 ring_blocks = 5;
   uint32 latency_samples = 6;      // Plugin-reported latency (for future PDC)
+}
+
+// ---------------------------------------------------------------------------
+// gRPC Audio Streaming (network-transparent, higher latency than shared memory)
+// ---------------------------------------------------------------------------
+
+message AudioInputBlock {
+  string plugin_path = 1;          // Route to the correct GUI session
+  bytes audio_data = 2;            // Interleaved float32 samples (blockSize × numChannels × 4 bytes)
+  uint64 sequence = 3;             // Monotonic sequence number for ordering
+}
+
+message AudioOutputBlock {
+  bytes audio_data = 1;            // Processed interleaved float32 samples
+  uint64 sequence = 2;             // Echoed sequence number
 }
 
 message GuiOpened {
