@@ -393,8 +393,8 @@ rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::
 
     // 10. Create SDL3 window
     spdlog::info("  Step 7: Creating SDL3 window...");
-    m_window.create(m_pluginName, w, h, m_canResize, false /* no presets in phase 1 */);
-    spdlog::info("  SDL3 window created");
+    m_window.create(m_pluginName, w, h, m_canResize, true /* enable sidebar */);
+    spdlog::info("  SDL3 window created (sidebar enabled)");
 
 #ifdef _WIN32
     // Apply WS_CLIPCHILDREN to prevent drawing over plugin's child HWND during resize.
@@ -454,9 +454,30 @@ rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::
     }
 
     // 13. Initial child HWND positioning for sidebar
+    m_window.repositionChildHwnd(w, h);
 
+    // 14. Populate sidebar with presets
+    {
+        auto presets = getPresets();
+        if (!presets.empty()) {
+            m_window.setPresets(presets);
+            spdlog::info("  Sidebar: {} presets loaded", presets.size());
+        }
 
-    // 14. Activate the audio processor (AFTER view attachment)
+        // Wire preset selection callback
+        m_window.setPresetSelectedCallback([this](const std::string& presetId) {
+            spdlog::info("Sidebar: preset selected: {}", presetId);
+            auto resp = loadPreset(presetId);
+            if (resp.success) {
+                spdlog::info("Sidebar: preset loaded successfully");
+                m_cachedParams.clear();  // Force full re-poll
+            } else {
+                spdlog::warn("Sidebar: preset load failed: {}", resp.error);
+            }
+        });
+    }
+
+    // 15. Activate the audio processor (AFTER view attachment)
     //     Some plugins (e.g. UAD) tie their GUI state to the processing state.
     //     Done after view creation to avoid interfering with createView().
     {
