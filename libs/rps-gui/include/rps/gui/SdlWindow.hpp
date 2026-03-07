@@ -102,6 +102,7 @@ private:
     bool m_imguiInitialized = false;
     bool m_splitterDragging = false;
     bool m_inResizeRender = false;  // Re-entrancy guard for renderDuringResize
+    bool m_inProgrammaticResize = false; // Skip left-edge detection during sidebar toggle
     int m_prevWinX = 0;    // Track window X position for left-edge drag detection
     int m_prevWinW = 0;    // Track window width for left-edge drag detection
     std::vector<rps::ipc::PresetInfo> m_presets;

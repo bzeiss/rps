@@ -507,7 +507,7 @@ void SdlWindow::handleResize(uint32_t width, uint32_t height) {
     // If the right edge is fixed (X changed, width changed by opposite amount),
     // the user dragged the left edge.
     bool leftEdgeDragged = false;
-    if (m_sidebarEnabled && !m_sidebarCollapsed && m_prevWinW > 0) {
+    if (m_sidebarEnabled && !m_sidebarCollapsed && m_prevWinW > 0 && !m_inProgrammaticResize) {
         int xDelta = curX - m_prevWinX; // negative = dragged left (window grew)
         int wDelta = curW - m_prevWinW; // positive = window grew
 
@@ -597,12 +597,38 @@ void SdlWindow::toggleSidebar(bool collapse) {
     // Shift the window position so the plugin content stays in the same screen location
     int newWinX = winX - delta;
 
+    // CRITICAL: Update min/max constraints BEFORE resizing.
+    // setMinimumSize/setMaximumSize were called during plugin init with the old
+    // (collapsed) sidebar width baked in. If we don't adjust them, the OS will
+    // enforce the old max constraint and block the window from growing.
+    {
+        int curMinW = 0, curMinH = 0;
+        SDL_GetWindowMinimumSize(m_window, &curMinW, &curMinH);
+        if (curMinW > 0) {
+            SDL_SetWindowMinimumSize(m_window, curMinW + delta, curMinH);
+        }
+        int curMaxW = 0, curMaxH = 0;
+        SDL_GetWindowMaximumSize(m_window, &curMaxW, &curMaxH);
+        if (curMaxW > 0) {
+            SDL_SetWindowMaximumSize(m_window, curMaxW + delta, curMaxH);
+        }
+    }
+
+    // CRITICAL: Update tracking state BEFORE touching the window.
+    // SDL_SetWindowSize fires SDL_EVENT_WINDOW_RESIZED synchronously via our
+    // event watcher, which calls handleResize(). If m_prevWinX/m_prevWinW are
+    // stale, handleResize() falsely detects a left-edge drag and absorbs the
+    // sidebar width delta into m_sidebarWidth — shrinking the plugin area.
+    m_prevWinX = newWinX;
+    m_prevWinW = newWinW;
+
+    // Guard so handleResize() skips left-edge detection entirely during toggle
+    m_inProgrammaticResize = true;
+
     SDL_SetWindowPosition(m_window, newWinX, winY);
     SDL_SetWindowSize(m_window, newWinW, winH);
 
-    // Update tracking state BEFORE handleResize so it doesn't falsely detect left-edge drag
-    m_prevWinX = newWinX;
-    m_prevWinW = newWinW;
+    m_inProgrammaticResize = false;
 
     // Trigger resize callback so plugin host updates the child HWND X-offset
     // Plugin width stays the same: (winW + delta) - newEffective == winW - oldEffective
