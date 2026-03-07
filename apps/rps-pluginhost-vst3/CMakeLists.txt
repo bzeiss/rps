@@ -16,6 +16,8 @@ add_library(vst3-hosting-helpers OBJECT
     ${VST3_SDK_ROOT}/public.sdk/source/common/commonstringconvert.cpp
     ${VST3_SDK_ROOT}/public.sdk/source/common/commoniids.cpp
     ${VST3_SDK_ROOT}/public.sdk/source/common/memorystream.cpp
+    # Parameter changes support (for delivering changes to processor)
+    ${VST3_SDK_ROOT}/public.sdk/source/vst/hosting/parameterchanges.cpp
 )
 
 # Platform-specific module loader

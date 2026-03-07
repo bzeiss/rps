@@ -67,6 +67,8 @@ private:
 
     // Host state
     std::string m_pluginName;
+    std::string m_pluginVendor;
+    Steinberg::FUID m_componentFUID;
     bool m_canResize = false;
     bool m_inPluginResize = false;  // true during plugin-initiated resize (resizeView)
     bool m_inOnSize = false;        // prevents resizeView recursion from within onSize
@@ -78,6 +80,9 @@ private:
         double lastValue = 0.0; // Last known plain-scale value
     };
     std::vector<CachedParam> m_cachedParams;
+
+    // Preset list (populated by getPresets)
+    std::vector<rps::ipc::PresetInfo> m_presets;
 
     void cleanup();
 };

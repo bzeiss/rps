@@ -96,7 +96,15 @@ class PresetStore:
             })
 
     def find_by_query(self, query: str) -> dict | None:
-        """Find a preset by exact id or fuzzy name match."""
+        """Find a preset by numeric index, exact id, or fuzzy name match."""
+        # Numeric index match (the # column)
+        try:
+            idx = int(query)
+            for p in self.presets:
+                if p["index"] == idx:
+                    return p
+        except ValueError:
+            pass
         # Exact id match
         for p in self.presets:
             if p["id"] == query:
@@ -210,7 +218,7 @@ def run_open_gui(client: RpsClient, format_filter: str = "") -> None:
                     )
                     console.print(
                         "[dim]Commands: save-state <file>, load-state <file>, "
-                        "presets, load-preset <name>, params, help, quit[/dim]\n"
+                        "presets, load-preset <#|name>, params, help, quit[/dim]\n"
                     )
                 elif event.HasField("parameter_list"):
                     store.load_list(event.parameter_list)
@@ -347,7 +355,7 @@ def run_open_gui(client: RpsClient, format_filter: str = "") -> None:
                 console.print("  save-state <file>     — Save plugin state to file")
                 console.print("  load-state <file>     — Restore plugin state from file")
                 console.print("  presets               — List available presets")
-                console.print("  load-preset <name>    — Load a preset by name (fuzzy match)")
+                console.print("  load-preset <#|name>  — Load a preset by index or name")
                 console.print("  params                — Print all parameters")
                 console.print("  quit                  — Close the GUI and exit")
 
