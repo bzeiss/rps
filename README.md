@@ -9,9 +9,11 @@ RPS exposes a **gRPC API** so it can be driven from any language. Example client
 Scanning audio plugins is notoriously unreliable. Many plugins contain bugs, fail iLok license checks, or enter infinite loops during initialization. When a DAW or host application attempts to scan these plugins directly in its main process, a single bad plugin can crash the entire application.
 
 RPS solves this by using a **multi-process architecture**:
-- **`rps-server`**: A gRPC server that coordinates scanning. It manages a pool of worker processes, handles watchdogs/timeouts, streams progress events to clients, and aggregates results into a central SQLite database. If a plugin crashes, only the worker dies—the server logs the failure and moves on.
+- **`rps-server`**: A gRPC server that coordinates scanning and plugin GUI hosting. It manages a pool of worker processes, handles watchdogs/timeouts, streams progress events to clients, and aggregates results into a central SQLite database. If a plugin crashes, only the worker dies—the server logs the failure and moves on.
 - **`rps-standalone`**: A standalone CLI wrapper around the same scan engine (no server needed).
 - **`rps-pluginscanner`**: The worker. It isolates the unsafe, third-party plugin code from the rest of your system.
+- **`rps-pluginhost-vst3`**: An isolated GUI host process for VST3 plugins. Opens the plugin's native editor in an SDL3 window with an ImGui preset sidebar.
+- **`rps-pluginhost-clap`**: An isolated GUI host process for CLAP plugins, using the same SDL3/ImGui sidebar architecture.
 - **`examples/`**: Client examples.
 
 ## Project Goals
@@ -141,23 +143,26 @@ cmake --build build --config Release
 
 ### Build Output
 
-After a successful build, you will find five binaries in the `build/` directory:
+After a successful build, you will find the following binaries in the `build/` directory:
 - `build/apps/rps-standalone/rps-standalone` (or `.exe`) — standalone CLI
 - `build/apps/rps-pluginscanner/rps-pluginscanner` (or `.exe`) — scanner worker
 - `build/apps/rps-server/rps-server` (or `.exe`) — gRPC server
+- `build/apps/rps-pluginhost-vst3/rps-pluginhost-vst3` (or `.exe`) — VST3 GUI host worker
+- `build/apps/rps-pluginhost-clap/rps-pluginhost-clap` (or `.exe`) — CLAP GUI host worker
 - `build/apps/rps-vstscannermaster/vstscannermaster` (or `.exe`) — Steinberg-compatible VST3 cache generator
 - `build/examples/cpp/rps-example-client` (or `.exe`) — C++ gRPC example client
 
 Visual Studio adds an additional layer of subdirectories "Release" or "Debug".
 
-The dependant process `rps-pluginscanner` will be copied automatically to the example directories so that the standalone CLI, server, and vstscannermaster will find it.
+The dependant processes `rps-pluginscanner`, `rps-pluginhost-vst3`, and `rps-pluginhost-clap` will be copied automatically to the example directories.
 
 ## Usage
 
-RPS can be used in three ways:
+RPS can be used in four ways:
 1. **Standalone CLI** (`rps-standalone`) — run scans directly from the command line.
-2. **gRPC Server** (`rps-server`) — a long-lived daemon that accepts scan requests from any language client. See [gRPC Server](#grpc-server) and [Python TUI Client](#python-tui-client) below.
-3. **VST3 Scanner Master** (`vstscannermaster`) — drop-in replacement for Steinberg's `vstscannermaster.exe` that produces Cubase/Nuendo/Dorico-compatible XML cache files. See [VST3 Scanner Master](#vst3-scanner-master) below.
+2. **gRPC Server** (`rps-server`) — a long-lived daemon that accepts scan requests and plugin GUI hosting from any language client. See [gRPC Server](#grpc-server) and [Python TUI Client](#python-tui-client) below.
+3. **Plugin GUI Hosting** (`rps-pluginhost-vst3`, `rps-pluginhost-clap`) — isolated worker processes that open a plugin's native GUI in an SDL3 window with an ImGui preset browser sidebar. Driven via gRPC through `rps-server`.
+4. **VST3 Scanner Master** (`vstscannermaster`) — drop-in replacement for Steinberg's `vstscannermaster.exe` that produces Cubase/Nuendo/Dorico-compatible XML cache files. See [VST3 Scanner Master](#vst3-scanner-master) below.
 
 ### Standalone CLI
 
@@ -348,12 +353,18 @@ RPS Server Options:
 
 Defined in `proto/rps.proto`:
 
-| RPC         | Type             | Description                                                             |
-|-------------|------------------|-------------------------------------------------------------------------|
-| `StartScan` | Server streaming | Start a scan, returns a stream of `ScanEvent` messages until completion |
-| `StopScan`  | Unary            | Stop a running scan gracefully                                          |
-| `GetStatus` | Unary            | Query server state (idle/scanning), uptime, db path                     |
-| `Shutdown`  | Unary            | Graceful server shutdown                                                |
+| RPC              | Type             | Description                                                             |
+|------------------|------------------|-------------------------------------------------------------------------|
+| `StartScan`      | Server streaming | Start a scan, returns a stream of `ScanEvent` messages until completion |
+| `StopScan`       | Unary            | Stop a running scan gracefully                                          |
+| `GetStatus`      | Unary            | Query server state (idle/scanning), uptime, db path                     |
+| `ListPlugins`    | Unary            | List all scanned plugins from the database                              |
+| `OpenPluginGui`  | Server streaming | Open a plugin GUI, returns a stream of GUI events (params, presets)     |
+| `ClosePluginGui` | Unary            | Close a running plugin GUI                                              |
+| `GetPluginState` | Unary            | Save the complete state of a running plugin as a binary blob            |
+| `SetPluginState` | Unary            | Restore a plugin's state from a previously saved blob                   |
+| `LoadPreset`     | Unary            | Load a preset by ID on a running plugin GUI                             |
+| `Shutdown`       | Unary            | Graceful server shutdown                                                |
 
 Only one scan at a time is allowed. `StartScan` returns `ALREADY_EXISTS` if a scan is in progress.
 

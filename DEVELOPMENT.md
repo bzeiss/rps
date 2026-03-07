@@ -33,6 +33,19 @@ RPS solves this problem by using a strict **multi-process architecture**:
    - It connects to the engine via IPC (Inter-Process Communication), receives a `ScanRequest`, and loads a single target plugin into its own memory space.
    - It extracts the necessary metadata (name, parameters, inputs/outputs) and reports it back via `ProgressEvent` and `ScanResult` messages.
 
+6. **`rps-pluginhost-vst3`** (VST3 GUI Host Worker)
+   - An isolated process that loads a VST3 plugin, creates an SDL3 window, and embeds the plugin's native editor view.
+   - Features an ImGui preset browser sidebar (collapsible, searchable, multi-column table).
+   - Discovers presets from `IUnitInfo` (`IProgramListData`) and `.vstpreset` file scanning across standard directories (`%APPDATA%/VST3 Presets/`, `Documents/VST3 Presets/`, `%COMMONPROGRAMFILES%/VST3 Presets/`) with vendor-agnostic matching.
+   - Loads presets via `IUnitInfo` + minimal audio process pass, or `.vstpreset` file parsing (inline binary parser for component/controller state chunks).
+   - Communicates with the server via the same IPC message queues.
+
+7. **`rps-pluginhost-clap`** (CLAP GUI Host Worker)
+   - An isolated process that loads a CLAP plugin, creates an SDL3 window, and embeds the plugin's native editor view.
+   - Same ImGui preset sidebar architecture as the VST3 host.
+   - Discovers and loads presets via the CLAP preset-load extension.
+   - Communicates with the server via IPC message queues.
+
 ---
 
 ## 2. Technology Stack & Constraints
@@ -49,6 +62,8 @@ We adhere to a set of strict constraints to ensure maximum compatibility, adopti
   - **gRPC / Protobuf** (for the `rps-server` API layer).
   - **spdlog** (structured logging for `rps-server`).
   - Plugin SDK Headers (VST3, CLAP, LV2, AU, AAX, and optionally VST2.4).
+  - **SDL3** (for plugin GUI hosting windows).
+  - **Dear ImGui** (for the preset browser sidebar UI).
   - No other third-party frameworks (e.g., JUCE, nlohmann/json) are permitted in the core engine.
 
 ### 2.1 Dependency Management
@@ -89,7 +104,7 @@ We have successfully completed **Phase 1 (IPC Foundation)**, **Phase 2 (Process 
 
 #### Libraries
 - `libs/rps-core/`: Format traits, registry, and filesystem discovery logic.
-- `libs/rps-ipc/`: Shared IPC transport layer and JSON serialization logic (engine ↔ scanner).
+- `libs/rps-ipc/`: Shared IPC transport layer and JSON serialization logic (engine ↔ scanner/host).
 - `libs/rps-engine/`: **The reusable scan engine library** (namespace `rps::engine`). Contains all orchestration logic extracted from the original CLI app:
   - `ScanEngine.hpp/.cpp`: Top-level `ScanEngine` class with `runScan(ScanConfig, ScanObserver*)`. Thread-safe (one scan at a time).
   - `ScanConfig`: Struct encapsulating all scan parameters (formats, mode, jobs, timeout, etc.).
@@ -97,6 +112,10 @@ We have successfully completed **Phase 1 (IPC Foundation)**, **Phase 2 (Process 
   - `ScanObserver.hpp`: Abstract observer interface for scan progress events.
   - `ConsoleScanObserver.hpp/.cpp`: Console-based observer for CLI use.
   - `db/DatabaseManager.hpp/.cpp`: SQLite database layer — schema, upserts, incremental cache, skipped/blocked management.
+- `libs/rps-gui/`: **Shared GUI hosting library** used by both plugin host processes:
+  - `IPluginGuiHost.hpp`: Abstract interface for format-specific GUI hosts (open, event loop, params, state, presets).
+  - `SdlWindow.hpp/.cpp`: SDL3 window management with Dear ImGui integration. Implements the collapsible preset browser sidebar (search filter, multi-column sortable table), "Stationary Content" window expansion pattern, and child HWND positioning to solve the Windows Airspace Problem.
+  - `GuiWorkerMain.hpp/.cpp`: Common IPC event loop for host worker processes (receives commands from the server, dispatches to `IPluginGuiHost`).
 
 #### Applications
 - `apps/rps-standalone/`: Standalone CLI wrapper. A thin `main.cpp` (~100 lines) that parses CLI args into `ScanConfig` and calls `ScanEngine::runScan()`.
@@ -105,16 +124,23 @@ We have successfully completed **Phase 1 (IPC Foundation)**, **Phase 2 (Process 
   - `src/scanners/ClapScanner.cpp`: CLAP scanning via the CLAP C API.
   - `src/scanners/Vst2Scanner.cpp`: VST2 scanning (compile-time opt-in).
   - `src/scanners/AaxScanner.cpp`: AAX scanning via Pro Tools cache file parsing.
-- `apps/rps-server/`: **gRPC server** exposing the scan engine to any language.
-  - `src/RpsServiceImpl.cpp`: Implements the `RpsService` gRPC service (StartScan, StopScan, GetStatus, Shutdown).
+- `apps/rps-server/`: **gRPC server** exposing the scan engine and GUI hosting to any language.
+  - `src/RpsServiceImpl.cpp`: Implements the `RpsService` gRPC service (StartScan, StopScan, GetStatus, Shutdown, OpenPluginGui, ClosePluginGui, ListPlugins, GetPluginState, SetPluginState, LoadPreset).
   - `src/GrpcScanObserver.cpp`: Implements `ScanObserver`, serializes events into protobuf `ScanEvent` messages and writes them to a `grpc::ServerWriter`.
+  - `src/GuiSessionManager.cpp`: Manages active plugin GUI sessions. Spawns the appropriate host worker process (`rps-pluginhost-vst3` or `rps-pluginhost-clap`), establishes IPC, and relays events between the gRPC stream and the host worker.
   - Uses `spdlog` for dual-sink logging (stdout + file).
 
+- `apps/rps-pluginhost-vst3/`: **VST3 GUI host worker** process.
+  - `src/Vst3GuiHost.cpp`: Implements `IPluginGuiHost` for VST3 plugins. Handles COM module loading, `IComponent`/`IEditController` setup, `IPlugView` embedding in the SDL3 window, parameter discovery, preset discovery (via `IUnitInfo` and `.vstpreset` file scanning), and preset loading (via `IProgramListData`, audio process pass, or file-based state restore).
+
+- `apps/rps-pluginhost-clap/`: **CLAP GUI host worker** process.
+  - `src/ClapGuiHost.cpp`: Implements `IPluginGuiHost` for CLAP plugins. Handles CLAP plugin loading, GUI embedding, parameter discovery, and preset discovery/loading via the CLAP preset-load extension.
+
 #### Proto
-- `proto/rps.proto`: gRPC service and message definitions. `ScanEvent` is a `oneof` union mirroring all `ScanObserver` callbacks 1:1.
+- `proto/rps.proto`: gRPC service and message definitions. `ScanEvent` is a `oneof` union mirroring all `ScanObserver` callbacks 1:1. Also defines `GuiEvent` messages for the GUI hosting stream (gui_opened, gui_closed, parameter_list, parameter_updates, preset_list, preset_loaded, gui_error).
 
 #### Example Clients
-- `examples/python/`: Python TUI client using `rich` for per-worker progress bars. Spawns/kills `rps-server` as a subprocess.
+- `examples/python/`: Python TUI client using `rich` for per-worker progress bars. Features an interactive `open-gui` command with an `InquirerPy` fuzzy plugin selector (arrow keys, Page-Up/Down for 20-entry jumps, cursor position memory). Spawns/kills `rps-server` as a subprocess.
 - `examples/cpp/`: C++ gRPC client with ANSI terminal TUI. Same features as the Python client: auto-spawns server, per-worker progress bars, streaming results.
 
 ### 3.2 The IPC Protocol Schema
@@ -232,9 +258,14 @@ The example Python client (`examples/python/`) demonstrates the full gRPC workfl
    - Overall progress bar with spinner, percentage, elapsed time, and live counters.
    - Per-worker status table with individual progress bars.
    - Scrolling log of recent scan results (success/fail/crash/timeout/skip).
-4. **`generate_proto.py`**: Generates Python gRPC stubs and patches the broken absolute import (`import rps_pb2`) to a relative import (`from . import rps_pb2`).
+4. **`open-gui` Command**: Interactive plugin GUI browser driven via gRPC:
+   - Fuzzy plugin selector using `InquirerPy` with arrow-key navigation, Page-Up/Page-Down (20-entry jumps), and cursor position memory between sessions.
+   - Non-blocking command loop using `msvcrt.kbhit()` (Windows) / `select.select()` (Unix) so the CLI detects GUI closure within 200ms without requiring an Enter press.
+   - Live parameter display, preset browsing/loading, state save/restore commands.
+   - Re-selection loop: after closing a plugin GUI, the user returns to the selector to open another.
+5. **`generate_proto.py`**: Generates Python gRPC stubs and patches the broken absolute import (`import rps_pb2`) to a relative import (`from . import rps_pb2`).
 
-Dependencies: `grpcio`, `grpcio-tools`, `rich`, `click` (see `examples/python/pyproject.toml`).
+Dependencies: `grpcio`, `grpcio-tools`, `rich`, `click`, `InquirerPy` (see `examples/python/pyproject.toml`).
 
 ---
 
@@ -243,7 +274,7 @@ Dependencies: `grpcio`, `grpcio-tools`, `rich`, `click` (see `examples/python/py
 The immediate next goals are:
 1. **OS-Specific Formats**: Implement scanners for **AU** (macOS via CoreAudio) and **LV2** (Linux/Windows).
 2. **Vendor SQLite**: Bundle the SQLite amalgamation to remove the system dependency.
-3. **Extended Metadata**: Store additional plugin details (e.g., bus arrangements, preset lists) if exposed by the SDKs.
-4. **C++ Example Client**: Add a C++ gRPC client in `examples/cpp/`.
-5. **Scan Cancellation**: Implement a cancellation flag in `ScanEngine`/`ProcessPool` for the `StopScan` RPC.
+3. **Extended Metadata**: Store additional plugin details (e.g., bus arrangements) if exposed by the SDKs.
+4. **Audio Processing**: Add real-time audio streaming to hosted plugin GUIs via shared memory ring buffers.
+5. **Plugin Chains**: Support hosting entire effects chains (e.g., EQ → Compressor) within a single worker process.
 6. **Authentication**: Optional TLS/token auth for remote gRPC connections.
