@@ -163,7 +163,7 @@ RPS can be used in five ways:
 1. **Standalone CLI** (`rps-standalone`) — run scans directly from the command line.
 2. **gRPC Server** (`rps-server`) — a long-lived daemon that accepts scan requests and plugin GUI hosting from any language client. See [gRPC Server](#grpc-server) and [Python TUI Client](#python-tui-client) below.
 3. **Plugin GUI Hosting** (`rps-pluginhost-vst3`, `rps-pluginhost-clap`) — isolated worker processes that open a plugin's native GUI in an SDL3 window with an ImGui preset browser sidebar. Driven via gRPC through `rps-server`.
-4. **Audio Processing** — send audio through hosted plugins via shared memory ring buffers. Use `open-gui --audio` in the Python client to enable audio, then `send-audio <file.wav>` to process a WAV file.
+4. **Audio Processing** — send audio through hosted plugins via shared memory ring buffers. Use `open-gui --audio` in the Python client to enable audio, then `send-audio <file.wav>` to process a WAV file. For real-time playback through an audio device, use `open-gui --audio --audio-device sdl3`, then `play-audio <file.wav>` or `play-audio-looped <file.wav>`.
 5. **VST3 Scanner Master** (`vstscannermaster`) — drop-in replacement for Steinberg's `vstscannermaster.exe` that produces Cubase/Nuendo/Dorico-compatible XML cache files. See [VST3 Scanner Master](#vst3-scanner-master) below.
 
 ### Standalone CLI
@@ -398,19 +398,27 @@ The Python client supports sending audio through plugins via shared memory or gR
 ```bash
 cd examples/python
 
-# Open a plugin with audio processing enabled
+# Open a plugin with audio processing enabled (file-based: writes output WAV)
 uv run python -m rps_client open-gui --format vst3 --audio
 
 # Inside the interactive session:
 #   send-audio test.wav          — process via shared memory (low latency)
 #   send-audio-grpc test.wav     — process via gRPC stream (networked)
 # Output is written to test_processed.wav
+
+# Open a plugin with real-time audio device playback
+uv run python -m rps_client open-gui --format vst3 --audio --audio-device sdl3 -bs 512
+
+# Inside the interactive session:
+#   play-audio test.wav          — real-time playback through audio device
+#   play-audio-looped test.wav   — looped playback (Enter/Esc to stop)
 ```
 
 Audio options for `open-gui`:
 | Option | Default | Description |
 |---|---|---|
 | `--audio` | off | Enable shared memory audio transport |
+| `--audio-device` | none | Audio output device (`sdl3` for real-time playback) |
 | `--sample-rate` / `-sr` | 48000 | Audio sample rate (match your WAV) |
 | `--channels` / `-ch` | 2 | Channel count |
 | `--block-size` / `-bs` | 128 | Processing block size in samples |

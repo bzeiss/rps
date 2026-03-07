@@ -133,16 +133,16 @@ We have successfully completed **Phase 1 (IPC Foundation)**, **Phase 2 (Process 
   - Uses `spdlog` for dual-sink logging (stdout + file).
 
 - `apps/rps-pluginhost-vst3/`: **VST3 GUI host worker** process.
-  - `src/Vst3GuiHost.cpp`: Implements `IPluginGuiHost` for VST3 plugins. Handles COM module loading, `IComponent`/`IEditController` setup, `IPlugView` embedding in the SDL3 window, parameter discovery, preset discovery (via `IUnitInfo` and `.vstpreset` file scanning), preset loading, and **audio processing** (bus negotiation, de-interleaving/re-interleaving, `IAudioProcessor` calls).
+  - `src/Vst3GuiHost.cpp`: Implements `IPluginGuiHost` for VST3 plugins. Handles COM module loading, `IComponent`/`IEditController` setup, `IPlugView` embedding in the SDL3 window, parameter discovery, preset discovery (via `IUnitInfo` and `.vstpreset` file scanning), preset loading, and **audio processing** (multi-bus negotiation with sidechain support via `activateBus`/`setBusArrangements`, de-interleaving/re-interleaving, `IAudioProcessor` calls with proper `ProcessContext` transport state, `ParameterChanges`, and `ConnectionProxy` message forwarding between component and controller for FabFilter-style real-time metering).
 
 - `apps/rps-pluginhost-clap/`: **CLAP GUI host worker** process.
-  - `src/ClapGuiHost.cpp`: Implements `IPluginGuiHost` for CLAP plugins. Handles CLAP plugin loading, GUI embedding, parameter discovery, preset discovery/loading via the CLAP preset-load extension, and **audio processing** (audio port negotiation, activation, processing via `clap_plugin.process()`).
+  - `src/ClapGuiHost.cpp`: Implements `IPluginGuiHost` for CLAP plugins. Handles CLAP plugin loading, GUI embedding, parameter discovery, preset discovery/loading via the CLAP preset-load extension, host extension stubs (`clap.params`, `clap.latency`, `clap.state`) to prevent crashes in plugins that cache extension pointers, and **audio processing** (multi-port audio with sidechain support, activation, processing via `clap_plugin.process()`).
 
 #### Proto
 - `proto/rps.proto`: gRPC service and message definitions. `ScanEvent` is a `oneof` union mirroring all `ScanObserver` callbacks 1:1. `PluginEvent` is a `oneof` union for GUI hosting events (gui_opened, gui_closed, parameter_list, parameter_updates, preset_list, preset_loaded, audio_ready, gui_error). `OpenPluginGuiRequest` includes optional audio parameters (`enable_audio`, `sample_rate`, `block_size`, `num_channels`). `StreamAudio` is a bidirectional streaming RPC that proxies `AudioInputBlock`/`AudioOutputBlock` messages through the server’s shared memory ring for network-transparent audio processing.
 
 #### Example Clients
-- `examples/python/`: Python TUI client using `rich` for per-worker progress bars. Features an interactive `open-gui` command with an `InquirerPy` fuzzy plugin selector (arrow keys, Page-Up/Down for 20-entry jumps, cursor position memory). Supports audio processing via `open-gui --audio` with two paths: `send-audio <file.wav>` (local shared memory) and `send-audio-grpc <file.wav>` (bidirectional gRPC streaming). Spawns/kills `rps-server` as a subprocess.
+- `examples/python/`: Python TUI client using `rich` for per-worker progress bars. Features an interactive `open-gui` command with an `InquirerPy` fuzzy plugin selector (arrow keys, Page-Up/Down for 20-entry jumps, cursor position memory). Supports audio processing via `open-gui --audio` with two paths: `send-audio <file.wav>` (local shared memory) and `send-audio-grpc <file.wav>` (bidirectional gRPC streaming). Real-time audio device playback via `--audio-device sdl3` with `play-audio <file.wav>` and `play-audio-looped <file.wav>` (looped playback, Enter/Esc to stop). Spawns/kills `rps-server` as a subprocess.
 - `examples/cpp/`: C++ gRPC client with ANSI terminal TUI. Same features as the Python client: auto-spawns server, per-worker progress bars, streaming results.
 
 ### 3.2 The IPC Protocol Schema
@@ -285,5 +285,4 @@ The immediate next goals are:
 4. **Multi-Channel Audio**: Extend the shared memory ring buffer to support flexible bus layouts (mono/stereo/surround/Atmos), per-channel routing, and bus layout negotiation.
 5. **Plugin Chains**: Support hosting entire effects chains (e.g., EQ → Compressor) within a single worker process, with chain splitters for parallel processing and per-plugin routing.
 6. **Delay Compensation**: Implement plugin delay compensation (PDC) across chains using reported latency values.
-7. **Audio Device Output**: Connect processed audio to real-time audio output devices (WASAPI, CoreAudio, ALSA/PipeWire).
-8. **Authentication**: Optional TLS/token auth for remote gRPC connections.
+7. **Authentication**: Optional TLS/token auth for remote gRPC connections.
