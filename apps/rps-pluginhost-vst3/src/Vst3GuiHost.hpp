@@ -121,6 +121,15 @@ private:
     std::vector<std::vector<float>> m_outputChannelBuffers;
     std::vector<float*> m_inputPtrs;   // Pointers into m_inputChannelBuffers
     std::vector<float*> m_outputPtrs;  // Pointers into m_outputChannelBuffers
+    double m_sampleRate = 48000.0;
+
+    // Multi-bus support (e.g., sidechain)
+    uint32_t m_numInputBuses = 1;
+    uint32_t m_numOutputBuses = 1;
+    std::vector<std::vector<std::vector<float>>> m_extraInputBuses;
+    std::vector<std::vector<float*>> m_extraInputBusPtrs;
+    std::vector<std::vector<std::vector<float>>> m_extraOutputBuses;
+    std::vector<std::vector<float*>> m_extraOutputBusPtrs;
 
     void cleanup();
 };

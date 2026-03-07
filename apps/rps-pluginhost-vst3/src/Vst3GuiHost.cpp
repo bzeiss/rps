@@ -146,35 +146,89 @@ std::optional<rps::gui::AudioBusLayout> Vst3GuiHost::setupAudioProcessing(
         return std::nullopt;
     }
 
-    // 2. Bus layout negotiation
-    // Map numChannels to a speaker arrangement
+    // 2. Enumerate all audio buses
+    int32_t numInputBuses = m_component->getBusCount(kAudio, kInput);
+    int32_t numOutputBuses = m_component->getBusCount(kAudio, kOutput);
+    spdlog::info("  Audio buses: {} input, {} output", numInputBuses, numOutputBuses);
+
+    m_numInputBuses = static_cast<uint32_t>(std::max(numInputBuses, int32_t(1)));
+    m_numOutputBuses = static_cast<uint32_t>(std::max(numOutputBuses, int32_t(1)));
+
+    // Helper for narrowing char16_t bus names to std::string
+    auto narrowName = [](const Steinberg::Vst::TChar* name) -> std::string {
+        std::string out;
+        for (size_t i = 0; name[i]; ++i)
+            out += static_cast<char>(name[i] < 128 ? name[i] : '?');
+        return out;
+    };
+
+    // Log all buses
+    for (int32_t i = 0; i < numInputBuses; ++i) {
+        BusInfo bi{};
+        if (m_component->getBusInfo(kAudio, kInput, i, bi) == kResultOk) {
+            spdlog::info("  Input bus [{}] '{}': {} ch, type={}, flags={}",
+                         i, narrowName(bi.name),
+                         bi.channelCount,
+                         bi.busType == kMain ? "main" : "aux",
+                         bi.flags);
+        }
+    }
+    for (int32_t i = 0; i < numOutputBuses; ++i) {
+        BusInfo bi{};
+        if (m_component->getBusInfo(kAudio, kOutput, i, bi) == kResultOk) {
+            spdlog::info("  Output bus [{}] '{}': {} ch, type={}, flags={}",
+                         i, narrowName(bi.name),
+                         bi.channelCount,
+                         bi.busType == kMain ? "main" : "aux",
+                         bi.flags);
+        }
+    }
+
+    // Activate ALL buses (sidechain buses start deactivated by default)
+    for (int32_t i = 0; i < numInputBuses; ++i)
+        m_component->activateBus(kAudio, kInput, i, true);
+    for (int32_t i = 0; i < numOutputBuses; ++i)
+        m_component->activateBus(kAudio, kOutput, i, true);
+
+    // Bus layout negotiation — provide arrangements for ALL buses
     auto channelsToArr = [](uint32_t ch) -> SpeakerArrangement {
         switch (ch) {
             case 1: return SpeakerArr::kMono;
             case 2: return SpeakerArr::kStereo;
-            default: return SpeakerArr::kStereo;  // Fallback to stereo
+            default: return SpeakerArr::kStereo;
         }
     };
 
-    SpeakerArrangement requestedArr = channelsToArr(numChannels);
-    SpeakerArrangement inputArr = requestedArr;
-    SpeakerArrangement outputArr = requestedArr;
-
-    // Try to set the requested arrangement
-    auto result = m_processor->setBusArrangements(&inputArr, 1, &outputArr, 1);
-    if (result != kResultOk && result != kResultTrue) {
-        spdlog::warn("  setBusArrangements rejected (result={}), querying plugin's preferred layout",
-                     result);
-        // Query what the plugin actually supports
-        m_processor->getBusArrangement(kInput, 0, inputArr);
-        m_processor->getBusArrangement(kOutput, 0, outputArr);
-        spdlog::info("  Plugin prefers: input={} speakers, output={} speakers",
-                     SpeakerArr::getChannelCount(inputArr),
-                     SpeakerArr::getChannelCount(outputArr));
+    std::vector<SpeakerArrangement> inputArrs(m_numInputBuses);
+    std::vector<SpeakerArrangement> outputArrs(m_numOutputBuses);
+    for (uint32_t i = 0; i < m_numInputBuses; ++i) {
+        BusInfo bi{};
+        if (m_component->getBusInfo(kAudio, kInput, i, bi) == kResultOk)
+            inputArrs[i] = channelsToArr(bi.channelCount);
+        else
+            inputArrs[i] = channelsToArr(numChannels);
+    }
+    for (uint32_t i = 0; i < m_numOutputBuses; ++i) {
+        BusInfo bi{};
+        if (m_component->getBusInfo(kAudio, kOutput, i, bi) == kResultOk)
+            outputArrs[i] = channelsToArr(bi.channelCount);
+        else
+            outputArrs[i] = channelsToArr(numChannels);
     }
 
-    uint32_t inCh = static_cast<uint32_t>(SpeakerArr::getChannelCount(inputArr));
-    uint32_t outCh = static_cast<uint32_t>(SpeakerArr::getChannelCount(outputArr));
+    auto result = m_processor->setBusArrangements(
+        inputArrs.data(), m_numInputBuses,
+        outputArrs.data(), m_numOutputBuses);
+    if (result != kResultOk && result != kResultTrue) {
+        spdlog::warn("  setBusArrangements rejected (result={}), querying preferred", result);
+        for (uint32_t i = 0; i < m_numInputBuses; ++i)
+            m_processor->getBusArrangement(kInput, i, inputArrs[i]);
+        for (uint32_t i = 0; i < m_numOutputBuses; ++i)
+            m_processor->getBusArrangement(kOutput, i, outputArrs[i]);
+    }
+
+    uint32_t inCh = static_cast<uint32_t>(SpeakerArr::getChannelCount(inputArrs[0]));
+    uint32_t outCh = static_cast<uint32_t>(SpeakerArr::getChannelCount(outputArrs[0]));
 
     // 3. Setup processing
     ProcessSetup setup{};
@@ -200,13 +254,13 @@ std::optional<rps::gui::AudioBusLayout> Vst3GuiHost::setupAudioProcessing(
     result = m_processor->setProcessing(true);
     if (result != kResultOk && result != kResultTrue) {
         spdlog::warn("  setProcessing(true) returned {} (non-fatal for some plugins)", result);
-        // Some plugins return kNotImplemented — continue anyway
     }
 
-    // 6. Allocate de-interleaved channel buffers
+    // 6. Allocate de-interleaved channel buffers for main bus
     m_audioInputChannels = inCh;
     m_audioOutputChannels = outCh;
     m_audioBlockSize = blockSize;
+    m_sampleRate = static_cast<double>(sampleRate);
 
     m_inputChannelBuffers.resize(inCh);
     m_inputPtrs.resize(inCh);
@@ -222,10 +276,34 @@ std::optional<rps::gui::AudioBusLayout> Vst3GuiHost::setupAudioProcessing(
         m_outputPtrs[c] = m_outputChannelBuffers[c].data();
     }
 
+    // 7. Allocate silent buffers for extra buses (sidechain etc.)
+    m_extraInputBuses.clear();
+    m_extraInputBusPtrs.clear();
+    for (uint32_t b = 1; b < m_numInputBuses; ++b) {
+        uint32_t ch = static_cast<uint32_t>(SpeakerArr::getChannelCount(inputArrs[b]));
+        std::vector<std::vector<float>> bufs(ch, std::vector<float>(blockSize, 0.0f));
+        std::vector<float*> ptrs(ch);
+        for (uint32_t c = 0; c < ch; ++c)
+            ptrs[c] = bufs[c].data();
+        m_extraInputBuses.push_back(std::move(bufs));
+        m_extraInputBusPtrs.push_back(std::move(ptrs));
+    }
+    m_extraOutputBuses.clear();
+    m_extraOutputBusPtrs.clear();
+    for (uint32_t b = 1; b < m_numOutputBuses; ++b) {
+        uint32_t ch = static_cast<uint32_t>(SpeakerArr::getChannelCount(outputArrs[b]));
+        std::vector<std::vector<float>> bufs(ch, std::vector<float>(blockSize, 0.0f));
+        std::vector<float*> ptrs(ch);
+        for (uint32_t c = 0; c < ch; ++c)
+            ptrs[c] = bufs[c].data();
+        m_extraOutputBuses.push_back(std::move(bufs));
+        m_extraOutputBusPtrs.push_back(std::move(ptrs));
+    }
+
     m_audioActive = true;
 
-    spdlog::info("  Audio processing active: {} in → {} out, bs={}, sr={}",
-                 inCh, outCh, blockSize, sampleRate);
+    spdlog::info("  Audio processing active: {} in → {} out, bs={}, sr={}, inBuses={}, outBuses={}",
+                 inCh, outCh, blockSize, sampleRate, m_numInputBuses, m_numOutputBuses);
 
     return rps::gui::AudioBusLayout{inCh, outCh};
 }
@@ -250,43 +328,102 @@ bool Vst3GuiHost::processAudioBlock(
                   m_outputChannelBuffers[c].begin() + numSamples, 0.0f);
     }
 
-    // 2. Set up AudioBusBuffers
-    AudioBusBuffers inputBus{};
-    inputBus.numChannels = static_cast<int32>(numInputChannels);
-    inputBus.channelBuffers32 = m_inputPtrs.data();
-    inputBus.silenceFlags = 0;
+    // 2. Set up AudioBusBuffers for ALL buses
+    std::vector<AudioBusBuffers> inputBuses(m_numInputBuses);
+    inputBuses[0] = {};
+    inputBuses[0].numChannels = static_cast<int32>(numInputChannels);
+    inputBuses[0].channelBuffers32 = m_inputPtrs.data();
+    inputBuses[0].silenceFlags = 0;
+    for (uint32_t b = 1; b < m_numInputBuses; ++b) {
+        inputBuses[b] = {};
+        inputBuses[b].numChannels = static_cast<int32>(m_extraInputBusPtrs[b - 1].size());
+        inputBuses[b].channelBuffers32 = m_extraInputBusPtrs[b - 1].data();
+        inputBuses[b].silenceFlags = ~uint64_t(0); // all channels silent
+    }
 
-    AudioBusBuffers outputBus{};
-    outputBus.numChannels = static_cast<int32>(numOutputChannels);
-    outputBus.channelBuffers32 = m_outputPtrs.data();
-    outputBus.silenceFlags = 0;
+    std::vector<AudioBusBuffers> outputBuses(m_numOutputBuses);
+    outputBuses[0] = {};
+    outputBuses[0].numChannels = static_cast<int32>(numOutputChannels);
+    outputBuses[0].channelBuffers32 = m_outputPtrs.data();
+    outputBuses[0].silenceFlags = 0;
+    for (uint32_t b = 1; b < m_numOutputBuses; ++b) {
+        outputBuses[b] = {};
+        outputBuses[b].numChannels = static_cast<int32>(m_extraOutputBusPtrs[b - 1].size());
+        outputBuses[b].channelBuffers32 = m_extraOutputBusPtrs[b - 1].data();
+        outputBuses[b].silenceFlags = 0;
+    }
 
     // 3. Set up ProcessData
     ProcessData processData{};
     processData.processMode = kRealtime;
     processData.symbolicSampleSize = kSample32;
     processData.numSamples = static_cast<int32>(numSamples);
-    processData.numInputs = 1;
-    processData.numOutputs = 1;
-    processData.inputs = &inputBus;
-    processData.outputs = &outputBus;
+    processData.numInputs = static_cast<int32>(m_numInputBuses);
+    processData.numOutputs = static_cast<int32>(m_numOutputBuses);
+    processData.inputs = inputBuses.data();
+    processData.outputs = outputBuses.data();
 
-    // 4. Transport context (Phase 1: stopped, 120 BPM defaults)
+    // 4. Transport context — playing, with valid sample rate and tempo
     ProcessContext processContext{};
-    processContext.state = 0;  // Stopped
-    processContext.sampleRate = 48000.0;
+    processContext.state = ProcessContext::kPlaying
+                         | ProcessContext::kTempoValid
+                         | ProcessContext::kTimeSigValid;
+    processContext.sampleRate = m_sampleRate;
     processContext.tempo = 120.0;
     processContext.timeSigNumerator = 4;
     processContext.timeSigDenominator = 4;
     processData.processContext = &processContext;
 
-    // 5. Call plugin's process
+    // 5. Provide empty ParameterChanges — plugins like FabFilter call
+    // outputParameterChanges->addParameterData() during process() to report
+    // metering (gain reduction etc.). If null, they may skip processing.
+    Steinberg::Vst::ParameterChanges inputParamChanges;
+    Steinberg::Vst::ParameterChanges outputParamChanges;
+    processData.inputParameterChanges = &inputParamChanges;
+    processData.outputParameterChanges = &outputParamChanges;
+
+    // First-call diagnostics
+    static bool firstCall = true;
+    if (firstCall) {
+        spdlog::info("processAudioBlock: FIRST CALL numInputs={} numOutputs={} numSamples={} "
+                     "inputs[0].ch={} outputs[0].ch={}",
+                     processData.numInputs, processData.numOutputs, processData.numSamples,
+                     inputBuses[0].numChannels, outputBuses[0].numChannels);
+        // Log input audio levels
+        float maxIn = 0.0f;
+        for (uint32_t c = 0; c < numInputChannels; ++c) {
+            for (uint32_t s = 0; s < numSamples; ++s) {
+                float v = std::abs(m_inputPtrs[c][s]);
+                if (v > maxIn) maxIn = v;
+            }
+        }
+        spdlog::info("  First block input peak: {:.6f}", maxIn);
+        spdlog::default_logger()->flush();
+    }
+
+    // 6. Call plugin's process
     auto result = m_processor->process(processData);
+
+    if (firstCall) {
+        spdlog::info("  process() returned: {}", result);
+        // Log output audio levels
+        float maxOut = 0.0f;
+        for (uint32_t c = 0; c < numOutputChannels; ++c) {
+            for (uint32_t s = 0; s < numSamples; ++s) {
+                float v = std::abs(m_outputPtrs[c][s]);
+                if (v > maxOut) maxOut = v;
+            }
+        }
+        spdlog::info("  First block output peak: {:.6f}", maxOut);
+        spdlog::default_logger()->flush();
+        firstCall = false;
+    }
+
     if (result != kResultOk && result != kResultTrue) {
         return false;
     }
 
-    // 6. Re-interleave output: planar → interleaved
+    // 7. Re-interleave output: planar → interleaved
     for (uint32_t s = 0; s < numSamples; ++s) {
         for (uint32_t c = 0; c < numOutputChannels; ++c) {
             output[s * numOutputChannels + c] = m_outputChannelBuffers[c][s];
