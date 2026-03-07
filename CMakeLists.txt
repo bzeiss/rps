@@ -115,6 +115,7 @@ endif()
 # Include directories for libraries
 add_subdirectory(libs/rps-core)
 add_subdirectory(libs/rps-ipc)
+add_subdirectory(libs/rps-audio)
 add_subdirectory(libs/rps-engine)
 add_subdirectory(libs/rps-gui)
 

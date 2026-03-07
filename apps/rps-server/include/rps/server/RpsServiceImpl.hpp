@@ -36,7 +36,7 @@ public:
 
     grpc::Status OpenPluginGui(grpc::ServerContext* context,
                                const rps::v1::OpenPluginGuiRequest* request,
-                               grpc::ServerWriter<rps::v1::PluginGuiEvent>* writer) override;
+                               grpc::ServerWriter<rps::v1::PluginEvent>* writer) override;
 
     grpc::Status ClosePluginGui(grpc::ServerContext* context,
                                 const rps::v1::ClosePluginGuiRequest* request,

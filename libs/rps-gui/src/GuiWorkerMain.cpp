@@ -2,6 +2,7 @@
 #include <rps/gui/SdlWindow.hpp>
 #include <rps/ipc/Connection.hpp>
 #include <rps/ipc/Messages.hpp>
+#include <rps/audio/SharedAudioRing.hpp>
 #include <SDL3/SDL.h>
 
 #ifdef _MSC_VER
@@ -23,6 +24,15 @@
 #include <thread>
 #include <chrono>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <avrt.h>
+#pragma comment(lib, "Avrt.lib")
+#endif
+
 namespace po = boost::program_options;
 
 namespace rps::gui {
@@ -34,6 +44,7 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
         ("ipc-id", po::value<std::string>(), "IPC queue identifier")
         ("plugin-path", po::value<std::string>(), "Path to plugin binary")
         ("format", po::value<std::string>()->default_value("clap"), "Plugin format")
+        ("audio-shm", po::value<std::string>(), "Shared memory segment name for audio processing")
         ("help,h", "Show help");
 
     po::variables_map vm;
@@ -131,6 +142,82 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
             presetListMsg.type = rps::ipc::MessageType::PresetListEvent;
             presetListMsg.payload = rps::ipc::PresetListEvent{std::move(presets)};
             connection->sendMessage(presetListMsg);
+        }
+
+        // === Audio processing setup ===
+        std::unique_ptr<rps::audio::SharedAudioRing> audioRing;
+        std::atomic<bool> audioShutdown{false};
+        std::thread audioThread;
+        rps::gui::AudioBusLayout audioLayout{};
+
+        if (vm.count("audio-shm")) {
+            const auto shmName = vm["audio-shm"].as<std::string>();
+            spdlog::info("Opening audio shared memory: {}", shmName);
+
+            try {
+                audioRing = rps::audio::SharedAudioRing::open(shmName);
+            } catch (const std::exception& e) {
+                spdlog::error("Failed to open audio shared memory '{}': {}", shmName, e.what());
+                audioRing.reset();
+            }
+
+            if (audioRing && host->supportsAudioProcessing()) {
+                const auto& hdr = audioRing->header();
+                auto layoutOpt = host->setupAudioProcessing(
+                    hdr.sampleRate, hdr.blockSize, hdr.numChannels);
+
+                if (layoutOpt) {
+                    audioLayout = *layoutOpt;
+                    spdlog::info("Audio processing setup: {} in -> {} out",
+                                 audioLayout.numInputChannels, audioLayout.numOutputChannels);
+
+                    // Launch audio processing thread
+                    const uint32_t inFloats = hdr.blockSize * audioLayout.numInputChannels;
+                    const uint32_t outFloats = hdr.blockSize * audioLayout.numOutputChannels;
+
+                    audioThread = std::thread([&audioRing, &host, &audioShutdown,
+                                               inFloats, outFloats,
+                                               bs = hdr.blockSize,
+                                               inCh = audioLayout.numInputChannels,
+                                               outCh = audioLayout.numOutputChannels]() {
+                        spdlog::info("Audio thread started");
+
+#ifdef _WIN32
+                        // AVRT for Pro Audio thread priority
+                        DWORD taskIndex = 0;
+                        auto hTask = AvSetMmThreadCharacteristicsW(L"Pro Audio", &taskIndex);
+                        if (hTask) {
+                            spdlog::info("Audio thread elevated to Pro Audio priority");
+                        }
+#endif
+
+                        std::vector<float> inputBuf(inFloats);
+                        std::vector<float> outputBuf(outFloats);
+
+                        while (!audioShutdown.load(std::memory_order_relaxed)) {
+                            if (audioRing->waitForInput(std::chrono::milliseconds(10))) {
+                                if (audioRing->readInputBlock(inputBuf.data())) {
+                                    host->processAudioBlock(
+                                        inputBuf.data(), outputBuf.data(),
+                                        inCh, outCh, bs);
+
+                                    // Spin-wait until output ring has space (Python must drain)
+                                    while (!audioShutdown.load(std::memory_order_relaxed)) {
+                                        if (audioRing->writeOutputBlock(outputBuf.data())) {
+                                            break;
+                                        }
+                                        std::this_thread::yield();
+                                    }
+                                }
+                            }
+                        }
+
+                        spdlog::info("Audio thread exiting");
+                    });
+                } else {
+                    spdlog::warn("Plugin does not support audio processing");
+                }
+            }
         }
 
         // Run the GUI event loop — this blocks until the window is closed
@@ -233,6 +320,15 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
         );
 
         spdlog::info("GUI event loop exited (reason: {})", closeReason.empty() ? "user" : closeReason);
+
+        // Shut down audio thread before IPC thread
+        audioShutdown.store(true, std::memory_order_relaxed);
+        if (audioThread.joinable()) {
+            audioThread.join();
+        }
+        if (host->supportsAudioProcessing()) {
+            host->teardownAudioProcessing();
+        }
 
         ipcClosed.store(true, std::memory_order_relaxed);
         if (ipcThread.joinable()) {

@@ -12,6 +12,7 @@ find_package(imgui CONFIG REQUIRED)
 target_link_libraries(rps-gui
     PUBLIC
         rps-ipc
+        rps-audio
         SDL3::SDL3
         imgui::imgui
         Boost::filesystem

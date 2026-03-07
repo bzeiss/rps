@@ -131,8 +131,12 @@ def shutdown(ctx):
 
 @cli.command("open-gui")
 @click.option("--format", "format_filter", default="", help="Filter plugins by format (e.g. 'clap')")
+@click.option("--audio", "enable_audio", is_flag=True, help="Enable audio processing (shared memory ring buffer)")
+@click.option("--sample-rate", "-sr", default=48000, type=int, help="Audio sample rate (default: 48000)")
+@click.option("--channels", "-ch", default=2, type=int, help="Audio channel count (default: 2)")
+@click.option("--block-size", "-bs", default=128, type=int, help="Audio block size in samples (default: 128)")
 @click.pass_context
-def open_gui(ctx, format_filter):
+def open_gui(ctx, format_filter, enable_audio, sample_rate, channels, block_size):
     """Browse plugins and open a native GUI for parameter editing."""
     from rps_client.open_gui import run_open_gui
 
@@ -160,7 +164,10 @@ def open_gui(ctx, format_filter):
                 server_addr = mgr.address
 
             with RpsClient(server_addr) as client:
-                run_open_gui(client, format_filter=format_filter)
+                run_open_gui(
+                    client, format_filter=format_filter, enable_audio=enable_audio,
+                    sample_rate=sample_rate, num_channels=channels, block_size=block_size,
+                )
     except KeyboardInterrupt:
         pass
     except Exception as e:
@@ -219,6 +226,7 @@ def load_state(ctx, plugin_path, input_file):
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+
 
 def _find_server_bin() -> str | None:
     """Try to locate rps-server binary next to this script or in CWD."""

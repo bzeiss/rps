@@ -96,9 +96,9 @@ At runtime, VST2 is **excluded from `--formats all`** via the `isExplicitOnly()`
 
 ---
 
-## 3. Current Implementation Status (Phases 1-6)
+## 3. Current Implementation Status (Phases 1-7)
 
-We have successfully completed **Phase 1 (IPC Foundation)**, **Phase 2 (Process Pool & Orchestration)**, **Phase 3 (Format Scanners)**, **Phase 4 (Incremental Scanning & Database Optimization)**, **Phase 5 (AAX Scanner & Robustness)**, and **Phase 6 (gRPC Server & Python TUI Client)**. The full stack — from IPC to gRPC streaming to a rich Python TUI — is working end-to-end and tested against thousands of real-world plugins.
+We have successfully completed **Phase 1 (IPC Foundation)**, **Phase 2 (Process Pool & Orchestration)**, **Phase 3 (Format Scanners)**, **Phase 4 (Incremental Scanning & Database Optimization)**, **Phase 5 (AAX Scanner & Robustness)**, **Phase 6 (gRPC Server & Python TUI Client)**, and **Phase 7 (Shared Memory Audio Processing)**. The full stack — from IPC to gRPC streaming to a rich Python TUI with audio processing — is working end-to-end and tested against thousands of real-world plugins.
 
 ### 3.1 Project Structure
 
@@ -113,9 +113,11 @@ We have successfully completed **Phase 1 (IPC Foundation)**, **Phase 2 (Process 
   - `ConsoleScanObserver.hpp/.cpp`: Console-based observer for CLI use.
   - `db/DatabaseManager.hpp/.cpp`: SQLite database layer — schema, upserts, incremental cache, skipped/blocked management.
 - `libs/rps-gui/`: **Shared GUI hosting library** used by both plugin host processes:
-  - `IPluginGuiHost.hpp`: Abstract interface for format-specific GUI hosts (open, event loop, params, state, presets).
+  - `IPluginGuiHost.hpp`: Abstract interface for format-specific GUI hosts (open, event loop, params, state, presets, audio processing).
   - `SdlWindow.hpp/.cpp`: SDL3 window management with Dear ImGui integration. Implements the collapsible preset browser sidebar (search filter, multi-column sortable table), "Stationary Content" window expansion pattern, and child HWND positioning to solve the Windows Airspace Problem.
-  - `GuiWorkerMain.hpp/.cpp`: Common IPC event loop for host worker processes (receives commands from the server, dispatches to `IPluginGuiHost`).
+  - `GuiWorkerMain.hpp/.cpp`: Common IPC event loop for host worker processes. Spawns a dedicated real-time audio thread (AVRT Pro Audio priority on Windows) when `--audio-shm` is present.
+- `libs/rps-audio/`: **Shared memory audio transport library**:
+  - `SharedAudioRing.hpp/.cpp`: SPSC (Single Producer, Single Consumer) lock-free ring buffer over shared memory. Uses `boost::interprocess::windows_shared_memory` on Windows (pagefile-backed named kernel sections) and `boost::interprocess::shared_memory_object` on POSIX. Header contains audio format config, cache-line-aligned atomic positions, and extension points for future DAW features (sidechain, sends, transport state).
 
 #### Applications
 - `apps/rps-standalone/`: Standalone CLI wrapper. A thin `main.cpp` (~100 lines) that parses CLI args into `ScanConfig` and calls `ScanEngine::runScan()`.
@@ -127,20 +129,20 @@ We have successfully completed **Phase 1 (IPC Foundation)**, **Phase 2 (Process 
 - `apps/rps-server/`: **gRPC server** exposing the scan engine and GUI hosting to any language.
   - `src/RpsServiceImpl.cpp`: Implements the `RpsService` gRPC service (StartScan, StopScan, GetStatus, Shutdown, OpenPluginGui, ClosePluginGui, ListPlugins, GetPluginState, SetPluginState, LoadPreset).
   - `src/GrpcScanObserver.cpp`: Implements `ScanObserver`, serializes events into protobuf `ScanEvent` messages and writes them to a `grpc::ServerWriter`.
-  - `src/GuiSessionManager.cpp`: Manages active plugin GUI sessions. Spawns the appropriate host worker process (`rps-pluginhost-vst3` or `rps-pluginhost-clap`), establishes IPC, and relays events between the gRPC stream and the host worker.
+   - `src/GuiSessionManager.cpp`: Manages active plugin GUI sessions. Spawns the appropriate host worker process (`rps-pluginhost-vst3` or `rps-pluginhost-clap`), establishes IPC, creates shared memory audio ring buffers when audio is requested, and relays events (including `AudioReady`) between the gRPC stream and the host worker.
   - Uses `spdlog` for dual-sink logging (stdout + file).
 
 - `apps/rps-pluginhost-vst3/`: **VST3 GUI host worker** process.
-  - `src/Vst3GuiHost.cpp`: Implements `IPluginGuiHost` for VST3 plugins. Handles COM module loading, `IComponent`/`IEditController` setup, `IPlugView` embedding in the SDL3 window, parameter discovery, preset discovery (via `IUnitInfo` and `.vstpreset` file scanning), and preset loading (via `IProgramListData`, audio process pass, or file-based state restore).
+  - `src/Vst3GuiHost.cpp`: Implements `IPluginGuiHost` for VST3 plugins. Handles COM module loading, `IComponent`/`IEditController` setup, `IPlugView` embedding in the SDL3 window, parameter discovery, preset discovery (via `IUnitInfo` and `.vstpreset` file scanning), preset loading, and **audio processing** (bus negotiation, de-interleaving/re-interleaving, `IAudioProcessor` calls).
 
 - `apps/rps-pluginhost-clap/`: **CLAP GUI host worker** process.
-  - `src/ClapGuiHost.cpp`: Implements `IPluginGuiHost` for CLAP plugins. Handles CLAP plugin loading, GUI embedding, parameter discovery, and preset discovery/loading via the CLAP preset-load extension.
+  - `src/ClapGuiHost.cpp`: Implements `IPluginGuiHost` for CLAP plugins. Handles CLAP plugin loading, GUI embedding, parameter discovery, preset discovery/loading via the CLAP preset-load extension, and **audio processing** (audio port negotiation, activation, processing via `clap_plugin.process()`).
 
 #### Proto
-- `proto/rps.proto`: gRPC service and message definitions. `ScanEvent` is a `oneof` union mirroring all `ScanObserver` callbacks 1:1. Also defines `GuiEvent` messages for the GUI hosting stream (gui_opened, gui_closed, parameter_list, parameter_updates, preset_list, preset_loaded, gui_error).
+- `proto/rps.proto`: gRPC service and message definitions. `ScanEvent` is a `oneof` union mirroring all `ScanObserver` callbacks 1:1. `PluginEvent` is a `oneof` union for GUI hosting events (gui_opened, gui_closed, parameter_list, parameter_updates, preset_list, preset_loaded, audio_ready, gui_error). `OpenPluginGuiRequest` includes optional audio parameters (`enable_audio`, `sample_rate`, `block_size`, `num_channels`).
 
 #### Example Clients
-- `examples/python/`: Python TUI client using `rich` for per-worker progress bars. Features an interactive `open-gui` command with an `InquirerPy` fuzzy plugin selector (arrow keys, Page-Up/Down for 20-entry jumps, cursor position memory). Spawns/kills `rps-server` as a subprocess.
+- `examples/python/`: Python TUI client using `rich` for per-worker progress bars. Features an interactive `open-gui` command with an `InquirerPy` fuzzy plugin selector (arrow keys, Page-Up/Down for 20-entry jumps, cursor position memory). Supports shared memory audio processing via `open-gui --audio` and the interactive `send-audio <file.wav>` command. Spawns/kills `rps-server` as a subprocess.
 - `examples/cpp/`: C++ gRPC client with ANSI terminal TUI. Same features as the Python client: auto-spawns server, per-worker progress bars, streaming results.
 
 ### 3.2 The IPC Protocol Schema
@@ -262,6 +264,8 @@ The example Python client (`examples/python/`) demonstrates the full gRPC workfl
    - Fuzzy plugin selector using `InquirerPy` with arrow-key navigation, Page-Up/Page-Down (20-entry jumps), and cursor position memory between sessions.
    - Non-blocking command loop using `msvcrt.kbhit()` (Windows) / `select.select()` (Unix) so the CLI detects GUI closure within 200ms without requiring an Enter press.
    - Live parameter display, preset browsing/loading, state save/restore commands.
+   - **`--audio` flag**: When enabled, opens the plugin with a shared memory ring buffer. The `send-audio <file.wav>` interactive command reads a WAV file, sends blocks through the SPSC ring buffer, collects processed output, and writes it to `<name>_processed.wav`.
+   - `rps_audio.py`: Pure-Python shared memory client using `ctypes` kernel32 APIs (Windows) or `/dev/shm` (POSIX) to access the lock-free ring buffer. No external dependencies.
    - Re-selection loop: after closing a plugin GUI, the user returns to the selector to open another.
 5. **`generate_proto.py`**: Generates Python gRPC stubs and patches the broken absolute import (`import rps_pb2`) to a relative import (`from . import rps_pb2`).
 
@@ -269,12 +273,14 @@ Dependencies: `grpcio`, `grpcio-tools`, `rich`, `click`, `InquirerPy` (see `exam
 
 ---
 
-## 4. Next Steps (Phase 7+)
+## 4. Next Steps (Phase 8+)
 
 The immediate next goals are:
 1. **OS-Specific Formats**: Implement scanners for **AU** (macOS via CoreAudio) and **LV2** (Linux/Windows).
 2. **Vendor SQLite**: Bundle the SQLite amalgamation to remove the system dependency.
 3. **Extended Metadata**: Store additional plugin details (e.g., bus arrangements) if exposed by the SDKs.
-4. **Audio Processing**: Add real-time audio streaming to hosted plugin GUIs via shared memory ring buffers.
-5. **Plugin Chains**: Support hosting entire effects chains (e.g., EQ → Compressor) within a single worker process.
-6. **Authentication**: Optional TLS/token auth for remote gRPC connections.
+4. **Multi-Channel Audio**: Extend the shared memory ring buffer to support flexible bus layouts (mono/stereo/surround/Atmos), per-channel routing, and bus layout negotiation.
+5. **Plugin Chains**: Support hosting entire effects chains (e.g., EQ → Compressor) within a single worker process, with chain splitters for parallel processing and per-plugin routing.
+6. **Delay Compensation**: Implement plugin delay compensation (PDC) across chains using reported latency values.
+7. **Audio Device Output**: Connect processed audio to real-time audio output devices (WASAPI, CoreAudio, ALSA/PipeWire).
+8. **Authentication**: Optional TLS/token auth for remote gRPC connections.

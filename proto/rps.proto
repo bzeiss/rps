@@ -21,7 +21,7 @@ service RpsService {
 
   // Open a plugin's native GUI in an isolated process.
   // Returns a stream of GUI lifecycle events until the GUI is closed.
-  rpc OpenPluginGui(OpenPluginGuiRequest) returns (stream PluginGuiEvent);
+  rpc OpenPluginGui(OpenPluginGuiRequest) returns (stream PluginEvent);
 
   // Close a currently open plugin GUI.
   rpc ClosePluginGui(ClosePluginGuiRequest) returns (ClosePluginGuiResponse);
@@ -207,9 +207,14 @@ message ListPluginsResponse {
 message OpenPluginGuiRequest {
   string plugin_path = 1;         // DB path column — unique per scanned plugin
   string format = 2;              // "clap", "vst3", etc.
+  // Audio processing configuration (Phase 1)
+  bool enable_audio = 3;
+  uint32 sample_rate = 4;         // e.g. 48000
+  uint32 block_size = 5;          // e.g. 128
+  uint32 num_channels = 6;        // e.g. 2 (stereo)
 }
 
-message PluginGuiEvent {
+message PluginEvent {
   oneof event {
     GuiOpened gui_opened = 1;
     GuiClosed gui_closed = 2;
@@ -218,7 +223,17 @@ message PluginGuiEvent {
     ParameterUpdates parameter_updates = 5; // Delta updates, streamed
     PresetList preset_list = 6;             // Available presets, sent once after open
     PresetLoaded preset_loaded = 7;         // Preset was loaded (via GUI or API)
+    AudioReady audio_ready = 8;             // Audio processing ready, shm info
   }
+}
+
+message AudioReady {
+  string shm_name = 1;             // Shared memory segment name for mmap
+  uint32 sample_rate = 2;
+  uint32 block_size = 3;
+  uint32 num_channels = 4;
+  uint32 ring_blocks = 5;
+  uint32 latency_samples = 6;      // Plugin-reported latency (for future PDC)
 }
 
 message GuiOpened {

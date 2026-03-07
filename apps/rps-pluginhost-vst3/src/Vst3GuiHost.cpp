@@ -127,6 +127,199 @@ Vst3GuiHost::~Vst3GuiHost() {
     cleanup();
 }
 
+// ---------------------------------------------------------------------------
+// Audio processing
+// ---------------------------------------------------------------------------
+
+std::optional<rps::gui::AudioBusLayout> Vst3GuiHost::setupAudioProcessing(
+    uint32_t sampleRate, uint32_t blockSize, uint32_t numChannels)
+{
+    spdlog::info("Vst3GuiHost::setupAudioProcessing(sr={}, bs={}, ch={})",
+                 sampleRate, blockSize, numChannels);
+
+    // 1. Query IAudioProcessor from the component
+    if (!m_processor) {
+        m_processor = FUnknownPtr<IAudioProcessor>(m_component);
+    }
+    if (!m_processor) {
+        spdlog::error("  Plugin does not implement IAudioProcessor");
+        return std::nullopt;
+    }
+
+    // 2. Bus layout negotiation
+    // Map numChannels to a speaker arrangement
+    auto channelsToArr = [](uint32_t ch) -> SpeakerArrangement {
+        switch (ch) {
+            case 1: return SpeakerArr::kMono;
+            case 2: return SpeakerArr::kStereo;
+            default: return SpeakerArr::kStereo;  // Fallback to stereo
+        }
+    };
+
+    SpeakerArrangement requestedArr = channelsToArr(numChannels);
+    SpeakerArrangement inputArr = requestedArr;
+    SpeakerArrangement outputArr = requestedArr;
+
+    // Try to set the requested arrangement
+    auto result = m_processor->setBusArrangements(&inputArr, 1, &outputArr, 1);
+    if (result != kResultOk && result != kResultTrue) {
+        spdlog::warn("  setBusArrangements rejected (result={}), querying plugin's preferred layout",
+                     result);
+        // Query what the plugin actually supports
+        m_processor->getBusArrangement(kInput, 0, inputArr);
+        m_processor->getBusArrangement(kOutput, 0, outputArr);
+        spdlog::info("  Plugin prefers: input={} speakers, output={} speakers",
+                     SpeakerArr::getChannelCount(inputArr),
+                     SpeakerArr::getChannelCount(outputArr));
+    }
+
+    uint32_t inCh = static_cast<uint32_t>(SpeakerArr::getChannelCount(inputArr));
+    uint32_t outCh = static_cast<uint32_t>(SpeakerArr::getChannelCount(outputArr));
+
+    // 3. Setup processing
+    ProcessSetup setup{};
+    setup.processMode = kRealtime;
+    setup.symbolicSampleSize = kSample32;
+    setup.maxSamplesPerBlock = static_cast<int32>(blockSize);
+    setup.sampleRate = static_cast<double>(sampleRate);
+
+    result = m_processor->setupProcessing(setup);
+    if (result != kResultOk && result != kResultTrue) {
+        spdlog::error("  setupProcessing failed (result={})", result);
+        return std::nullopt;
+    }
+
+    // 4. Activate the component
+    result = m_component->setActive(true);
+    if (result != kResultOk && result != kResultTrue) {
+        spdlog::error("  setActive(true) failed (result={})", result);
+        return std::nullopt;
+    }
+
+    // 5. Start processing
+    result = m_processor->setProcessing(true);
+    if (result != kResultOk && result != kResultTrue) {
+        spdlog::warn("  setProcessing(true) returned {} (non-fatal for some plugins)", result);
+        // Some plugins return kNotImplemented — continue anyway
+    }
+
+    // 6. Allocate de-interleaved channel buffers
+    m_audioInputChannels = inCh;
+    m_audioOutputChannels = outCh;
+    m_audioBlockSize = blockSize;
+
+    m_inputChannelBuffers.resize(inCh);
+    m_inputPtrs.resize(inCh);
+    for (uint32_t c = 0; c < inCh; ++c) {
+        m_inputChannelBuffers[c].resize(blockSize, 0.0f);
+        m_inputPtrs[c] = m_inputChannelBuffers[c].data();
+    }
+
+    m_outputChannelBuffers.resize(outCh);
+    m_outputPtrs.resize(outCh);
+    for (uint32_t c = 0; c < outCh; ++c) {
+        m_outputChannelBuffers[c].resize(blockSize, 0.0f);
+        m_outputPtrs[c] = m_outputChannelBuffers[c].data();
+    }
+
+    m_audioActive = true;
+
+    spdlog::info("  Audio processing active: {} in → {} out, bs={}, sr={}",
+                 inCh, outCh, blockSize, sampleRate);
+
+    return rps::gui::AudioBusLayout{inCh, outCh};
+}
+
+bool Vst3GuiHost::processAudioBlock(
+    const float* input, float* output,
+    uint32_t numInputChannels, uint32_t numOutputChannels, uint32_t numSamples,
+    const std::vector<rps::gui::AutomationEvent>& /*automation*/)
+{
+    if (!m_audioActive || !m_processor) return false;
+
+    // 1. De-interleave input: interleaved [L0 R0 L1 R1 ...] → planar [L0 L1 ...] [R0 R1 ...]
+    for (uint32_t s = 0; s < numSamples; ++s) {
+        for (uint32_t c = 0; c < numInputChannels; ++c) {
+            m_inputChannelBuffers[c][s] = input[s * numInputChannels + c];
+        }
+    }
+
+    // Clear output buffers
+    for (uint32_t c = 0; c < numOutputChannels; ++c) {
+        std::fill(m_outputChannelBuffers[c].begin(),
+                  m_outputChannelBuffers[c].begin() + numSamples, 0.0f);
+    }
+
+    // 2. Set up AudioBusBuffers
+    AudioBusBuffers inputBus{};
+    inputBus.numChannels = static_cast<int32>(numInputChannels);
+    inputBus.channelBuffers32 = m_inputPtrs.data();
+    inputBus.silenceFlags = 0;
+
+    AudioBusBuffers outputBus{};
+    outputBus.numChannels = static_cast<int32>(numOutputChannels);
+    outputBus.channelBuffers32 = m_outputPtrs.data();
+    outputBus.silenceFlags = 0;
+
+    // 3. Set up ProcessData
+    ProcessData processData{};
+    processData.processMode = kRealtime;
+    processData.symbolicSampleSize = kSample32;
+    processData.numSamples = static_cast<int32>(numSamples);
+    processData.numInputs = 1;
+    processData.numOutputs = 1;
+    processData.inputs = &inputBus;
+    processData.outputs = &outputBus;
+
+    // 4. Transport context (Phase 1: stopped, 120 BPM defaults)
+    ProcessContext processContext{};
+    processContext.state = 0;  // Stopped
+    processContext.sampleRate = 48000.0;
+    processContext.tempo = 120.0;
+    processContext.timeSigNumerator = 4;
+    processContext.timeSigDenominator = 4;
+    processData.processContext = &processContext;
+
+    // 5. Call plugin's process
+    auto result = m_processor->process(processData);
+    if (result != kResultOk && result != kResultTrue) {
+        return false;
+    }
+
+    // 6. Re-interleave output: planar → interleaved
+    for (uint32_t s = 0; s < numSamples; ++s) {
+        for (uint32_t c = 0; c < numOutputChannels; ++c) {
+            output[s * numOutputChannels + c] = m_outputChannelBuffers[c][s];
+        }
+    }
+
+    return true;
+}
+
+uint32_t Vst3GuiHost::getLatencySamples() const {
+    if (m_processor) {
+        return m_processor->getLatencySamples();
+    }
+    return 0;
+}
+
+void Vst3GuiHost::teardownAudioProcessing() {
+    if (!m_audioActive) return;
+
+    spdlog::info("Vst3GuiHost::teardownAudioProcessing()");
+
+    if (m_processor) {
+        m_processor->setProcessing(false);
+    }
+    // Note: setActive(false) is called in cleanup()
+
+    m_audioActive = false;
+    m_inputChannelBuffers.clear();
+    m_outputChannelBuffers.clear();
+    m_inputPtrs.clear();
+    m_outputPtrs.clear();
+}
+
 void Vst3GuiHost::cleanup() {
     spdlog::debug("Vst3GuiHost::cleanup()");
 

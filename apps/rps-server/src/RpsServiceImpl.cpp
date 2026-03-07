@@ -169,12 +169,12 @@ grpc::Status RpsServiceImpl::ListPlugins(grpc::ServerContext* /*context*/,
 
 grpc::Status RpsServiceImpl::OpenPluginGui(grpc::ServerContext* /*context*/,
                                             const rps::v1::OpenPluginGuiRequest* request,
-                                            grpc::ServerWriter<rps::v1::PluginGuiEvent>* writer) {
+                                            grpc::ServerWriter<rps::v1::PluginEvent>* writer) {
     auto pluginPath = request->plugin_path();
     auto format = request->format();
 
     if (pluginPath.empty() || format.empty()) {
-        rps::v1::PluginGuiEvent event;
+        rps::v1::PluginEvent event;
         auto* err = event.mutable_gui_error();
         err->set_error("invalid_request");
         err->set_details("plugin_path and format are required");
@@ -182,8 +182,18 @@ grpc::Status RpsServiceImpl::OpenPluginGui(grpc::ServerContext* /*context*/,
         return grpc::Status::OK;
     }
 
-    spdlog::info("OpenPluginGui: path={} format={}", pluginPath, format);
-    m_guiManager.openGui(pluginPath, format, writer);
+    spdlog::info("OpenPluginGui: path={} format={} audio={}", pluginPath, format,
+                 request->enable_audio());
+
+    AudioConfig audioConfig;
+    audioConfig.enabled = request->enable_audio();
+    if (audioConfig.enabled) {
+        audioConfig.sampleRate = request->sample_rate() > 0 ? request->sample_rate() : 48000;
+        audioConfig.blockSize = request->block_size() > 0 ? request->block_size() : 128;
+        audioConfig.numChannels = request->num_channels() > 0 ? request->num_channels() : 2;
+    }
+
+    m_guiManager.openGui(pluginPath, format, writer, audioConfig);
     return grpc::Status::OK;
 }
 

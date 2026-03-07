@@ -14,6 +14,8 @@
 #include <clap/ext/params.h>
 #include <clap/ext/state.h>
 #include <clap/ext/preset-load.h>
+#include <clap/ext/audio-ports.h>
+#include <clap/ext/latency.h>
 #include <clap/factory/preset-discovery.h>
 
 #include <spdlog/spdlog.h>
@@ -101,6 +103,184 @@ ClapGuiHost::ClapGuiHost() = default;
 
 ClapGuiHost::~ClapGuiHost() {
     cleanup();
+}
+
+// ---------------------------------------------------------------------------
+// Audio processing
+// ---------------------------------------------------------------------------
+
+std::optional<rps::gui::AudioBusLayout> ClapGuiHost::setupAudioProcessing(
+    uint32_t sampleRate, uint32_t blockSize, uint32_t numChannels)
+{
+    spdlog::info("ClapGuiHost::setupAudioProcessing(sr={}, bs={}, ch={})",
+                 sampleRate, blockSize, numChannels);
+
+    if (!m_plugin) {
+        spdlog::error("  Plugin not loaded");
+        return std::nullopt;
+    }
+
+    // 1. Query audio ports extension
+    m_audioPorts = reinterpret_cast<const clap_plugin_audio_ports*>(
+        m_plugin->get_extension(m_plugin, CLAP_EXT_AUDIO_PORTS));
+    m_latencyExt = reinterpret_cast<const clap_plugin_latency*>(
+        m_plugin->get_extension(m_plugin, CLAP_EXT_LATENCY));
+
+    // 2. Negotiate channel count from audio ports
+    uint32_t inCh = numChannels;   // Default to requested
+    uint32_t outCh = numChannels;
+
+    if (m_audioPorts) {
+        clap_audio_port_info_t portInfo{};
+        if (m_audioPorts->count(m_plugin, true) > 0 &&
+            m_audioPorts->get(m_plugin, 0, true, &portInfo)) {
+            inCh = portInfo.channel_count;
+            spdlog::info("  Input port '{}': {} ch", portInfo.name, inCh);
+        }
+        if (m_audioPorts->count(m_plugin, false) > 0 &&
+            m_audioPorts->get(m_plugin, 0, false, &portInfo)) {
+            outCh = portInfo.channel_count;
+            spdlog::info("  Output port '{}': {} ch", portInfo.name, outCh);
+        }
+    } else {
+        spdlog::info("  No audio_ports extension, assuming {} channels", numChannels);
+    }
+
+    // 3. Activate the plugin
+    if (!m_plugin->activate(m_plugin, static_cast<double>(sampleRate),
+                            blockSize, blockSize)) {
+        spdlog::error("  activate() failed");
+        return std::nullopt;
+    }
+
+    // 4. Start processing
+    if (!m_plugin->start_processing(m_plugin)) {
+        spdlog::warn("  start_processing() failed (non-fatal for some plugins)");
+        // Continue anyway — some plugins don't implement this
+    }
+
+    // 5. Allocate de-interleaved channel buffers
+    m_audioInputChannels = inCh;
+    m_audioOutputChannels = outCh;
+    m_audioBlockSize = blockSize;
+
+    m_inputChannelBuffers.resize(inCh);
+    m_inputPtrs.resize(inCh);
+    for (uint32_t c = 0; c < inCh; ++c) {
+        m_inputChannelBuffers[c].resize(blockSize, 0.0f);
+        m_inputPtrs[c] = m_inputChannelBuffers[c].data();
+    }
+
+    m_outputChannelBuffers.resize(outCh);
+    m_outputPtrs.resize(outCh);
+    for (uint32_t c = 0; c < outCh; ++c) {
+        m_outputChannelBuffers[c].resize(blockSize, 0.0f);
+        m_outputPtrs[c] = m_outputChannelBuffers[c].data();
+    }
+
+    m_audioActive = true;
+
+    spdlog::info("  Audio processing active: {} in → {} out, bs={}, sr={}",
+                 inCh, outCh, blockSize, sampleRate);
+
+    return rps::gui::AudioBusLayout{inCh, outCh};
+}
+
+bool ClapGuiHost::processAudioBlock(
+    const float* input, float* output,
+    uint32_t numInputChannels, uint32_t numOutputChannels, uint32_t numSamples,
+    const std::vector<rps::gui::AutomationEvent>& /*automation*/)
+{
+    if (!m_audioActive || !m_plugin) return false;
+
+    // 1. De-interleave input
+    for (uint32_t s = 0; s < numSamples; ++s) {
+        for (uint32_t c = 0; c < numInputChannels; ++c) {
+            m_inputChannelBuffers[c][s] = input[s * numInputChannels + c];
+        }
+    }
+
+    // Clear output buffers
+    for (uint32_t c = 0; c < numOutputChannels; ++c) {
+        std::fill(m_outputChannelBuffers[c].begin(),
+                  m_outputChannelBuffers[c].begin() + numSamples, 0.0f);
+    }
+
+    // 2. Set up CLAP audio buffers (planar float32)
+    clap_audio_buffer_t clapInput{};
+    clapInput.data32 = m_inputPtrs.data();
+    clapInput.data64 = nullptr;
+    clapInput.channel_count = numInputChannels;
+    clapInput.latency = 0;
+    clapInput.constant_mask = 0;
+
+    clap_audio_buffer_t clapOutput{};
+    clapOutput.data32 = m_outputPtrs.data();
+    clapOutput.data64 = nullptr;
+    clapOutput.channel_count = numOutputChannels;
+    clapOutput.latency = 0;
+    clapOutput.constant_mask = 0;
+
+    // 3. Set up empty event lists (Phase 1: no automation events)
+    clap_input_events_t inEvents{};
+    inEvents.ctx = nullptr;
+    inEvents.size = [](const clap_input_events*) -> uint32_t { return 0; };
+    inEvents.get = [](const clap_input_events*, uint32_t) -> const clap_event_header_t* { return nullptr; };
+
+    clap_output_events_t outEvents{};
+    outEvents.ctx = nullptr;
+    outEvents.try_push = [](const clap_output_events*, const clap_event_header_t*) -> bool { return true; };
+
+    // 4. Set up process struct
+    clap_process_t process{};
+    process.steady_time = -1;
+    process.frames_count = numSamples;
+    process.transport = nullptr;  // Phase 1: no transport
+    process.audio_inputs = &clapInput;
+    process.audio_outputs = &clapOutput;
+    process.audio_inputs_count = 1;
+    process.audio_outputs_count = 1;
+    process.in_events = &inEvents;
+    process.out_events = &outEvents;
+
+    // 5. Call plugin's process
+    auto status = m_plugin->process(m_plugin, &process);
+    if (status == CLAP_PROCESS_ERROR) {
+        return false;
+    }
+
+    // 6. Re-interleave output
+    for (uint32_t s = 0; s < numSamples; ++s) {
+        for (uint32_t c = 0; c < numOutputChannels; ++c) {
+            output[s * numOutputChannels + c] = m_outputChannelBuffers[c][s];
+        }
+    }
+
+    return true;
+}
+
+uint32_t ClapGuiHost::getLatencySamples() const {
+    if (m_latencyExt && m_plugin) {
+        return m_latencyExt->get(m_plugin);
+    }
+    return 0;
+}
+
+void ClapGuiHost::teardownAudioProcessing() {
+    if (!m_audioActive) return;
+
+    spdlog::info("ClapGuiHost::teardownAudioProcessing()");
+
+    if (m_plugin) {
+        m_plugin->stop_processing(m_plugin);
+        // Note: deactivate is called in cleanup()
+    }
+
+    m_audioActive = false;
+    m_inputChannelBuffers.clear();
+    m_outputChannelBuffers.clear();
+    m_inputPtrs.clear();
+    m_outputPtrs.clear();
 }
 
 void ClapGuiHost::cleanup() {

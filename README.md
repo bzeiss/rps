@@ -1,6 +1,6 @@
 # RPS
 
-RPS is a modern, cross-platform audio plugin scanner designed from the ground up for extreme robustness and reliability. It supports scanning VST2, VST3, CLAP, AU, AAX, LV2, and LADSPA formats on Windows, macOS, and Linux.
+RPS is a modern, cross-platform audio plugin scanner and host designed from the ground up for extreme robustness and reliability. It supports scanning VST2, VST3, CLAP, AU, AAX, LV2, and LADSPA formats on Windows, macOS, and Linux. Beyond scanning, RPS can host plugin GUIs in isolated processes and route audio through plugins via a lock-free shared memory transport.
 
 RPS exposes a **gRPC API** so it can be driven from any language. Example clients in C++, Python and Java (possibly others) are included.
 
@@ -12,8 +12,9 @@ RPS solves this by using a **multi-process architecture**:
 - **`rps-server`**: A gRPC server that coordinates scanning and plugin GUI hosting. It manages a pool of worker processes, handles watchdogs/timeouts, streams progress events to clients, and aggregates results into a central SQLite database. If a plugin crashes, only the worker dies—the server logs the failure and moves on.
 - **`rps-standalone`**: A standalone CLI wrapper around the same scan engine (no server needed).
 - **`rps-pluginscanner`**: The worker. It isolates the unsafe, third-party plugin code from the rest of your system.
-- **`rps-pluginhost-vst3`**: An isolated GUI host process for VST3 plugins. Opens the plugin's native editor in an SDL3 window with an ImGui preset sidebar.
-- **`rps-pluginhost-clap`**: An isolated GUI host process for CLAP plugins, using the same SDL3/ImGui sidebar architecture.
+- **`rps-pluginhost-vst3`**: An isolated GUI host process for VST3 plugins. Opens the plugin's native editor in an SDL3 window with an ImGui preset sidebar. Supports real-time audio processing.
+- **`rps-pluginhost-clap`**: An isolated GUI host process for CLAP plugins, using the same SDL3/ImGui sidebar architecture. Supports real-time audio processing.
+- **`rps-audio`** (`libs/rps-audio/`): Shared memory SPSC lock-free ring buffer library for low-latency audio transport between processes.
 - **`examples/`**: Client examples.
 
 ## Project Goals
@@ -158,11 +159,12 @@ The dependant processes `rps-pluginscanner`, `rps-pluginhost-vst3`, and `rps-plu
 
 ## Usage
 
-RPS can be used in four ways:
+RPS can be used in five ways:
 1. **Standalone CLI** (`rps-standalone`) — run scans directly from the command line.
 2. **gRPC Server** (`rps-server`) — a long-lived daemon that accepts scan requests and plugin GUI hosting from any language client. See [gRPC Server](#grpc-server) and [Python TUI Client](#python-tui-client) below.
 3. **Plugin GUI Hosting** (`rps-pluginhost-vst3`, `rps-pluginhost-clap`) — isolated worker processes that open a plugin's native GUI in an SDL3 window with an ImGui preset browser sidebar. Driven via gRPC through `rps-server`.
-4. **VST3 Scanner Master** (`vstscannermaster`) — drop-in replacement for Steinberg's `vstscannermaster.exe` that produces Cubase/Nuendo/Dorico-compatible XML cache files. See [VST3 Scanner Master](#vst3-scanner-master) below.
+4. **Audio Processing** — send audio through hosted plugins via shared memory ring buffers. Use `open-gui --audio` in the Python client to enable audio, then `send-audio <file.wav>` to process a WAV file.
+5. **VST3 Scanner Master** (`vstscannermaster`) — drop-in replacement for Steinberg's `vstscannermaster.exe` that produces Cubase/Nuendo/Dorico-compatible XML cache files. See [VST3 Scanner Master](#vst3-scanner-master) below.
 
 ### Standalone CLI
 
@@ -359,12 +361,14 @@ Defined in `proto/rps.proto`:
 | `StopScan`       | Unary            | Stop a running scan gracefully                                          |
 | `GetStatus`      | Unary            | Query server state (idle/scanning), uptime, db path                     |
 | `ListPlugins`    | Unary            | List all scanned plugins from the database                              |
-| `OpenPluginGui`  | Server streaming | Open a plugin GUI, returns a stream of GUI events (params, presets)     |
+| `OpenPluginGui`  | Server streaming | Open a plugin GUI, returns `PluginEvent` stream (params, presets, audio) |
 | `ClosePluginGui` | Unary            | Close a running plugin GUI                                              |
 | `GetPluginState` | Unary            | Save the complete state of a running plugin as a binary blob            |
 | `SetPluginState` | Unary            | Restore a plugin's state from a previously saved blob                   |
 | `LoadPreset`     | Unary            | Load a preset by ID on a running plugin GUI                             |
 | `Shutdown`       | Unary            | Graceful server shutdown                                                |
+
+`OpenPluginGui` accepts optional audio parameters (`enable_audio`, `sample_rate`, `block_size`, `num_channels`). When audio is enabled, the stream emits an `AudioReady` event containing the shared memory segment name for the ring buffer.
 
 Only one scan at a time is allowed. `StartScan` returns `ALREADY_EXISTS` if a scan is in progress.
 
@@ -383,6 +387,29 @@ The gRPC clients spawn the server automatically.
 ## Example Clients
 
 Each example client has its own README.md in its directory.
+
+### Python TUI Client — Audio Processing
+
+The Python client supports sending audio through plugins via shared memory:
+
+```bash
+cd examples/python
+
+# Open a plugin with audio processing enabled
+uv run python -m rps_client open-gui --format vst3 --audio
+
+# Inside the interactive session, process a WAV file:
+#   send-audio test.wav
+# Output is written to test_processed.wav
+```
+
+Audio options for `open-gui`:
+| Option | Default | Description |
+|---|---|---|
+| `--audio` | off | Enable shared memory audio transport |
+| `--sample-rate` / `-sr` | 48000 | Audio sample rate (match your WAV) |
+| `--channels` / `-ch` | 2 | Channel count |
+| `--block-size` / `-bs` | 128 | Processing block size in samples |
 
 ## Documentation
 

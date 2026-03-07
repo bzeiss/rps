@@ -22,6 +22,7 @@
 #include "pluginterfaces/vst/ivstcomponent.h"
 #include "pluginterfaces/vst/ivsteditcontroller.h"
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
+#include "pluginterfaces/vst/ivstprocesscontext.h"
 #include "public.sdk/source/vst/hosting/module.h"
 
 #include <string>
@@ -61,6 +62,17 @@ public:
     /// Returns the enriched preset list and clears the flag.
     std::vector<rps::ipc::PresetInfo> getEnrichedPresets() override;
 
+    // Audio processing overrides
+    bool supportsAudioProcessing() const override { return true; }
+    std::optional<rps::gui::AudioBusLayout> setupAudioProcessing(
+        uint32_t sampleRate, uint32_t blockSize, uint32_t numChannels) override;
+    bool processAudioBlock(
+        const float* input, float* output,
+        uint32_t numInputChannels, uint32_t numOutputChannels, uint32_t numSamples,
+        const std::vector<rps::gui::AutomationEvent>& automation = {}) override;
+    uint32_t getLatencySamples() const override;
+    void teardownAudioProcessing() override;
+
     /// Called by our IPlugFrame implementation when the plugin requests a resize.
     void onPluginRequestResize(Steinberg::ViewRect* newSize);
 
@@ -99,6 +111,16 @@ private:
 
     /// Background: parse .vstpreset MetaInfo chunks and update m_presets.
     void enrichPresetsFromFiles();
+
+    // Audio processing state
+    bool m_audioActive = false;
+    uint32_t m_audioInputChannels = 0;
+    uint32_t m_audioOutputChannels = 0;
+    uint32_t m_audioBlockSize = 0;
+    std::vector<std::vector<float>> m_inputChannelBuffers;
+    std::vector<std::vector<float>> m_outputChannelBuffers;
+    std::vector<float*> m_inputPtrs;   // Pointers into m_inputChannelBuffers
+    std::vector<float*> m_outputPtrs;  // Pointers into m_outputChannelBuffers
 
     void cleanup();
 };

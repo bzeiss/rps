@@ -87,6 +87,7 @@ target_link_libraries(rps-server
     PRIVATE
         rps-engine
         rps-ipc
+        rps-audio
         rps_warnings
         ${RPS_GRPC_LIB}
         ${RPS_PROTO_LIB}

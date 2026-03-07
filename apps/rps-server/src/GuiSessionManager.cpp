@@ -63,12 +63,13 @@ boost::filesystem::path GuiSessionManager::resolveHostBinary(const std::string& 
 }
 
 void GuiSessionManager::openGui(const std::string& pluginPath, const std::string& format,
-                                 grpc::ServerWriter<rps::v1::PluginGuiEvent>* writer) {
+                                 grpc::ServerWriter<rps::v1::PluginEvent>* writer,
+                                 const AudioConfig& audioConfig) {
     // Check if already open
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (m_sessions.count(pluginPath)) {
-            rps::v1::PluginGuiEvent event;
+            rps::v1::PluginEvent event;
             auto* err = event.mutable_gui_error();
             err->set_error("already_open");
             err->set_details("Plugin GUI is already open for: " + pluginPath);
@@ -80,7 +81,7 @@ void GuiSessionManager::openGui(const std::string& pluginPath, const std::string
     // Resolve host binary
     auto hostBin = resolveHostBinary(format);
     if (hostBin.empty()) {
-        rps::v1::PluginGuiEvent event;
+        rps::v1::PluginEvent event;
         auto* err = event.mutable_gui_error();
         err->set_error("unsupported_format");
         err->set_details("GUI hosting is not supported for format: " + format);
@@ -94,7 +95,7 @@ void GuiSessionManager::openGui(const std::string& pluginPath, const std::string
     // Create IPC connection (server side)
     auto connection = rps::ipc::MessageQueueConnection::createServer(ipcId);
     if (!connection) {
-        rps::v1::PluginGuiEvent event;
+        rps::v1::PluginEvent event;
         auto* err = event.mutable_gui_error();
         err->set_error("ipc_failed");
         err->set_details("Failed to create IPC message queue.");
@@ -104,17 +105,43 @@ void GuiSessionManager::openGui(const std::string& pluginPath, const std::string
 
     spdlog::info("Launching plugin host: {} for {} (ipc: {})", hostBin.string(), pluginPath, ipcId);
 
+    // Create shared memory for audio if requested
+    std::unique_ptr<rps::audio::SharedAudioRing> audioRing;
+    std::string shmName;
+    if (audioConfig.enabled) {
+        shmName = "rps_audio_" + boost::uuids::to_string(boost::uuids::random_generator()());
+        try {
+            audioRing = rps::audio::SharedAudioRing::create(
+                shmName, audioConfig.sampleRate, audioConfig.blockSize,
+                audioConfig.numChannels);
+            spdlog::info("Audio shared memory created: {}", shmName);
+        } catch (const std::exception& e) {
+            spdlog::error("Failed to create audio shared memory: {}", e.what());
+            shmName.clear();
+        }
+    }
+
     // Spawn the host process
     std::unique_ptr<bp::child> child;
     try {
-        child = std::make_unique<bp::child>(
-            hostBin.string(),
-            "--ipc-id", ipcId,
-            "--plugin-path", pluginPath,
-            "--format", format
-        );
+        if (!shmName.empty()) {
+            child = std::make_unique<bp::child>(
+                hostBin.string(),
+                "--ipc-id", ipcId,
+                "--plugin-path", pluginPath,
+                "--format", format,
+                "--audio-shm", shmName
+            );
+        } else {
+            child = std::make_unique<bp::child>(
+                hostBin.string(),
+                "--ipc-id", ipcId,
+                "--plugin-path", pluginPath,
+                "--format", format
+            );
+        }
     } catch (const std::exception& e) {
-        rps::v1::PluginGuiEvent event;
+        rps::v1::PluginEvent event;
         auto* err = event.mutable_gui_error();
         err->set_error("spawn_failed");
         err->set_details(std::string("Failed to spawn host process: ") + e.what());
@@ -126,6 +153,8 @@ void GuiSessionManager::openGui(const std::string& pluginPath, const std::string
     auto session = std::make_unique<Session>();
     session->pluginPath = pluginPath;
     session->ipcId = ipcId;
+    session->shmName = shmName;
+    session->audioRing = std::move(audioRing);
     session->connection = std::move(connection);
     session->process = std::move(child);
 
@@ -154,7 +183,7 @@ void GuiSessionManager::openGui(const std::string& pluginPath, const std::string
             if (it == m_sessions.end()) break;
             if (!it->second->process->running()) {
                 // Process exited unexpectedly
-                rps::v1::PluginGuiEvent event;
+                rps::v1::PluginEvent event;
                 auto* closed = event.mutable_gui_closed();
                 closed->set_reason("crash");
                 writer->Write(event);
@@ -166,18 +195,33 @@ void GuiSessionManager::openGui(const std::string& pluginPath, const std::string
         switch (msg->type) {
             case rps::ipc::MessageType::GuiOpenedEvent: {
                 auto& evt = std::get<rps::ipc::GuiOpenedEvent>(msg->payload);
-                rps::v1::PluginGuiEvent event;
+                rps::v1::PluginEvent event;
                 auto* opened = event.mutable_gui_opened();
                 opened->set_plugin_name(evt.pluginName);
                 opened->set_width(evt.width);
                 opened->set_height(evt.height);
                 writer->Write(event);
                 spdlog::info("Plugin GUI opened: {} ({}x{})", evt.pluginName, evt.width, evt.height);
+
+                // Send AudioReady if audio shared memory was created
+                if (!currentSession->shmName.empty() && currentSession->audioRing) {
+                    rps::v1::PluginEvent audioEvent;
+                    auto* ready = audioEvent.mutable_audio_ready();
+                    ready->set_shm_name(currentSession->shmName);
+                    const auto& hdr = currentSession->audioRing->header();
+                    ready->set_sample_rate(hdr.sampleRate);
+                    ready->set_block_size(hdr.blockSize);
+                    ready->set_num_channels(hdr.numChannels);
+                    ready->set_ring_blocks(hdr.ringBlocks);
+                    ready->set_latency_samples(hdr.latencySamples);
+                    writer->Write(audioEvent);
+                    spdlog::info("AudioReady sent: shm={}", currentSession->shmName);
+                }
                 break;
             }
             case rps::ipc::MessageType::GuiClosedEvent: {
                 auto& evt = std::get<rps::ipc::GuiClosedEvent>(msg->payload);
-                rps::v1::PluginGuiEvent event;
+                rps::v1::PluginEvent event;
                 auto* closed = event.mutable_gui_closed();
                 closed->set_reason(evt.reason);
                 writer->Write(event);
@@ -187,7 +231,7 @@ void GuiSessionManager::openGui(const std::string& pluginPath, const std::string
             }
             case rps::ipc::MessageType::ParameterListEvent: {
                 auto& evt = std::get<rps::ipc::ParameterListEvent>(msg->payload);
-                rps::v1::PluginGuiEvent event;
+                rps::v1::PluginEvent event;
                 auto* paramList = event.mutable_parameter_list();
                 for (const auto& p : evt.parameters) {
                     auto* pp = paramList->add_parameters();
@@ -208,7 +252,7 @@ void GuiSessionManager::openGui(const std::string& pluginPath, const std::string
             }
             case rps::ipc::MessageType::ParameterValuesEvent: {
                 auto& evt = std::get<rps::ipc::ParameterValuesEvent>(msg->payload);
-                rps::v1::PluginGuiEvent event;
+                rps::v1::PluginEvent event;
                 auto* updates = event.mutable_parameter_updates();
                 for (const auto& u : evt.updates) {
                     auto* pu = updates->add_updates();
@@ -241,7 +285,7 @@ void GuiSessionManager::openGui(const std::string& pluginPath, const std::string
             }
             case rps::ipc::MessageType::PresetListEvent: {
                 auto& evt = std::get<rps::ipc::PresetListEvent>(msg->payload);
-                rps::v1::PluginGuiEvent event;
+                rps::v1::PluginEvent event;
                 auto* presetList = event.mutable_preset_list();
                 for (const auto& p : evt.presets) {
                     auto* pp = presetList->add_presets();

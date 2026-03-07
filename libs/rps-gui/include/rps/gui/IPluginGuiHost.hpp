@@ -4,6 +4,7 @@
 
 #include <string>
 #include <cstdint>
+#include <optional>
 #include <vector>
 #include <functional>
 
@@ -17,6 +18,30 @@
 #endif
 
 namespace rps::gui {
+
+// ---------------------------------------------------------------------------
+// Audio processing support types
+// ---------------------------------------------------------------------------
+
+/// Sample-accurate automation event (extension point for future DAW automation).
+/// In Phase 1 the automation vector is always empty.
+struct AutomationEvent {
+    uint32_t sampleOffset = 0;   // Offset within the current block
+    std::string paramId;
+    double value = 0.0;
+};
+
+/// Negotiated bus layout reported back after setupAudioProcessing().
+/// May differ from the requested channel count if the plugin only supports
+/// certain configurations (e.g. mono-in / stereo-out).
+struct AudioBusLayout {
+    uint32_t numInputChannels = 0;
+    uint32_t numOutputChannels = 0;
+};
+
+// ---------------------------------------------------------------------------
+// IPluginGuiHost interface
+// ---------------------------------------------------------------------------
 
 /// Abstract interface for format-specific plugin GUI hosts.
 /// Each format (CLAP, VST3, etc.) implements this interface in its own binary.
@@ -71,6 +96,42 @@ public:
 
     /// Returns the enriched preset list and clears the flag.
     virtual std::vector<rps::ipc::PresetInfo> getEnrichedPresets() { return {}; }
+
+    // -----------------------------------------------------------------------
+    // Audio processing interface (Phase 1)
+    // All methods have default no-op implementations so existing GUI-only
+    // hosts continue to work without modification.
+    // -----------------------------------------------------------------------
+
+    /// Whether this host implementation supports audio processing.
+    virtual bool supportsAudioProcessing() const { return false; }
+
+    /// Negotiate bus layout and activate audio processing.
+    /// The plugin may accept a different channel count than requested.
+    /// @return The negotiated layout, or nullopt on failure.
+    virtual std::optional<AudioBusLayout> setupAudioProcessing(
+        uint32_t /*sampleRate*/, uint32_t /*blockSize*/, uint32_t /*numChannels*/) {
+        return std::nullopt;
+    }
+
+    /// Process one block of interleaved float32 audio.
+    /// Input layout: numInputChannels interleaved samples × numSamples.
+    /// Output layout: numOutputChannels interleaved samples × numSamples.
+    /// @param automation Sample-accurate parameter changes (empty in Phase 1).
+    virtual bool processAudioBlock(
+        const float* /*input*/, float* /*output*/,
+        uint32_t /*numInputChannels*/, uint32_t /*numOutputChannels*/,
+        uint32_t /*numSamples*/,
+        const std::vector<AutomationEvent>& /*automation*/ = {}) {
+        return false;
+    }
+
+    /// Report the plugin's processing latency in samples (for future PDC).
+    virtual uint32_t getLatencySamples() const { return 0; }
+
+    /// Deactivate audio processing and release audio resources.
+    virtual void teardownAudioProcessing() {}
 };
 
 } // namespace rps::gui
+

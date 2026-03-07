@@ -73,10 +73,29 @@ class RpsClient:
         return list(response.plugins)
 
     def open_plugin_gui(self, plugin_path: str, fmt: str) -> Iterator:
-        """Open a plugin's native GUI. Returns an iterator of PluginGuiEvent."""
+        """Open a plugin's native GUI. Returns an iterator of PluginEvent."""
         request = rps_pb2.OpenPluginGuiRequest(
             plugin_path=plugin_path,
             format=fmt,
+        )
+        return self._stub.OpenPluginGui(request)
+
+    def open_plugin_gui_with_audio(
+        self, plugin_path: str, fmt: str,
+        sample_rate: int = 48000, block_size: int = 128, num_channels: int = 2,
+    ) -> Iterator:
+        """Open a plugin's native GUI with audio processing enabled.
+
+        Returns an iterator of PluginEvent, including an AudioReady event
+        with shared memory details for sending audio.
+        """
+        request = rps_pb2.OpenPluginGuiRequest(
+            plugin_path=plugin_path,
+            format=fmt,
+            enable_audio=True,
+            sample_rate=sample_rate,
+            block_size=block_size,
+            num_channels=num_channels,
         )
         return self._stub.OpenPluginGui(request)
 

@@ -1,6 +1,7 @@
 """Open a plugin's native GUI via gRPC and display lifecycle events with parameter dump."""
 
 import sys
+import struct
 import threading
 import time
 
@@ -8,6 +9,7 @@ from rich.console import Console
 from rich.table import Table
 
 from rps_client.client import RpsClient
+from rps_client.rps_audio import AudioRing, read_wav, write_wav, rms_db
 
 
 console = Console()
@@ -259,7 +261,114 @@ def _list_and_select_plugin(
     return result
 
 
-def run_open_gui(client: RpsClient, format_filter: str = "") -> None:
+def _handle_send_audio(ring: AudioRing, filepath: str, con: Console) -> None:
+    """Process a WAV file through the plugin via the shared memory ring buffer."""
+    import os
+    import array
+
+    if not os.path.isfile(filepath):
+        con.print(f"[red]✗ File not found:[/red] {filepath}")
+        return
+
+    # Read input WAV
+    try:
+        samples, wav_sr, wav_ch = read_wav(filepath)
+    except Exception as e:
+        con.print(f"[red]✗ Cannot read WAV:[/red] {e}")
+        return
+
+    n_samples = len(samples)
+    con.print(
+        f"  [dim]Read {n_samples // wav_ch} frames, {wav_ch}ch, {wav_sr}Hz[/dim]"
+    )
+
+    if wav_sr != ring.sample_rate:
+        con.print(
+            f"  [yellow]⚠ Sample rate mismatch:[/yellow] "
+            f"WAV={wav_sr}Hz, ring={ring.sample_rate}Hz — proceeding anyway"
+        )
+
+    # Pad samples to full blocks
+    block_floats = ring.block_size * ring.num_channels
+    total_blocks = (n_samples + block_floats - 1) // block_floats
+    pad_len = total_blocks * block_floats - n_samples
+    if pad_len > 0:
+        samples.extend([0.0] * pad_len)
+
+    # Pre-convert samples to raw bytes for fast slicing
+    samples_bytes = samples.tobytes()
+    block_byte_size = block_floats * 4  # float32 = 4 bytes
+
+    # Process blocks
+    output_parts: list[bytes] = []
+    blocks_sent = 0
+    blocks_received = 0
+
+    con.print(f"  Processing {total_blocks} blocks...")
+
+    while blocks_received < total_blocks:
+        # Send a batch (fill the ring as much as possible)
+        while blocks_sent < total_blocks:
+            start = blocks_sent * block_byte_size
+            end = start + block_byte_size
+            if ring.write_input_block(samples_bytes[start:end]):
+                blocks_sent += 1
+            else:
+                break  # Ring full, go drain output
+
+        # Drain all available output
+        drained = 0
+        while blocks_received < blocks_sent:
+            if ring.wait_for_output(timeout_ms=2000):
+                out = ring.read_output_block()
+                if out is not None:
+                    output_parts.append(out)
+                    blocks_received += 1
+                    drained += 1
+                else:
+                    break
+            else:
+                con.print(
+                    f"  [yellow]Timeout at block {blocks_received}/{total_blocks}[/yellow]"
+                )
+                break
+
+        # If we drained nothing and can't send more, we're stuck
+        if drained == 0 and blocks_sent >= total_blocks:
+            con.print(
+                f"  [red]Plugin stalled after {blocks_received}/{total_blocks} blocks[/red]"
+            )
+            break
+
+    if not output_parts:
+        con.print("[red]✗ No output received from plugin.[/red]")
+        return
+
+    # Decode output
+    output = array.array("f")
+    for part in output_parts:
+        output.frombytes(part)
+
+    # Trim padding
+    output = output[:n_samples]
+
+    # Stats
+    con.print(f"  Input  RMS: {rms_db(samples)}")
+    con.print(f"  Output RMS: {rms_db(output)}")
+
+    # Write output
+    name, ext = os.path.splitext(filepath)
+    out_path = f"{name}_processed{ext}"
+    write_wav(out_path, output, wav_sr, wav_ch)
+    con.print(
+        f"  [green]✓ Written {len(output) // wav_ch} frames → {out_path}[/green]"
+    )
+
+
+def run_open_gui(
+    client: RpsClient, format_filter: str = "", enable_audio: bool = False,
+    sample_rate: int = 48000, num_channels: int = 2, block_size: int = 128,
+) -> None:
     """Main logic for the open-gui command. Loops so user can open multiple plugins."""
     last_selected = None
 
@@ -277,12 +386,21 @@ def run_open_gui(client: RpsClient, format_filter: str = "") -> None:
         preset_store = PresetStore()
         plugin_name = ""
         gui_closed = threading.Event()
+        audio_ring: AudioRing | None = None
 
         def _stream_consumer():
             """Background thread: consumes gRPC event stream."""
-            nonlocal plugin_name
+            nonlocal plugin_name, audio_ring
             try:
-                event_stream = client.open_plugin_gui(plugin_path, fmt)
+                if enable_audio:
+                    event_stream = client.open_plugin_gui_with_audio(
+                        plugin_path, fmt,
+                        sample_rate=sample_rate,
+                        block_size=block_size,
+                        num_channels=num_channels,
+                    )
+                else:
+                    event_stream = client.open_plugin_gui(plugin_path, fmt)
                 for event in event_stream:
                     if gui_closed.is_set():
                         break
@@ -293,10 +411,14 @@ def run_open_gui(client: RpsClient, format_filter: str = "") -> None:
                             f"[green]✓ GUI Opened:[/green] {g.plugin_name} "
                             f"({g.width}×{g.height})"
                         )
-                        console.print(
+                        cmds = (
                             "[dim]Commands: save-state <file>, load-state <file>, "
-                            "presets, load-preset <#|name>, params, help, quit[/dim]\n"
+                            "presets, load-preset <#|name>, params"
                         )
+                        if enable_audio:
+                            cmds += ", send-audio <file.wav>"
+                        cmds += ", help, quit[/dim]\n"
+                        console.print(cmds)
                     elif event.HasField("parameter_list"):
                         store.load_list(event.parameter_list)
                         store.print_table(plugin_name)
@@ -331,6 +453,17 @@ def run_open_gui(client: RpsClient, format_filter: str = "") -> None:
                         console.print(
                             f"  [green]✓ Preset loaded:[/green] {pl.preset_name}"
                         )
+                    elif event.HasField("audio_ready"):
+                        ar = event.audio_ready
+                        try:
+                            audio_ring = AudioRing(ar.shm_name)
+                            console.print(
+                                f"  [green]✓ Audio ready:[/green] "
+                                f"{ar.sample_rate}Hz, bs={ar.block_size}, "
+                                f"ch={ar.num_channels}"
+                            )
+                        except Exception as e:
+                            console.print(f"  [red]✗ Audio ring error:[/red] {e}")
             except Exception as e:
                 if not gui_closed.is_set():
                     console.print(f"[red]Stream error: {e}[/red]")
@@ -433,7 +566,18 @@ def run_open_gui(client: RpsClient, format_filter: str = "") -> None:
                     console.print("  presets               — List available presets")
                     console.print("  load-preset <#|name>  — Load a preset by index or name")
                     console.print("  params                — Print all parameters")
+                    if enable_audio:
+                        console.print("  send-audio <file.wav> — Process a WAV file through the plugin")
                     console.print("  quit                  — Close the GUI and exit")
+
+                elif cmd == "send-audio" and len(parts) == 2:
+                    if not enable_audio or not audio_ring:
+                        console.print(
+                            "[red]✗ Audio not enabled.[/red] "
+                            "Use [bold]open-gui --audio[/bold] to enable."
+                        )
+                    else:
+                        _handle_send_audio(audio_ring, parts[1], console)
 
                 else:
                     console.print(
