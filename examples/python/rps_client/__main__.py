@@ -135,8 +135,9 @@ def shutdown(ctx):
 @click.option("--sample-rate", "-sr", default=48000, type=int, help="Audio sample rate (default: 48000)")
 @click.option("--channels", "-ch", default=2, type=int, help="Audio channel count (default: 2)")
 @click.option("--block-size", "-bs", default=128, type=int, help="Audio block size in samples (default: 128)")
+@click.option("--audio-device", "-ad", default="", help="Audio device backend for real-time playback (e.g. 'sdl3')")
 @click.pass_context
-def open_gui(ctx, format_filter, enable_audio, sample_rate, channels, block_size):
+def open_gui(ctx, format_filter, enable_audio, sample_rate, channels, block_size, audio_device):
     """Browse plugins and open a native GUI for parameter editing."""
     from rps_client.open_gui import run_open_gui
 
@@ -167,6 +168,7 @@ def open_gui(ctx, format_filter, enable_audio, sample_rate, channels, block_size
                 run_open_gui(
                     client, format_filter=format_filter, enable_audio=enable_audio,
                     sample_rate=sample_rate, num_channels=channels, block_size=block_size,
+                    audio_device=audio_device,
                 )
     except KeyboardInterrupt:
         pass

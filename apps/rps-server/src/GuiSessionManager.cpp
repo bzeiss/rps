@@ -124,13 +124,33 @@ void GuiSessionManager::openGui(const std::string& pluginPath, const std::string
     // Spawn the host process
     std::unique_ptr<bp::child> child;
     try {
-        if (!shmName.empty()) {
+        const bool hasShm = !shmName.empty();
+        const bool hasDev = !audioConfig.audioDevice.empty();
+
+        if (hasShm && hasDev) {
+            child = std::make_unique<bp::child>(
+                hostBin.string(),
+                "--ipc-id", ipcId,
+                "--plugin-path", pluginPath,
+                "--format", format,
+                "--audio-shm", shmName,
+                "--audio-device", audioConfig.audioDevice
+            );
+        } else if (hasShm) {
             child = std::make_unique<bp::child>(
                 hostBin.string(),
                 "--ipc-id", ipcId,
                 "--plugin-path", pluginPath,
                 "--format", format,
                 "--audio-shm", shmName
+            );
+        } else if (hasDev) {
+            child = std::make_unique<bp::child>(
+                hostBin.string(),
+                "--ipc-id", ipcId,
+                "--plugin-path", pluginPath,
+                "--format", format,
+                "--audio-device", audioConfig.audioDevice
             );
         } else {
             child = std::make_unique<bp::child>(

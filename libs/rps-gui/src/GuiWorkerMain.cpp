@@ -3,6 +3,7 @@
 #include <rps/ipc/Connection.hpp>
 #include <rps/ipc/Messages.hpp>
 #include <rps/audio/SharedAudioRing.hpp>
+#include <rps/audio/IAudioDevice.hpp>
 #include <SDL3/SDL.h>
 
 #ifdef _MSC_VER
@@ -23,6 +24,7 @@
 #include <iostream>
 #include <thread>
 #include <chrono>
+#include <cstring>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -30,12 +32,91 @@
 #endif
 #include <windows.h>
 #include <avrt.h>
+#include <process.h>  // _beginthreadex
 #pragma comment(lib, "Avrt.lib")
 #endif
 
 namespace po = boost::program_options;
 
 namespace rps::gui {
+
+#ifdef _WIN32
+/// Thread-local storage for exception info copied during SEH filter phase.
+struct CapturedExceptionInfo {
+    DWORD code = 0;
+    ULONG_PTR instruction = 0;
+    ULONG_PTR accessType = 0; // 0=read, 1=write (for ACCESS_VIOLATION)
+    ULONG_PTR faultAddress = 0;
+    DWORD numParams = 0;
+};
+static thread_local CapturedExceptionInfo s_capturedEx;
+
+/// SEH filter that copies exception data during filter phase (before unwinding).
+static LONG captureExceptionFilter(EXCEPTION_POINTERS* ep) {
+    auto* rec = ep->ExceptionRecord;
+    s_capturedEx.code = rec->ExceptionCode;
+    s_capturedEx.instruction = reinterpret_cast<ULONG_PTR>(rec->ExceptionAddress);
+    s_capturedEx.numParams = rec->NumberParameters;
+    if (rec->NumberParameters >= 1) s_capturedEx.accessType = rec->ExceptionInformation[0];
+    if (rec->NumberParameters >= 2) s_capturedEx.faultAddress = rec->ExceptionInformation[1];
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+#endif
+
+/// Context passed to the IAudioDevice callback (real-time path).
+/// The SDL callback reads from playbackRing (pre-processed audio).
+/// A separate worker thread does: readInputBlock → processAudioBlock → write playbackRing.
+struct AudioDeviceContext {
+    uint32_t blockSize = 0;
+    uint32_t outChannels = 0;
+
+    // Lock-free SPSC playback ring (written by worker, read by SDL callback).
+    // Fixed-size circular buffer of interleaved float blocks.
+    static constexpr uint32_t kPlaybackRingBlocks = 16;
+    std::vector<float> playbackRing;       // kPlaybackRingBlocks * blockSize * outChannels
+    std::atomic<uint32_t> playbackWrite{0};
+    std::atomic<uint32_t> playbackRead{0};
+
+    // Debug counters
+    std::atomic<uint64_t> callbackCount{0};
+    std::atomic<uint64_t> blocksConsumed{0};
+    std::atomic<uint64_t> underruns{0};
+};
+
+/// Real-time audio device callback.
+/// Only reads pre-processed audio from the playback ring — NO plugin processing here.
+static void audioDeviceCallback(const float* /*input*/, float* output,
+                                 uint32_t numFrames, void* userData) {
+    auto* ctx = static_cast<AudioDeviceContext*>(userData);
+    if (!ctx || !output) return;
+
+    const uint32_t blockFloats = ctx->blockSize * ctx->outChannels;
+    const uint32_t outFloats = numFrames * ctx->outChannels;
+    ctx->callbackCount.fetch_add(1, std::memory_order_relaxed);
+
+    // Try to read one block from the playback ring
+    uint32_t rd = ctx->playbackRead.load(std::memory_order_acquire);
+    uint32_t wr = ctx->playbackWrite.load(std::memory_order_acquire);
+
+    if (rd != wr) {
+        // Data available — copy to output
+        uint32_t slot = rd % AudioDeviceContext::kPlaybackRingBlocks;
+        const float* src = ctx->playbackRing.data() + slot * blockFloats;
+        const uint32_t framesToCopy = std::min(numFrames, ctx->blockSize);
+        std::memcpy(output, src, framesToCopy * ctx->outChannels * sizeof(float));
+        // Zero any remaining frames if SDL requested more than blockSize
+        if (framesToCopy < numFrames) {
+            std::memset(output + framesToCopy * ctx->outChannels, 0,
+                        (numFrames - framesToCopy) * ctx->outChannels * sizeof(float));
+        }
+        ctx->playbackRead.store(rd + 1, std::memory_order_release);
+        ctx->blocksConsumed.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        // Underrun — output silence
+        std::memset(output, 0, outFloats * sizeof(float));
+        ctx->underruns.fetch_add(1, std::memory_order_relaxed);
+    }
+}
 
 int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> host) {
     // Parse command-line arguments
@@ -45,6 +126,7 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
         ("plugin-path", po::value<std::string>(), "Path to plugin binary")
         ("format", po::value<std::string>()->default_value("clap"), "Plugin format")
         ("audio-shm", po::value<std::string>(), "Shared memory segment name for audio processing")
+        ("audio-device", po::value<std::string>(), "Audio device backend (e.g. sdl3)")
         ("help,h", "Show help");
 
     po::variables_map vm;
@@ -98,9 +180,17 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
     }
     spdlog::info("IPC connected");
 
-    // Initialize SDL3 video subsystem
+    // Initialize SDL3 subsystems
+    const std::string audioDeviceBackend = vm.count("audio-device")
+        ? vm["audio-device"].as<std::string>() : "";
+
+    uint32_t sdlInitFlags = SDL_INIT_VIDEO;
+    if (audioDeviceBackend == "sdl3") {
+        sdlInitFlags |= SDL_INIT_AUDIO;
+    }
+
     spdlog::info("Initializing SDL3...");
-    if (!SDL_Init(SDL_INIT_VIDEO)) {
+    if (!SDL_Init(sdlInitFlags)) {
         spdlog::error("SDL_Init failed: {}", SDL_GetError());
 
         // Send error back via IPC
@@ -149,6 +239,8 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
         std::atomic<bool> audioShutdown{false};
         std::thread audioThread;
         rps::gui::AudioBusLayout audioLayout{};
+        std::unique_ptr<rps::audio::IAudioDevice> audioDevice;
+        AudioDeviceContext deviceCtx;
 
         if (vm.count("audio-shm")) {
             const auto shmName = vm["audio-shm"].as<std::string>();
@@ -171,49 +263,208 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
                     spdlog::info("Audio processing setup: {} in -> {} out",
                                  audioLayout.numInputChannels, audioLayout.numOutputChannels);
 
-                    // Launch audio processing thread
                     const uint32_t inFloats = hdr.blockSize * audioLayout.numInputChannels;
                     const uint32_t outFloats = hdr.blockSize * audioLayout.numOutputChannels;
 
-                    audioThread = std::thread([&audioRing, &host, &audioShutdown,
-                                               inFloats, outFloats,
-                                               bs = hdr.blockSize,
-                                               inCh = audioLayout.numInputChannels,
-                                               outCh = audioLayout.numOutputChannels]() {
-                        spdlog::info("Audio thread started");
+                    // ---- Real-time device mode ----
+                    if (!audioDeviceBackend.empty()) {
+                        audioDevice = rps::audio::createAudioDevice(audioDeviceBackend);
+                        if (audioDevice) {
+                            // Set up device context for the callback (playback ring only)
+                            const uint32_t blockFloats = hdr.blockSize * audioLayout.numOutputChannels;
+                            deviceCtx.blockSize = hdr.blockSize;
+                            deviceCtx.outChannels = audioLayout.numOutputChannels;
+                            deviceCtx.playbackRing.resize(
+                                AudioDeviceContext::kPlaybackRingBlocks * blockFloats, 0.0f);
+
+                            rps::audio::AudioDeviceConfig devConfig;
+                            devConfig.sampleRate = hdr.sampleRate;
+                            devConfig.blockSize = hdr.blockSize;
+                            devConfig.numOutputChannels = audioLayout.numOutputChannels;
+
+                            if (audioDevice->open(devConfig, audioDeviceCallback, &deviceCtx)) {
+                                audioDevice->start();
+                                spdlog::info("Audio device started: {} ({}Hz, bs={})",
+                                             audioDevice->backendName(),
+                                             audioDevice->actualSampleRate(),
+                                             audioDevice->actualBlockSize());
+
+                                // Start a worker thread that reads from input ring,
+                                // processes audio via the plugin, and writes to both
+                                // the playback ring (for SDL) and the output ring (for Python).
+                                // Use 8MB stack — plugins like FabFilter need more than the
+                                // default 1MB for heavy DSP (oversampling, lookahead, etc.).
+                                struct WorkerArgs {
+                                    std::unique_ptr<rps::audio::SharedAudioRing>* audioRing;
+                                    std::unique_ptr<rps::gui::IPluginGuiHost>* host;
+                                    std::atomic<bool>* audioShutdown;
+                                    AudioDeviceContext* deviceCtx;
+                                    uint32_t inFloats, outFloats, bs, inCh, outCh;
+                                };
+                                auto* workerArgs = new WorkerArgs{
+                                    &audioRing, &host, &audioShutdown, &deviceCtx,
+                                    inFloats, outFloats, hdr.blockSize,
+                                    audioLayout.numInputChannels, audioLayout.numOutputChannels
+                                };
+
+                                // Worker body — captureless, castable to LPTHREAD_START_ROUTINE.
+                                // On x64 Windows __stdcall == __cdecl, so the cast is safe.
+                                auto workerBody = [](LPVOID param) -> DWORD {
+                                    auto* args = static_cast<WorkerArgs*>(param);
+                                    auto& audioRing = *args->audioRing;
+                                    auto& host = *args->host;
+                                    auto& audioShutdown = *args->audioShutdown;
+                                    auto& deviceCtx = *args->deviceCtx;
+                                    const uint32_t inFloats = args->inFloats;
+                                    const uint32_t outFloats = args->outFloats;
+                                    const uint32_t bs = args->bs;
+                                    const uint32_t inCh = args->inCh;
+                                    const uint32_t outCh = args->outCh;
+                                    delete args;
+
+                                    spdlog::info("Audio worker thread started (device mode, 8MB stack)");
+
+                                    DWORD taskIndex = 0;
+                                    auto hTask = AvSetMmThreadCharacteristicsW(L"Pro Audio", &taskIndex);
+                                    if (hTask) {
+                                        spdlog::info("Audio worker thread elevated to Pro Audio priority");
+                                    }
+
+                                    const uint32_t blockFloats = bs * outCh;
+                                    std::vector<float> inputBuf(inFloats);
+                                    std::vector<float> outputBuf(outFloats);
+                                    bool processingOk = true;
+
+                                    while (!audioShutdown.load(std::memory_order_relaxed)) {
+                                        if (!processingOk) {
+                                            // After a crash, just drain input and output silence
+                                            if (audioRing->waitForInput(std::chrono::milliseconds(10))) {
+                                                if (audioRing->readInputBlock(inputBuf.data())) {
+                                                    std::fill(outputBuf.begin(), outputBuf.end(), 0.0f);
+                                                    audioRing->writeOutputBlock(outputBuf.data());
+                                                }
+                                            }
+                                            continue;
+                                        }
+                                        if (audioRing->waitForInput(std::chrono::milliseconds(10))) {
+                                            if (audioRing->readInputBlock(inputBuf.data())) {
+                                                [&]() {
+                                                    __try {
+                                                        host->processAudioBlock(
+                                                            inputBuf.data(), outputBuf.data(),
+                                                            inCh, outCh, bs);
+                                                    } __except(captureExceptionFilter(GetExceptionInformation())) {
+                                                        if (s_capturedEx.code == 0xC0000005 && s_capturedEx.numParams >= 2) {
+                                                            spdlog::error(
+                                                                "ACCESS_VIOLATION: {} at address 0x{:016X}, instruction at 0x{:016X}",
+                                                                s_capturedEx.accessType == 0 ? "READ" : "WRITE",
+                                                                s_capturedEx.faultAddress,
+                                                                s_capturedEx.instruction);
+                                                        } else {
+                                                            spdlog::error(
+                                                                "SEH exception 0x{:08X} at instruction 0x{:016X}",
+                                                                s_capturedEx.code,
+                                                                s_capturedEx.instruction);
+                                                        }
+                                                        spdlog::default_logger()->flush();
+                                                        processingOk = false;
+                                                        std::fill(outputBuf.begin(), outputBuf.end(), 0.0f);
+                                                    }
+                                                }();
+
+                                                // Write to output ring (for Python collection)
+                                                audioRing->writeOutputBlock(outputBuf.data());
+
+                                                // Write to playback ring (for SDL callback)
+                                                uint32_t wr = deviceCtx.playbackWrite.load(std::memory_order_relaxed);
+                                                uint32_t rd = deviceCtx.playbackRead.load(std::memory_order_acquire);
+                                                if (wr - rd < AudioDeviceContext::kPlaybackRingBlocks) {
+                                                    uint32_t slot = wr % AudioDeviceContext::kPlaybackRingBlocks;
+                                                    std::memcpy(
+                                                        deviceCtx.playbackRing.data() + slot * blockFloats,
+                                                        outputBuf.data(),
+                                                        blockFloats * sizeof(float));
+                                                    deviceCtx.playbackWrite.store(wr + 1, std::memory_order_release);
+                                                }
+                                                // else: playback ring full, skip (SDL will under-run gracefully)
+                                            }
+                                        }
+                                    }
+
+                                    spdlog::info("Audio worker thread exiting");
+                                    return 0;
+                                };
+
+                                // Launch with 8MB stack via CreateThread
+                                constexpr SIZE_T kWorkerStackSize = 8 * 1024 * 1024; // 8MB
+                                HANDLE hWorker = CreateThread(
+                                    nullptr, kWorkerStackSize,
+                                    static_cast<LPTHREAD_START_ROUTINE>(+workerBody),
+                                    workerArgs, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+                                if (hWorker) {
+                                    spdlog::info("Audio worker thread created with 8MB stack");
+                                    // Wrap the native handle so we can join later
+                                    audioThread = std::thread([hWorker]() {
+                                        WaitForSingleObject(hWorker, INFINITE);
+                                        CloseHandle(hWorker);
+                                    });
+                                } else {
+                                    spdlog::error("Failed to create audio worker thread");
+                                    delete workerArgs;
+                                }
+                            } else {
+                                spdlog::error("Failed to open audio device: {}",
+                                              audioDeviceBackend);
+                                audioDevice.reset();
+                            }
+                        } else {
+                            spdlog::error("Unknown audio device backend: {}",
+                                          audioDeviceBackend);
+                        }
+                    }
+
+                    // ---- Offline polling mode (no device, or device failed) ----
+                    if (!audioDevice) {
+                        audioThread = std::thread([&audioRing, &host, &audioShutdown,
+                                                   inFloats, outFloats,
+                                                   bs = hdr.blockSize,
+                                                   inCh = audioLayout.numInputChannels,
+                                                   outCh = audioLayout.numOutputChannels]() {
+                            spdlog::info("Audio thread started (polling mode)");
 
 #ifdef _WIN32
-                        // AVRT for Pro Audio thread priority
-                        DWORD taskIndex = 0;
-                        auto hTask = AvSetMmThreadCharacteristicsW(L"Pro Audio", &taskIndex);
-                        if (hTask) {
-                            spdlog::info("Audio thread elevated to Pro Audio priority");
-                        }
+                            // AVRT for Pro Audio thread priority
+                            DWORD taskIndex = 0;
+                            auto hTask = AvSetMmThreadCharacteristicsW(L"Pro Audio", &taskIndex);
+                            if (hTask) {
+                                spdlog::info("Audio thread elevated to Pro Audio priority");
+                            }
 #endif
 
-                        std::vector<float> inputBuf(inFloats);
-                        std::vector<float> outputBuf(outFloats);
+                            std::vector<float> inputBuf(inFloats);
+                            std::vector<float> outputBuf(outFloats);
 
-                        while (!audioShutdown.load(std::memory_order_relaxed)) {
-                            if (audioRing->waitForInput(std::chrono::milliseconds(10))) {
-                                if (audioRing->readInputBlock(inputBuf.data())) {
-                                    host->processAudioBlock(
-                                        inputBuf.data(), outputBuf.data(),
-                                        inCh, outCh, bs);
+                            while (!audioShutdown.load(std::memory_order_relaxed)) {
+                                if (audioRing->waitForInput(std::chrono::milliseconds(10))) {
+                                    if (audioRing->readInputBlock(inputBuf.data())) {
+                                        host->processAudioBlock(
+                                            inputBuf.data(), outputBuf.data(),
+                                            inCh, outCh, bs);
 
-                                    // Spin-wait until output ring has space (Python must drain)
-                                    while (!audioShutdown.load(std::memory_order_relaxed)) {
-                                        if (audioRing->writeOutputBlock(outputBuf.data())) {
-                                            break;
+                                        // Spin-wait until output ring has space
+                                        while (!audioShutdown.load(std::memory_order_relaxed)) {
+                                            if (audioRing->writeOutputBlock(outputBuf.data())) {
+                                                break;
+                                            }
+                                            std::this_thread::yield();
                                         }
-                                        std::this_thread::yield();
                                     }
                                 }
                             }
-                        }
 
-                        spdlog::info("Audio thread exiting");
-                    });
+                            spdlog::info("Audio thread exiting");
+                        });
+                    }
                 } else {
                     spdlog::warn("Plugin does not support audio processing");
                 }
@@ -321,8 +572,18 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
 
         spdlog::info("GUI event loop exited (reason: {})", closeReason.empty() ? "user" : closeReason);
 
-        // Shut down audio thread before IPC thread
+        // Shut down audio — device or thread
         audioShutdown.store(true, std::memory_order_relaxed);
+        if (audioDevice) {
+            // Log debug counters before stopping
+            spdlog::info("Audio device stats: callbacks={}, consumed={}, underruns={}",
+                         deviceCtx.callbackCount.load(std::memory_order_relaxed),
+                         deviceCtx.blocksConsumed.load(std::memory_order_relaxed),
+                         deviceCtx.underruns.load(std::memory_order_relaxed));
+            audioDevice->stop();
+            audioDevice->close();
+            audioDevice.reset();
+        }
         if (audioThread.joinable()) {
             audioThread.join();
         }

@@ -1,6 +1,7 @@
 #include <rps/server/RpsServiceImpl.hpp>
 #include <rps/server/GrpcScanObserver.hpp>
 #include <rps/engine/db/DatabaseManager.hpp>
+#include <rps/audio/IAudioDevice.hpp>
 #include <sqlite3.h>
 #include <spdlog/spdlog.h>
 #include <thread>
@@ -193,6 +194,7 @@ grpc::Status RpsServiceImpl::OpenPluginGui(grpc::ServerContext* /*context*/,
         audioConfig.sampleRate = request->sample_rate() > 0 ? request->sample_rate() : 48000;
         audioConfig.blockSize = request->block_size() > 0 ? request->block_size() : 128;
         audioConfig.numChannels = request->num_channels() > 0 ? request->num_channels() : 2;
+        audioConfig.audioDevice = request->audio_device();
     }
 
     m_guiManager.openGui(pluginPath, format, writer, audioConfig);
@@ -357,6 +359,36 @@ grpc::Status RpsServiceImpl::StreamAudio(
     readerThread.join();
 
     spdlog::info("StreamAudio ended for: {}", pluginPath);
+    return grpc::Status::OK;
+}
+
+grpc::Status RpsServiceImpl::ListAudioDevices(
+        grpc::ServerContext* /*context*/,
+        const rps::v1::ListAudioDevicesRequest* request,
+        rps::v1::ListAudioDevicesResponse* response) {
+    const auto& filterBackend = request->backend();
+    auto backends = rps::audio::availableAudioBackends();
+
+    for (const auto& backend : backends) {
+        if (!filterBackend.empty() && filterBackend != backend) {
+            continue;
+        }
+
+        auto device = rps::audio::createAudioDevice(backend);
+        if (!device) continue;
+
+        for (const auto& info : device->enumerateDevices()) {
+            auto* entry = response->add_devices();
+            entry->set_backend(backend);
+            entry->set_device_id(info.id);
+            entry->set_name(info.name);
+            entry->set_max_input_channels(info.maxInputChannels);
+            entry->set_max_output_channels(info.maxOutputChannels);
+            entry->set_is_default(info.isDefault);
+        }
+    }
+
+    spdlog::info("ListAudioDevices: {} devices found", response->devices_size());
     return grpc::Status::OK;
 }
 

@@ -58,6 +58,10 @@ public:
                              grpc::ServerReaderWriter<rps::v1::AudioOutputBlock,
                                                      rps::v1::AudioInputBlock>* stream) override;
 
+    grpc::Status ListAudioDevices(grpc::ServerContext* context,
+                                  const rps::v1::ListAudioDevicesRequest* request,
+                                  rps::v1::ListAudioDevicesResponse* response) override;
+
     // Called by main to set the server pointer for shutdown
     void setServer(grpc::Server* server);
 

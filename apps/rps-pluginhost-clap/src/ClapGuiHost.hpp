@@ -86,6 +86,7 @@ private:
     const clap_plugin_audio_ports* m_audioPorts = nullptr;
     const clap_plugin_latency* m_latencyExt = nullptr;
     bool m_audioActive = false;
+    bool m_processingStarted = false;  // start_processing() must be called from audio thread
     uint32_t m_audioInputChannels = 0;
     uint32_t m_audioOutputChannels = 0;
     uint32_t m_audioBlockSize = 0;
@@ -93,6 +94,14 @@ private:
     std::vector<std::vector<float>> m_outputChannelBuffers;
     std::vector<float*> m_inputPtrs;
     std::vector<float*> m_outputPtrs;
+
+    // Multi-port support (e.g., sidechain)
+    uint32_t m_numInputPorts = 1;
+    uint32_t m_numOutputPorts = 1;
+    std::vector<std::vector<std::vector<float>>> m_extraInputBuses;   // [port][channel][sample]
+    std::vector<std::vector<float*>> m_extraInputBusPtrs;              // [port][channel]
+    std::vector<std::vector<std::vector<float>>> m_extraOutputBuses;
+    std::vector<std::vector<float*>> m_extraOutputBusPtrs;
 };
 
 } // namespace rps::scanner

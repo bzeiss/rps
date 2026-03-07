@@ -83,6 +83,7 @@ class RpsClient:
     def open_plugin_gui_with_audio(
         self, plugin_path: str, fmt: str,
         sample_rate: int = 48000, block_size: int = 128, num_channels: int = 2,
+        audio_device: str = "",
     ) -> Iterator:
         """Open a plugin's native GUI with audio processing enabled.
 
@@ -96,6 +97,7 @@ class RpsClient:
             sample_rate=sample_rate,
             block_size=block_size,
             num_channels=num_channels,
+            audio_device=audio_device,
         )
         return self._stub.OpenPluginGui(request)
 
@@ -144,6 +146,13 @@ class RpsClient:
                 seq += 1
 
         return self._stub.StreamAudio(_generate())
+
+    def list_audio_devices(self, backend: str = ""):
+        """List available audio device backends and their devices."""
+        resp = self._stub.ListAudioDevices(
+            rps_pb2.ListAudioDevicesRequest(backend=backend)
+        )
+        return resp.devices
 
     def __enter__(self):
         self.connect()

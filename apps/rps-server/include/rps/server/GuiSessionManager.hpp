@@ -37,6 +37,7 @@ struct AudioConfig {
     uint32_t sampleRate = 48000;
     uint32_t blockSize = 128;
     uint32_t numChannels = 2;
+    std::string audioDevice;       ///< Audio device backend (e.g. "sdl3"), empty = offline
 };
 
 /// Manages active plugin GUI sessions. Each session is a child process

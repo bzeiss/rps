@@ -101,34 +101,39 @@ target_link_libraries(rps-server
 # Ensure the scanner and plugin host are built before we try to copy them
 add_dependencies(rps-server rps-pluginscanner rps-pluginhost-clap rps-pluginhost-vst3)
 
-add_custom_target(rps-server-deps ALL
-    # Copy scanner next to server
+# POST_BUILD: copy on rebuild
+add_custom_command(TARGET rps-server POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:rps-pluginscanner>
         "$<TARGET_FILE_DIR:rps-server>/$<TARGET_FILE_NAME:rps-pluginscanner>"
-    # Copy plugin host next to server
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:rps-pluginhost-clap>
         "$<TARGET_FILE_DIR:rps-server>/$<TARGET_FILE_NAME:rps-pluginhost-clap>"
-    # Copy server to Python and Java example directories
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        $<TARGET_FILE:rps-server>
-        "${CMAKE_SOURCE_DIR}/examples/python/$<TARGET_FILE_NAME:rps-server>"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        $<TARGET_FILE:rps-server>
-        "${CMAKE_SOURCE_DIR}/examples/java/$<TARGET_FILE_NAME:rps-server>"
-    # Copy plugin host (CLAP) to Python example directory
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        $<TARGET_FILE:rps-pluginhost-clap>
-        "${CMAKE_SOURCE_DIR}/examples/python/$<TARGET_FILE_NAME:rps-pluginhost-clap>"
-    # Copy plugin host (VST3) next to server
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:rps-pluginhost-vst3>
         "$<TARGET_FILE_DIR:rps-server>/$<TARGET_FILE_NAME:rps-pluginhost-vst3>"
-    # Copy plugin host (VST3) to Python example directory
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        $<TARGET_FILE:rps-pluginhost-vst3>
-        "${CMAKE_SOURCE_DIR}/examples/python/$<TARGET_FILE_NAME:rps-pluginhost-vst3>"
-    DEPENDS rps-server rps-pluginscanner rps-pluginhost-clap rps-pluginhost-vst3
-    COMMENT "Ensuring binaries are present for server and examples"
+    COMMAND ${CMAKE_COMMAND}
+        -DSRC=$<TARGET_FILE:rps-server>
+        -DDST=${CMAKE_SOURCE_DIR}/examples/python/$<TARGET_FILE_NAME:rps-server>
+        -P ${CMAKE_SOURCE_DIR}/cmake/try_copy.cmake
+    COMMAND ${CMAKE_COMMAND}
+        -DSRC=$<TARGET_FILE:rps-server>
+        -DDST=${CMAKE_SOURCE_DIR}/examples/java/$<TARGET_FILE_NAME:rps-server>
+        -P ${CMAKE_SOURCE_DIR}/cmake/try_copy.cmake
+    COMMENT "Copying server and deps to output directories"
+    COMMAND_EXPAND_LISTS
+)
+
+# Always-run: ensure copies exist even when nothing was rebuilt
+add_custom_target(copy-server-deps ALL
+    COMMAND ${CMAKE_COMMAND}
+        -DSRC=$<TARGET_FILE:rps-server>
+        -DDST=${CMAKE_SOURCE_DIR}/examples/python/$<TARGET_FILE_NAME:rps-server>
+        -P ${CMAKE_SOURCE_DIR}/cmake/try_copy.cmake
+    COMMAND ${CMAKE_COMMAND}
+        -DSRC=$<TARGET_FILE:rps-server>
+        -DDST=${CMAKE_SOURCE_DIR}/examples/java/$<TARGET_FILE_NAME:rps-server>
+        -P ${CMAKE_SOURCE_DIR}/cmake/try_copy.cmake
+    DEPENDS rps-server
+    COMMENT "Ensuring server binaries are present in example directories"
 )

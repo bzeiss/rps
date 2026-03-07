@@ -27,11 +27,19 @@ else()
     target_link_libraries(rps-pluginhost-clap PRIVATE dl)
 endif()
 
-# Copy binary to example directories
-add_custom_target(rps-pluginhost-clap-deps ALL
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        $<TARGET_FILE:rps-pluginhost-clap>
-        "${CMAKE_SOURCE_DIR}/examples/python/$<TARGET_FILE_NAME:rps-pluginhost-clap>"
-    DEPENDS rps-pluginhost-clap
+# Copy on rebuild and ensure copies exist on every build
+add_custom_command(TARGET rps-pluginhost-clap POST_BUILD
+    COMMAND ${CMAKE_COMMAND}
+        -DSRC=$<TARGET_FILE:rps-pluginhost-clap>
+        -DDST=${CMAKE_SOURCE_DIR}/examples/python/$<TARGET_FILE_NAME:rps-pluginhost-clap>
+        -P ${CMAKE_SOURCE_DIR}/cmake/try_copy.cmake
     COMMENT "Copying rps-pluginhost-clap to example directories"
+)
+add_custom_target(copy-pluginhost-clap ALL
+    COMMAND ${CMAKE_COMMAND}
+        -DSRC=$<TARGET_FILE:rps-pluginhost-clap>
+        -DDST=${CMAKE_SOURCE_DIR}/examples/python/$<TARGET_FILE_NAME:rps-pluginhost-clap>
+        -P ${CMAKE_SOURCE_DIR}/cmake/try_copy.cmake
+    DEPENDS rps-pluginhost-clap
+    COMMENT "Ensuring rps-pluginhost-clap is present in example directories"
 )

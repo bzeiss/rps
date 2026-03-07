@@ -365,6 +365,105 @@ def _handle_send_audio(ring: AudioRing, filepath: str, con: Console) -> None:
     )
 
 
+def _handle_play_audio(ring: AudioRing, filepath: str, con: Console) -> None:
+    """Play a WAV file through the plugin in real-time via the audio device.
+
+    Paces block submission at the device's consumption rate.
+    No output WAV is written — audio plays through the device.
+    """
+    import os
+    import time
+
+    if not os.path.isfile(filepath):
+        con.print(f"[red]✗ File not found:[/red] {filepath}")
+        return
+
+    # Read input WAV
+    try:
+        samples, wav_sr, wav_ch = read_wav(filepath)
+    except Exception as e:
+        con.print(f"[red]✗ Cannot read WAV:[/red] {e}")
+        return
+
+    n_samples = len(samples)
+    duration_s = n_samples / (wav_sr * wav_ch)
+    con.print(
+        f"  [dim]Playing {n_samples // wav_ch} frames, {wav_ch}ch, "
+        f"{wav_sr}Hz ({duration_s:.1f}s)[/dim]"
+    )
+
+    if wav_sr != ring.sample_rate:
+        con.print(
+            f"  [yellow]⚠ Sample rate mismatch:[/yellow] "
+            f"WAV={wav_sr}Hz, ring={ring.sample_rate}Hz — proceeding anyway"
+        )
+
+    # Pad samples to full blocks
+    block_floats = ring.block_size * ring.num_channels
+    total_blocks = (n_samples + block_floats - 1) // block_floats
+    pad_len = total_blocks * block_floats - n_samples
+    if pad_len > 0:
+        samples.extend([0.0] * pad_len)
+
+    # Pre-convert to raw bytes
+    samples_bytes = samples.tobytes()
+    block_byte_size = block_floats * 4  # float32 = 4 bytes
+
+    # Calculate timing for paced submission
+    block_duration_s = ring.block_size / ring.sample_rate
+
+    # Push blocks at real-time rate
+    blocks_sent = 0
+    ring_full_count = 0
+    start_time = time.monotonic()
+
+    con.print(f"  ▶ Playing {total_blocks} blocks (bs={ring.block_size}, sr={ring.sample_rate})...")
+
+    while blocks_sent < total_blocks:
+        # Try to push the next block
+        start = blocks_sent * block_byte_size
+        end = start + block_byte_size
+        if ring.write_input_block(samples_bytes[start:end]):
+            blocks_sent += 1
+        else:
+            # Ring full — wait a fraction of a block duration for device to consume
+            ring_full_count += 1
+            time.sleep(block_duration_s * 0.25)
+            continue
+
+        # Drain output ring so device callback doesn't stall on writeOutputBlock
+        while ring.read_output_block() is not None:
+            pass
+
+        # Pace: don't get too far ahead of real-time
+        # Allow up to ~4 blocks (ring depth worth) of look-ahead
+        target_time = start_time + (blocks_sent - 4) * block_duration_s
+        now = time.monotonic()
+        if now < target_time:
+            time.sleep(target_time - now)
+
+    elapsed = time.monotonic() - start_time
+
+    # Wait for the device to play through the remaining buffered blocks
+    remaining_s = 4 * block_duration_s + 0.1  # buffer depth + margin
+    con.print(f"  [dim]Waiting for playback to finish ({remaining_s:.1f}s)...[/dim]")
+    drain_end = time.monotonic() + remaining_s
+    while time.monotonic() < drain_end:
+        while ring.read_output_block() is not None:
+            pass
+        time.sleep(block_duration_s * 0.5)
+
+    con.print(
+        f"  [green]✓ Played {total_blocks} blocks "
+        f"({duration_s:.1f}s) through audio device[/green]"
+    )
+    con.print(
+        f"  [dim]Debug: elapsed={elapsed:.2f}s, expected={duration_s:.1f}s, "
+        f"ring_full_waits={ring_full_count}, "
+        f"block_duration={block_duration_s*1000:.1f}ms[/dim]"
+    )
+
+
 def _handle_send_audio_grpc(
     client: RpsClient, plugin_path: str, filepath: str, con: Console,
     block_size: int, num_channels: int, sample_rate: int,
@@ -462,6 +561,7 @@ def _handle_send_audio_grpc(
 def run_open_gui(
     client: RpsClient, format_filter: str = "", enable_audio: bool = False,
     sample_rate: int = 48000, num_channels: int = 2, block_size: int = 128,
+    audio_device: str = "",
 ) -> None:
     """Main logic for the open-gui command. Loops so user can open multiple plugins."""
     last_selected = None
@@ -492,6 +592,7 @@ def run_open_gui(
                         sample_rate=sample_rate,
                         block_size=block_size,
                         num_channels=num_channels,
+                        audio_device=audio_device,
                     )
                 else:
                     event_stream = client.open_plugin_gui(plugin_path, fmt)
@@ -511,6 +612,8 @@ def run_open_gui(
                         )
                         if enable_audio:
                             cmds += ", send-audio <file.wav>"
+                            if audio_device:
+                                cmds += ", play-audio <file.wav>"
                         cmds += ", help, quit[/dim]\n"
                         console.print(cmds)
                     elif event.HasField("parameter_list"):
@@ -661,8 +764,10 @@ def run_open_gui(
                     console.print("  load-preset <#|name>  — Load a preset by index or name")
                     console.print("  params                — Print all parameters")
                     if enable_audio:
-                        console.print("  send-audio <file.wav> — Process via shared memory (low latency)")
+                        console.print("  send-audio <file.wav> — Process via shared memory (write output file)")
                         console.print("  send-audio-grpc <file.wav> — Process via gRPC stream (networked)")
+                        if audio_device:
+                            console.print("  play-audio <file.wav>  — Real-time playback through audio device")
                     console.print("  quit                  — Close the GUI and exit")
 
                 elif cmd == "send-audio" and len(parts) == 2:
@@ -686,6 +791,20 @@ def run_open_gui(
                             block_size=block_size, num_channels=num_channels,
                             sample_rate=sample_rate,
                         )
+
+                elif cmd == "play-audio" and len(parts) == 2:
+                    if not enable_audio or not audio_ring:
+                        console.print(
+                            "[red]✗ Audio not enabled.[/red] "
+                            "Use [bold]open-gui --audio[/bold] to enable."
+                        )
+                    elif not audio_device:
+                        console.print(
+                            "[red]✗ No audio device.[/red] "
+                            "Use [bold]open-gui --audio --audio-device sdl3[/bold] for real-time playback."
+                        )
+                    else:
+                        _handle_play_audio(audio_ring, parts[1], console)
 
                 else:
                     console.print(
