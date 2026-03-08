@@ -133,7 +133,7 @@ cmake --build build --config Release
 ```bash
 # Ensure you have build tools installed:
 # Ubuntu: sudo apt install build-essential cmake ninja-build pkg-config curl zip unzip tar
-# Fedora: sudo dnf install gcc-c++ cmake ninja-build pkgconf-pkg-config curl zip unzip tar
+# Fedora: sudo dnf install gcc-c++ cmake ninja-build pkgconf-pkg-config curl zip unzip tar autoconf autoconf-archive automake libtool
 
 # Enable VST2 with custom SDK path if needed: -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=/path/to/vstsdk2.4
 cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux
