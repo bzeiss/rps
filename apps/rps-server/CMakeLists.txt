@@ -73,6 +73,7 @@ target_include_directories(rps-server
 target_link_libraries(rps-server
     PRIVATE
         rps-engine
+        rps-coordinator
         rps-ipc
         rps-audio
         rps_warnings

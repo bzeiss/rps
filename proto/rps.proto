@@ -48,6 +48,45 @@ service RpsService {
 
   // List available audio device backends and their devices.
   rpc ListAudioDevices(ListAudioDevicesRequest) returns (ListAudioDevicesResponse);
+
+  // ---------------------------------------------------------------------------
+  // Graph lifecycle (Phase 8)
+  // ---------------------------------------------------------------------------
+
+  // Create a new audio processing graph.
+  rpc CreateGraph(CreateGraphRequest) returns (CreateGraphResponse);
+
+  // Destroy a graph and free all resources.
+  rpc DestroyGraph(DestroyGraphRequest) returns (DestroyGraphResponse);
+
+  // Add a typed node to a graph.
+  rpc AddNode(AddNodeRequest) returns (AddNodeResponse);
+
+  // Connect two nodes in a graph.
+  rpc ConnectNodes(ConnectNodesRequest) returns (ConnectNodesResponse);
+
+  // Validate a graph without activating it.
+  rpc ValidateGraph(ValidateGraphRequest) returns (ValidateGraphResponse);
+
+  // Activate a graph for audio processing.
+  rpc ActivateGraph(ActivateGraphRequest) returns (ActivateGraphResponse);
+
+  // Deactivate a running graph.
+  rpc DeactivateGraph(DeactivateGraphRequest) returns (DeactivateGraphResponse);
+
+  // Get summary info about a graph.
+  rpc GetGraphInfo(GetGraphInfoRequest) returns (GetGraphInfoResponse);
+
+  // ---------------------------------------------------------------------------
+  // Chain convenience API (Phase 8)
+  // ---------------------------------------------------------------------------
+
+  // Create a linear plugin chain: input -> plugin1 -> ... -> output.
+  // Internally creates a graph, adds nodes, connects them, and activates.
+  rpc CreateChain(CreateChainRequest) returns (CreateChainResponse);
+
+  // Destroy a chain (alias for DestroyGraph).
+  rpc DestroyChain(DestroyChainRequest) returns (DestroyChainResponse);
 }
 
 // ---------------------------------------------------------------------------
@@ -424,3 +463,143 @@ message AudioDeviceEntry {
 message ListAudioDevicesResponse {
   repeated AudioDeviceEntry devices = 1;
 }
+
+// ---------------------------------------------------------------------------
+// Graph API messages (Phase 8)
+// ---------------------------------------------------------------------------
+
+message ChannelLayoutMsg {
+  string format = 1;              // "stereo", "mono", "5.1", etc.
+  uint32 channel_count = 2;
+}
+
+// A graph node description. Use the type field to determine which config is populated.
+message GraphNodeMsg {
+  string id = 1;
+  string type = 2;                // "input", "output", "plugin", "gain", "mixer", etc.
+  uint32 latency_samples = 3;
+  string slice_hint = 4;          // For default slicing strategy
+
+  // Plugin config (type="plugin")
+  string plugin_path = 10;
+  string plugin_format = 11;      // "vst3", "clap"
+  ChannelLayoutMsg plugin_io_layout = 12;
+
+  // Input/Output config (type="input" or "output")
+  ChannelLayoutMsg io_layout = 20;
+  string shm_name = 21;
+
+  // Gain config (type="gain")
+  float gain_value = 30;
+  bool gain_mute = 31;
+  bool gain_bypass = 32;
+  ChannelLayoutMsg gain_layout = 33;
+
+  // Mixer config (type="mixer")
+  ChannelLayoutMsg mixer_output_layout = 40;
+  uint32 mixer_num_inputs = 41;
+  repeated float mixer_input_gains = 42;
+}
+
+message CreateGraphRequest {
+  uint32 sample_rate = 1;         // e.g. 48000
+  uint32 block_size = 2;          // e.g. 128
+}
+
+message CreateGraphResponse {
+  string graph_id = 1;
+}
+
+message DestroyGraphRequest {
+  string graph_id = 1;
+}
+
+message DestroyGraphResponse {}
+
+message AddNodeRequest {
+  string graph_id = 1;
+  GraphNodeMsg node = 2;
+}
+
+message AddNodeResponse {
+  string node_id = 1;
+}
+
+message ConnectNodesRequest {
+  string graph_id = 1;
+  string source_node_id = 2;
+  uint32 source_port = 3;
+  string dest_node_id = 4;
+  uint32 dest_port = 5;
+}
+
+message ConnectNodesResponse {
+  string edge_id = 1;
+}
+
+message ValidateGraphRequest {
+  string graph_id = 1;
+}
+
+message ValidateGraphResponse {
+  bool valid = 1;
+  repeated string errors = 2;
+}
+
+message ActivateGraphRequest {
+  string graph_id = 1;
+  string strategy = 2;            // "performance" (default), "default", "crash_isolation"
+}
+
+message ActivateGraphResponse {
+  bool success = 1;
+  string error = 2;
+  uint32 slice_count = 3;
+}
+
+message DeactivateGraphRequest {
+  string graph_id = 1;
+}
+
+message DeactivateGraphResponse {}
+
+message GetGraphInfoRequest {
+  string graph_id = 1;
+}
+
+message GetGraphInfoResponse {
+  string graph_id = 1;
+  string state = 2;               // "inactive", "active"
+  uint32 node_count = 3;
+  uint32 edge_count = 4;
+  uint32 slice_count = 5;
+  string strategy = 6;
+}
+
+// ---------------------------------------------------------------------------
+// Chain API messages (Phase 8)
+// ---------------------------------------------------------------------------
+
+message ChainPluginEntry {
+  string plugin_path = 1;         // DB path to the plugin
+  string format = 2;              // "vst3", "clap"
+}
+
+message CreateChainRequest {
+  repeated ChainPluginEntry plugins = 1;
+  uint32 sample_rate = 2;         // e.g. 48000 (default if 0)
+  uint32 block_size = 3;          // e.g. 128 (default if 0)
+  uint32 num_channels = 4;        // e.g. 2 (stereo, default if 0)
+}
+
+message CreateChainResponse {
+  string graph_id = 1;            // The underlying graph ID
+  bool success = 2;
+  string error = 3;
+}
+
+message DestroyChainRequest {
+  string graph_id = 1;
+}
+
+message DestroyChainResponse {}

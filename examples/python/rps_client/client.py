@@ -166,6 +166,120 @@ class RpsClient:
         )
         return resp.devices
 
+    # -- Graph lifecycle (Phase 8) --
+
+    def create_graph(
+        self, sample_rate: int = 48000, block_size: int = 128,
+    ) -> rps_pb2.CreateGraphResponse:
+        """Create a new audio processing graph. Returns response with graph_id."""
+        return self._stub.CreateGraph(
+            rps_pb2.CreateGraphRequest(sample_rate=sample_rate, block_size=block_size)
+        )
+
+    def destroy_graph(self, graph_id: str) -> rps_pb2.DestroyGraphResponse:
+        """Destroy a graph and free all resources."""
+        return self._stub.DestroyGraph(
+            rps_pb2.DestroyGraphRequest(graph_id=graph_id)
+        )
+
+    def add_node(
+        self, graph_id: str, node_id: str, node_type: str, **kwargs,
+    ) -> rps_pb2.AddNodeResponse:
+        """Add a typed node to a graph.
+
+        Args:
+            graph_id: The graph to add the node to.
+            node_id: Unique node identifier.
+            node_type: "input", "output", "plugin", "gain", "mixer".
+            **kwargs: Type-specific fields (plugin_path, plugin_format,
+                      gain_value, etc.) passed directly to GraphNodeMsg.
+        """
+        node_msg = rps_pb2.GraphNodeMsg(id=node_id, type=node_type, **kwargs)
+        return self._stub.AddNode(
+            rps_pb2.AddNodeRequest(graph_id=graph_id, node=node_msg)
+        )
+
+    def connect_nodes(
+        self, graph_id: str,
+        source_node_id: str, source_port: int,
+        dest_node_id: str, dest_port: int,
+    ) -> rps_pb2.ConnectNodesResponse:
+        """Connect two nodes in a graph."""
+        return self._stub.ConnectNodes(
+            rps_pb2.ConnectNodesRequest(
+                graph_id=graph_id,
+                source_node_id=source_node_id, source_port=source_port,
+                dest_node_id=dest_node_id, dest_port=dest_port,
+            )
+        )
+
+    def validate_graph(self, graph_id: str) -> rps_pb2.ValidateGraphResponse:
+        """Validate a graph without activating it."""
+        return self._stub.ValidateGraph(
+            rps_pb2.ValidateGraphRequest(graph_id=graph_id)
+        )
+
+    def activate_graph(
+        self, graph_id: str, strategy: str = "performance",
+    ) -> rps_pb2.ActivateGraphResponse:
+        """Activate a graph for audio processing."""
+        return self._stub.ActivateGraph(
+            rps_pb2.ActivateGraphRequest(graph_id=graph_id, strategy=strategy)
+        )
+
+    def deactivate_graph(self, graph_id: str) -> rps_pb2.DeactivateGraphResponse:
+        """Deactivate a running graph."""
+        return self._stub.DeactivateGraph(
+            rps_pb2.DeactivateGraphRequest(graph_id=graph_id)
+        )
+
+    def get_graph_info(self, graph_id: str) -> rps_pb2.GetGraphInfoResponse:
+        """Get summary info about a graph."""
+        return self._stub.GetGraphInfo(
+            rps_pb2.GetGraphInfoRequest(graph_id=graph_id)
+        )
+
+    # -- Chain convenience (Phase 8) --
+
+    def create_chain(
+        self,
+        plugins: list[dict],
+        sample_rate: int = 48000,
+        block_size: int = 128,
+        num_channels: int = 2,
+    ) -> rps_pb2.CreateChainResponse:
+        """Create a linear plugin chain.
+
+        Args:
+            plugins: List of dicts with 'plugin_path' and 'format' keys.
+            sample_rate: Sample rate (default 48000).
+            block_size: Block size (default 128).
+            num_channels: Channel count (default 2).
+
+        Returns:
+            CreateChainResponse with graph_id and success status.
+        """
+        entries = [
+            rps_pb2.ChainPluginEntry(
+                plugin_path=p["plugin_path"], format=p["format"],
+            )
+            for p in plugins
+        ]
+        return self._stub.CreateChain(
+            rps_pb2.CreateChainRequest(
+                plugins=entries,
+                sample_rate=sample_rate,
+                block_size=block_size,
+                num_channels=num_channels,
+            )
+        )
+
+    def destroy_chain(self, graph_id: str) -> rps_pb2.DestroyChainResponse:
+        """Destroy a chain (alias for destroy_graph)."""
+        return self._stub.DestroyChain(
+            rps_pb2.DestroyChainRequest(graph_id=graph_id)
+        )
+
     def __enter__(self):
         self.connect()
         return self

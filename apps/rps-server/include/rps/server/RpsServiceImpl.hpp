@@ -1,7 +1,7 @@
 #pragma once
-
 #include <rps/engine/ScanEngine.hpp>
 #include <rps/server/GuiSessionManager.hpp>
+#include <rps/coordinator/Coordinator.hpp>
 #include <rps.grpc.pb.h>
 #include <grpcpp/grpcpp.h>
 #include <mutex>
@@ -70,6 +70,50 @@ public:
                                   const rps::v1::ListAudioDevicesRequest* request,
                                   rps::v1::ListAudioDevicesResponse* response) override;
 
+    // -- Graph lifecycle (Phase 8) --
+
+    grpc::Status CreateGraph(grpc::ServerContext* context,
+                             const rps::v1::CreateGraphRequest* request,
+                             rps::v1::CreateGraphResponse* response) override;
+
+    grpc::Status DestroyGraph(grpc::ServerContext* context,
+                              const rps::v1::DestroyGraphRequest* request,
+                              rps::v1::DestroyGraphResponse* response) override;
+
+    grpc::Status AddNode(grpc::ServerContext* context,
+                         const rps::v1::AddNodeRequest* request,
+                         rps::v1::AddNodeResponse* response) override;
+
+    grpc::Status ConnectNodes(grpc::ServerContext* context,
+                              const rps::v1::ConnectNodesRequest* request,
+                              rps::v1::ConnectNodesResponse* response) override;
+
+    grpc::Status ValidateGraph(grpc::ServerContext* context,
+                               const rps::v1::ValidateGraphRequest* request,
+                               rps::v1::ValidateGraphResponse* response) override;
+
+    grpc::Status ActivateGraph(grpc::ServerContext* context,
+                               const rps::v1::ActivateGraphRequest* request,
+                               rps::v1::ActivateGraphResponse* response) override;
+
+    grpc::Status DeactivateGraph(grpc::ServerContext* context,
+                                 const rps::v1::DeactivateGraphRequest* request,
+                                 rps::v1::DeactivateGraphResponse* response) override;
+
+    grpc::Status GetGraphInfo(grpc::ServerContext* context,
+                              const rps::v1::GetGraphInfoRequest* request,
+                              rps::v1::GetGraphInfoResponse* response) override;
+
+    // -- Chain convenience (Phase 8) --
+
+    grpc::Status CreateChain(grpc::ServerContext* context,
+                             const rps::v1::CreateChainRequest* request,
+                             rps::v1::CreateChainResponse* response) override;
+
+    grpc::Status DestroyChain(grpc::ServerContext* context,
+                              const rps::v1::DestroyChainRequest* request,
+                              rps::v1::DestroyChainResponse* response) override;
+
     // Called by main to set the server pointer for shutdown
     void setServer(grpc::Server* server);
 
@@ -80,6 +124,7 @@ public:
 private:
     rps::engine::ScanEngine m_engine;
     GuiSessionManager m_guiManager;
+    rps::coordinator::Coordinator m_coordinator;
     std::string m_dbPath;
     std::string m_scannerBin;
     std::chrono::steady_clock::time_point m_startTime;

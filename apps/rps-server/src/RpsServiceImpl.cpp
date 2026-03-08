@@ -2,10 +2,13 @@
 #include <rps/server/GrpcScanObserver.hpp>
 #include <rps/engine/db/DatabaseManager.hpp>
 #include <rps/audio/IAudioDevice.hpp>
+#include <rps/coordinator/GraphNode.hpp>
+#include <rps/coordinator/ChannelFormat.hpp>
 #include <sqlite3.h>
 #include <spdlog/spdlog.h>
 #include <thread>
 #include <atomic>
+#include <format>
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -36,7 +39,6 @@ grpc::Status RpsServiceImpl::StartScan(grpc::ServerContext* /*context*/,
         return grpc::Status(grpc::StatusCode::ALREADY_EXISTS, "A scan is already running");
     }
 
-    // Build ScanConfig from the gRPC request
     rps::engine::ScanConfig config;
     for (const auto& dir : request->scan_dirs()) {
         config.scanDirs.push_back(dir);
@@ -100,7 +102,6 @@ grpc::Status RpsServiceImpl::Shutdown(grpc::ServerContext* /*context*/,
     m_guiManager.closeAll();
     std::lock_guard<std::mutex> lock(m_serverMutex);
     if (m_server) {
-        // Shutdown asynchronously so we can return the response first
         std::thread([this]() {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             std::lock_guard<std::mutex> lock(m_serverMutex);
@@ -120,7 +121,6 @@ grpc::Status RpsServiceImpl::ListPlugins(grpc::ServerContext* /*context*/,
         rps::engine::db::DatabaseManager db(m_dbPath);
         db.initializeSchema();
 
-        // Query all successfully scanned plugins, optionally filtered by format
         std::string sql = "SELECT id, format, path, name, uid, vendor, version, category, num_inputs, num_outputs "
                           "FROM plugins WHERE status = 'SUCCESS'";
         auto formatFilter = request->format_filter();
@@ -291,7 +291,6 @@ grpc::Status RpsServiceImpl::StreamAudio(
         grpc::ServerContext* /*context*/,
         grpc::ServerReaderWriter<rps::v1::AudioOutputBlock,
                                 rps::v1::AudioInputBlock>* stream) {
-    // Read the first block to determine which session to route to
     rps::v1::AudioInputBlock firstBlock;
     if (!stream->Read(&firstBlock)) {
         return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
@@ -312,14 +311,11 @@ grpc::Status RpsServiceImpl::StreamAudio(
     std::atomic<bool> inputComplete{false};
     std::atomic<bool> clientDisconnected{false};
 
-    // Reader thread: polls the output ring and sends AudioOutputBlock to client.
-    // Keeps running until all expected output blocks have been sent.
     std::thread readerThread([&]() {
         uint64_t blocksSent = 0;
         std::vector<float> buf(ring->header().blockSize * ring->header().numChannels);
 
         while (!clientDisconnected.load(std::memory_order_relaxed)) {
-            // Check if we've sent all expected output
             if (inputComplete.load(std::memory_order_relaxed) &&
                 blocksSent >= blocksWritten.load(std::memory_order_relaxed)) {
                 break;
@@ -342,7 +338,6 @@ grpc::Status RpsServiceImpl::StreamAudio(
         spdlog::info("StreamAudio reader: sent {} output blocks", blocksSent);
     });
 
-    // Process the first block
     uint64_t totalWritten = 0;
     if (firstBlock.audio_data().size() == blockBytes) {
         const auto* data = reinterpret_cast<const float*>(firstBlock.audio_data().data());
@@ -353,7 +348,6 @@ grpc::Status RpsServiceImpl::StreamAudio(
         blocksWritten.store(totalWritten, std::memory_order_relaxed);
     }
 
-    // Main loop: read input blocks from client, write to shared memory ring
     rps::v1::AudioInputBlock inBlock;
     while (stream->Read(&inBlock)) {
         if (inBlock.audio_data().size() != blockBytes) {
@@ -363,7 +357,6 @@ grpc::Status RpsServiceImpl::StreamAudio(
         }
         const auto* data = reinterpret_cast<const float*>(inBlock.audio_data().data());
 
-        // Spin-wait until input ring has space
         while (!ring->writeInputBlock(data)) {
             std::this_thread::yield();
         }
@@ -371,7 +364,6 @@ grpc::Status RpsServiceImpl::StreamAudio(
         blocksWritten.store(totalWritten, std::memory_order_relaxed);
     }
 
-    // Signal that all input has been sent — reader thread will drain remaining output
     inputComplete.store(true, std::memory_order_relaxed);
     spdlog::info("StreamAudio: all {} input blocks written, waiting for output drain", totalWritten);
 
@@ -409,6 +401,306 @@ grpc::Status RpsServiceImpl::ListAudioDevices(
 
     spdlog::info("ListAudioDevices: {} devices found", response->devices_size());
     return grpc::Status::OK;
+}
+
+// ---------------------------------------------------------------------------
+// Graph API handlers (Phase 8)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// Convert a proto ChannelLayoutMsg to coordinator::ChannelLayout.
+coordinator::ChannelLayout protoToLayout(const rps::v1::ChannelLayoutMsg& msg) {
+    coordinator::ChannelLayout layout;
+    if (!msg.format().empty()) {
+        layout.format = coordinator::channelFormatFromString(msg.format());
+    }
+    layout.channelCount = msg.channel_count();
+    uint32_t named = coordinator::getChannelCount(layout.format);
+    if (named > 0 && layout.channelCount == 0) {
+        layout.channelCount = named;
+    }
+    return layout;
+}
+
+/// Convert a proto GraphNodeMsg to a coordinator::GraphNode.
+coordinator::GraphNode protoNodeToGraphNode(const rps::v1::GraphNodeMsg& msg) {
+    auto typeOpt = coordinator::nodeTypeFromString(msg.type());
+    if (!typeOpt) {
+        throw std::runtime_error(std::format("Unknown node type: '{}'", msg.type()));
+    }
+
+    coordinator::GraphNode node;
+    switch (*typeOpt) {
+        case coordinator::NodeType::Input: {
+            coordinator::InputNodeConfig c;
+            if (msg.has_io_layout()) c.layout = protoToLayout(msg.io_layout());
+            c.shmName = msg.shm_name();
+            node = coordinator::createInputNode(msg.id(), c);
+            break;
+        }
+        case coordinator::NodeType::Output: {
+            coordinator::OutputNodeConfig c;
+            if (msg.has_io_layout()) c.layout = protoToLayout(msg.io_layout());
+            c.shmName = msg.shm_name();
+            node = coordinator::createOutputNode(msg.id(), c);
+            break;
+        }
+        case coordinator::NodeType::Plugin: {
+            coordinator::PluginNodeConfig c;
+            c.pluginPath = msg.plugin_path();
+            c.format = msg.plugin_format();
+            coordinator::ChannelLayout ioLayout;
+            if (msg.has_plugin_io_layout()) {
+                ioLayout = protoToLayout(msg.plugin_io_layout());
+            } else {
+                ioLayout = {coordinator::ChannelFormat::Stereo, 2};
+            }
+            node = coordinator::createPluginNode(msg.id(), c, ioLayout);
+            break;
+        }
+        case coordinator::NodeType::Gain: {
+            coordinator::GainNodeConfig c;
+            if (msg.has_gain_layout()) c.layout = protoToLayout(msg.gain_layout());
+            c.gain = msg.gain_value();
+            c.mute = msg.gain_mute();
+            c.bypass = msg.gain_bypass();
+            node = coordinator::createGainNode(msg.id(), c);
+            break;
+        }
+        case coordinator::NodeType::Mixer: {
+            coordinator::MixerNodeConfig c;
+            if (msg.has_mixer_output_layout()) c.outputLayout = protoToLayout(msg.mixer_output_layout());
+            c.numInputs = msg.mixer_num_inputs();
+            for (float g : msg.mixer_input_gains()) {
+                c.inputGains.push_back(g);
+            }
+            node = coordinator::createMixerNode(msg.id(), c);
+            break;
+        }
+        default:
+            throw std::runtime_error(std::format("Node type '{}' not supported via gRPC yet", msg.type()));
+    }
+
+    node.latencySamples = msg.latency_samples();
+    node.sliceHint = msg.slice_hint();
+    return node;
+}
+
+} // anonymous namespace
+
+grpc::Status RpsServiceImpl::CreateGraph(grpc::ServerContext* /*context*/,
+                                          const rps::v1::CreateGraphRequest* request,
+                                          rps::v1::CreateGraphResponse* response) {
+    try {
+        uint32_t sampleRate = request->sample_rate() > 0 ? request->sample_rate() : 48000;
+        uint32_t blockSize = request->block_size() > 0 ? request->block_size() : 128;
+
+        auto graphId = m_coordinator.createGraph({sampleRate, blockSize});
+        response->set_graph_id(graphId);
+        spdlog::info("CreateGraph: id={} sr={} bs={}", graphId, sampleRate, blockSize);
+        return grpc::Status::OK;
+    } catch (const std::exception& e) {
+        return grpc::Status(grpc::StatusCode::INTERNAL, e.what());
+    }
+}
+
+grpc::Status RpsServiceImpl::DestroyGraph(grpc::ServerContext* /*context*/,
+                                           const rps::v1::DestroyGraphRequest* request,
+                                           rps::v1::DestroyGraphResponse* /*response*/) {
+    try {
+        m_coordinator.destroyGraph(request->graph_id());
+        spdlog::info("DestroyGraph: id={}", request->graph_id());
+        return grpc::Status::OK;
+    } catch (const std::exception& e) {
+        return grpc::Status(grpc::StatusCode::NOT_FOUND, e.what());
+    }
+}
+
+grpc::Status RpsServiceImpl::AddNode(grpc::ServerContext* /*context*/,
+                                      const rps::v1::AddNodeRequest* request,
+                                      rps::v1::AddNodeResponse* response) {
+    try {
+        auto node = protoNodeToGraphNode(request->node());
+        auto nodeId = m_coordinator.addNode(request->graph_id(), std::move(node));
+        response->set_node_id(nodeId);
+        spdlog::info("AddNode: graph={} node={}", request->graph_id(), nodeId);
+        return grpc::Status::OK;
+    } catch (const std::exception& e) {
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, e.what());
+    }
+}
+
+grpc::Status RpsServiceImpl::ConnectNodes(grpc::ServerContext* /*context*/,
+                                           const rps::v1::ConnectNodesRequest* request,
+                                           rps::v1::ConnectNodesResponse* response) {
+    try {
+        auto edgeId = m_coordinator.connectNodes(
+            request->graph_id(),
+            request->source_node_id(), request->source_port(),
+            request->dest_node_id(), request->dest_port());
+        response->set_edge_id(edgeId);
+        spdlog::info("ConnectNodes: graph={} {}:{} -> {}:{}",
+                     request->graph_id(),
+                     request->source_node_id(), request->source_port(),
+                     request->dest_node_id(), request->dest_port());
+        return grpc::Status::OK;
+    } catch (const std::exception& e) {
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, e.what());
+    }
+}
+
+grpc::Status RpsServiceImpl::ValidateGraph(grpc::ServerContext* /*context*/,
+                                            const rps::v1::ValidateGraphRequest* request,
+                                            rps::v1::ValidateGraphResponse* response) {
+    try {
+        auto result = m_coordinator.validateGraph(request->graph_id());
+        response->set_valid(result.valid);
+        for (const auto& err : result.errors) {
+            response->add_errors(err.message);
+        }
+        spdlog::info("ValidateGraph: graph={} valid={}", request->graph_id(), result.valid);
+        return grpc::Status::OK;
+    } catch (const std::exception& e) {
+        return grpc::Status(grpc::StatusCode::NOT_FOUND, e.what());
+    }
+}
+
+grpc::Status RpsServiceImpl::ActivateGraph(grpc::ServerContext* /*context*/,
+                                            const rps::v1::ActivateGraphRequest* request,
+                                            rps::v1::ActivateGraphResponse* response) {
+    try {
+        auto strategyStr = request->strategy();
+        coordinator::SlicingStrategy strategy = coordinator::SlicingStrategy::Performance;
+        if (strategyStr == "default") {
+            strategy = coordinator::SlicingStrategy::Default;
+        } else if (strategyStr == "crash_isolation") {
+            strategy = coordinator::SlicingStrategy::CrashIsolation;
+        }
+
+        m_coordinator.activateGraph(request->graph_id(), strategy);
+        auto info = m_coordinator.getGraphInfo(request->graph_id());
+        response->set_success(true);
+        response->set_slice_count(info.sliceCount);
+        spdlog::info("ActivateGraph: graph={} strategy={} slices={}",
+                     request->graph_id(), strategyStr.empty() ? "performance" : strategyStr,
+                     info.sliceCount);
+        return grpc::Status::OK;
+    } catch (const std::exception& e) {
+        response->set_success(false);
+        response->set_error(e.what());
+        return grpc::Status::OK;
+    }
+}
+
+grpc::Status RpsServiceImpl::DeactivateGraph(grpc::ServerContext* /*context*/,
+                                              const rps::v1::DeactivateGraphRequest* request,
+                                              rps::v1::DeactivateGraphResponse* /*response*/) {
+    try {
+        m_coordinator.deactivateGraph(request->graph_id());
+        spdlog::info("DeactivateGraph: graph={}", request->graph_id());
+        return grpc::Status::OK;
+    } catch (const std::exception& e) {
+        return grpc::Status(grpc::StatusCode::NOT_FOUND, e.what());
+    }
+}
+
+grpc::Status RpsServiceImpl::GetGraphInfo(grpc::ServerContext* /*context*/,
+                                           const rps::v1::GetGraphInfoRequest* request,
+                                           rps::v1::GetGraphInfoResponse* response) {
+    try {
+        auto info = m_coordinator.getGraphInfo(request->graph_id());
+        response->set_graph_id(info.graphId);
+        response->set_state(info.state == coordinator::GraphState::Active ? "active" : "inactive");
+        response->set_node_count(info.nodeCount);
+        response->set_edge_count(info.edgeCount);
+        response->set_slice_count(info.sliceCount);
+        switch (info.strategy) {
+            case coordinator::SlicingStrategy::Performance: response->set_strategy("performance"); break;
+            case coordinator::SlicingStrategy::Default: response->set_strategy("default"); break;
+            case coordinator::SlicingStrategy::CrashIsolation: response->set_strategy("crash_isolation"); break;
+        }
+        return grpc::Status::OK;
+    } catch (const std::exception& e) {
+        return grpc::Status(grpc::StatusCode::NOT_FOUND, e.what());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Chain API handlers (Phase 8)
+// ---------------------------------------------------------------------------
+
+grpc::Status RpsServiceImpl::CreateChain(grpc::ServerContext* /*context*/,
+                                          const rps::v1::CreateChainRequest* request,
+                                          rps::v1::CreateChainResponse* response) {
+    try {
+        if (request->plugins_size() == 0) {
+            response->set_success(false);
+            response->set_error("At least one plugin is required");
+            return grpc::Status::OK;
+        }
+
+        uint32_t sampleRate = request->sample_rate() > 0 ? request->sample_rate() : 48000;
+        uint32_t blockSize = request->block_size() > 0 ? request->block_size() : 128;
+        uint32_t numChannels = request->num_channels() > 0 ? request->num_channels() : 2;
+
+        coordinator::ChannelFormat chanFmt = coordinator::ChannelFormat::Stereo;
+        if (numChannels == 1) chanFmt = coordinator::ChannelFormat::Mono;
+        coordinator::ChannelLayout layout{chanFmt, numChannels};
+
+        auto graphId = m_coordinator.createGraph({sampleRate, blockSize});
+
+        // Add input node
+        m_coordinator.addNode(graphId, coordinator::createInputNode("chain_in", {layout, ""}));
+
+        // Add plugin nodes
+        std::vector<std::string> nodeIds;
+        nodeIds.push_back("chain_in");
+        for (int i = 0; i < request->plugins_size(); ++i) {
+            const auto& entry = request->plugins(i);
+            std::string nodeId = std::format("plugin_{}", i);
+            coordinator::PluginNodeConfig pc;
+            pc.pluginPath = entry.plugin_path();
+            pc.format = entry.format();
+            m_coordinator.addNode(graphId, coordinator::createPluginNode(nodeId, pc, layout));
+            nodeIds.push_back(nodeId);
+        }
+
+        // Add output node
+        m_coordinator.addNode(graphId, coordinator::createOutputNode("chain_out", {layout, ""}));
+        nodeIds.push_back("chain_out");
+
+        // Connect linearly: in -> plugin_0 -> plugin_1 -> ... -> out
+        for (size_t i = 0; i + 1 < nodeIds.size(); ++i) {
+            m_coordinator.connectNodes(graphId, nodeIds[i], 0, nodeIds[i + 1], 0);
+        }
+
+        // Activate with Performance strategy (single process)
+        m_coordinator.activateGraph(graphId, coordinator::SlicingStrategy::Performance);
+
+        response->set_graph_id(graphId);
+        response->set_success(true);
+        spdlog::info("CreateChain: graph={} plugins={} sr={} bs={} ch={}",
+                     graphId, request->plugins_size(), sampleRate, blockSize, numChannels);
+        return grpc::Status::OK;
+
+    } catch (const std::exception& e) {
+        response->set_success(false);
+        response->set_error(e.what());
+        return grpc::Status::OK;
+    }
+}
+
+grpc::Status RpsServiceImpl::DestroyChain(grpc::ServerContext* /*context*/,
+                                           const rps::v1::DestroyChainRequest* request,
+                                           rps::v1::DestroyChainResponse* /*response*/) {
+    try {
+        m_coordinator.destroyGraph(request->graph_id());
+        spdlog::info("DestroyChain: graph={}", request->graph_id());
+        return grpc::Status::OK;
+    } catch (const std::exception& e) {
+        return grpc::Status(grpc::StatusCode::NOT_FOUND, e.what());
+    }
 }
 
 } // namespace rps::server
