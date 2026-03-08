@@ -43,6 +43,10 @@ struct AudioBusLayout {
 // IPluginGuiHost interface
 // ---------------------------------------------------------------------------
 
+// ToolbarCallbacks is defined in SdlWindow.hpp. Forward-declare here so hosts
+// that don't use SdlWindow can still compile the default no-op.
+struct ToolbarCallbacks;
+
 /// Abstract interface for format-specific plugin GUI hosts.
 /// Each format (CLAP, VST3, etc.) implements this interface in its own binary.
 class IPluginGuiHost {
@@ -96,6 +100,10 @@ public:
 
     /// Returns the enriched preset list and clears the flag.
     virtual std::vector<rps::ipc::PresetInfo> getEnrichedPresets() { return {}; }
+
+    /// Set toolbar button callbacks (bypass, delta, etc.).
+    /// Default no-op. Override in hosts that use SdlWindow's toolbar.
+    virtual void setToolbarCallbacks(const ToolbarCallbacks& /*cb*/) {}
 
     // -----------------------------------------------------------------------
     // Audio processing interface (Phase 1)

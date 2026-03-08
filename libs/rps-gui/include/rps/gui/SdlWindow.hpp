@@ -20,6 +20,12 @@ using ResizeCallback = std::function<void(uint32_t, uint32_t)>;
 /// Callback when a preset is selected from the toolbar dropdown.
 using PresetSelectedCallback = std::function<void(const std::string& presetId)>;
 
+/// Toolbar button toggle callbacks.
+struct ToolbarCallbacks {
+    std::function<void(bool)> onBypassChanged;
+    std::function<void(bool)> onDeltaChanged;
+};
+
 /// RAII wrapper around an SDL3 window. Provides native handle retrieval
 /// and event loop helpers for plugin GUI hosting.
 class SdlWindow {
@@ -67,16 +73,28 @@ public:
     /// Post a quit event from another thread, causing pollEvents() to return false.
     void requestClose();
 
-    /// Get the current window size (excluding sidebar).
+    /// Get the current window size (excluding sidebar and toolbar).
     void getSize(uint32_t& width, uint32_t& height) const;
+
+    // --- Toolbar API ---
+
+    /// Toolbar height in pixels.
+    static constexpr uint32_t kToolbarHeight = 28;
+
+    /// Get the toolbar height (0 if sidebar/toolbar is disabled).
+    uint32_t getToolbarHeight() const {
+        return m_sidebarEnabled ? kToolbarHeight : 0;
+    }
+
+    /// Set callbacks for toolbar button toggles.
+    void setToolbarCallbacks(ToolbarCallbacks cb);
 
     // --- Sidebar / Preset API ---
 
-    /// Get the sidebar width in pixels (0 if sidebar is disabled).
-    /// Returns the collapsed strip width when collapsed, or full sidebar width when expanded.
+    /// Get the sidebar width in pixels (0 if sidebar is disabled or collapsed).
     uint32_t getSidebarWidth() const {
         if (!m_sidebarEnabled) return 0;
-        return m_sidebarCollapsed ? kCollapsedStripWidth : m_sidebarWidth;
+        return m_sidebarCollapsed ? 0 : m_sidebarWidth;
     }
 
     /// Set available presets for the sidebar list.
@@ -85,7 +103,7 @@ public:
     /// Set callback for when a preset is selected from the sidebar.
     void setPresetSelectedCallback(PresetSelectedCallback cb);
 
-    /// Reposition the first child HWND to account for the sidebar offset.
+    /// Reposition the first child HWND to account for the sidebar offset and toolbar.
     /// Called automatically by handleResize() on Windows. Format hosts do NOT need
     /// to manage child HWND positioning themselves.
     void repositionChildHwnd(uint32_t pluginW, uint32_t pluginH);
@@ -97,7 +115,6 @@ private:
     ResizeCallback m_resizeCb;
 
     // Sidebar state
-    static constexpr uint32_t kCollapsedStripWidth = 38;
     bool m_sidebarEnabled = false;
     bool m_sidebarCollapsed = true;
     uint32_t m_sidebarWidth = 260;
@@ -112,12 +129,18 @@ private:
     char m_presetFilter[256] = {};
     PresetSelectedCallback m_presetSelectedCb;
 
+    // Toolbar state
+    bool m_bypassActive = false;
+    bool m_deltaActive = false;
+    ToolbarCallbacks m_toolbarCallbacks;
+
     // Category tree filter state
     bool m_allCategoriesSelected = true;
     std::set<std::string> m_selectedCategories;  // Full category paths that are checked
 
     void initImGui();
     void shutdownImGui();
+    void renderToolbar(int winW, int winH);
     void renderSidebar();
     void toggleSidebar(bool collapse);
 };

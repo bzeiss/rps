@@ -72,6 +72,9 @@ public:
         const std::vector<rps::gui::AutomationEvent>& automation = {}) override;
     uint32_t getLatencySamples() const override;
     void teardownAudioProcessing() override;
+    void setToolbarCallbacks(const rps::gui::ToolbarCallbacks& cb) override {
+        m_window.setToolbarCallbacks(cb);
+    }
 
     /// Called by our IPlugFrame implementation when the plugin requests a resize.
     void onPluginRequestResize(Steinberg::ViewRect* newSize);

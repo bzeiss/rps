@@ -82,6 +82,51 @@ struct AudioDeviceContext {
     std::atomic<uint64_t> underruns{0};
 };
 
+// --- Toolbar-controlled audio processing flags (set from UI thread) ---
+static std::atomic<bool> g_bypassActive{false};
+static std::atomic<bool> g_deltaActive{false};
+
+/// Simple circular delay buffer for latency compensation in delta mode.
+/// Delays an interleaved float buffer by a fixed number of samples.
+class DelaySamples {
+public:
+    void resize(uint32_t delaySamples, uint32_t numChannels) {
+        m_numChannels = numChannels;
+        m_delaySamples = delaySamples;
+        m_totalFloats = delaySamples * numChannels;
+        if (m_totalFloats > 0) {
+            m_buffer.resize(m_totalFloats, 0.0f);
+        } else {
+            m_buffer.clear();
+        }
+        m_writePos = 0;
+    }
+
+    /// Push one block of interleaved samples into the delay, returning the delayed output.
+    /// @param input  Current block (numSamples * numChannels interleaved floats)
+    /// @param output Delayed block (same size)
+    /// @param numSamples Number of audio frames in this block
+    void process(const float* input, float* output, uint32_t numSamples) {
+        if (m_totalFloats == 0) {
+            // Zero delay — just copy
+            std::memcpy(output, input, numSamples * m_numChannels * sizeof(float));
+            return;
+        }
+        for (uint32_t i = 0; i < numSamples * m_numChannels; ++i) {
+            output[i] = m_buffer[m_writePos];
+            m_buffer[m_writePos] = input[i];
+            m_writePos = (m_writePos + 1) % m_totalFloats;
+        }
+    }
+
+private:
+    std::vector<float> m_buffer;
+    uint32_t m_numChannels = 0;
+    uint32_t m_delaySamples = 0;
+    uint32_t m_totalFloats = 0;
+    uint32_t m_writePos = 0;
+};
+
 /// Real-time audio device callback.
 /// Only reads pre-processed audio from the playback ring — NO plugin processing here.
 static void audioDeviceCallback(const float* /*input*/, float* output,
@@ -299,11 +344,13 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
                                     std::atomic<bool>* audioShutdown;
                                     AudioDeviceContext* deviceCtx;
                                     uint32_t inFloats, outFloats, bs, inCh, outCh;
+                                    uint32_t latencySamples;
                                 };
                                 auto* workerArgs = new WorkerArgs{
                                     &audioRing, &host, &audioShutdown, &deviceCtx,
                                     inFloats, outFloats, hdr.blockSize,
-                                    audioLayout.numInputChannels, audioLayout.numOutputChannels
+                                    audioLayout.numInputChannels, audioLayout.numOutputChannels,
+                                    host->getLatencySamples()
                                 };
 
                                 // Worker body — captureless, castable to LPTHREAD_START_ROUTINE.
@@ -319,6 +366,7 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
                                     const uint32_t bs = args->bs;
                                     const uint32_t inCh = args->inCh;
                                     const uint32_t outCh = args->outCh;
+                                    const uint32_t latencySamples = args->latencySamples;
                                     delete args;
 
                                     spdlog::info("Audio worker thread started (device mode, 8MB stack)");
@@ -329,9 +377,16 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
                                         spdlog::info("Audio worker thread elevated to Pro Audio priority");
                                     }
 
+                                    // Delay buffer for delta mode latency compensation
+                                    DelaySamples deltaDelay;
+                                    deltaDelay.resize(latencySamples, inCh);
+                                    spdlog::info("Delta delay buffer: {} samples", latencySamples);
+
                                     const uint32_t blockFloats = bs * outCh;
                                     std::vector<float> inputBuf(inFloats);
                                     std::vector<float> outputBuf(outFloats);
+                                    std::vector<float> dryCopy(inFloats);   // for bypass/delta
+                                    std::vector<float> dryDelayed(inFloats); // delay-compensated dry
                                     bool processingOk = true;
 
                                     while (!audioShutdown.load(std::memory_order_relaxed)) {
@@ -347,29 +402,74 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
                                         }
                                         if (audioRing->waitForInput(std::chrono::milliseconds(10))) {
                                             if (audioRing->readInputBlock(inputBuf.data())) {
-                                                [&]() {
-                                                    __try {
-                                                        host->processAudioBlock(
-                                                            inputBuf.data(), outputBuf.data(),
-                                                            inCh, outCh, bs);
-                                                    } __except(captureExceptionFilter(GetExceptionInformation())) {
-                                                        if (s_capturedEx.code == 0xC0000005 && s_capturedEx.numParams >= 2) {
-                                                            spdlog::error(
-                                                                "ACCESS_VIOLATION: {} at address 0x{:016X}, instruction at 0x{:016X}",
-                                                                s_capturedEx.accessType == 0 ? "READ" : "WRITE",
-                                                                s_capturedEx.faultAddress,
-                                                                s_capturedEx.instruction);
-                                                        } else {
-                                                            spdlog::error(
-                                                                "SEH exception 0x{:08X} at instruction 0x{:016X}",
-                                                                s_capturedEx.code,
-                                                                s_capturedEx.instruction);
+                                                bool bypass = g_bypassActive.load(std::memory_order_relaxed);
+                                                bool delta = g_deltaActive.load(std::memory_order_relaxed);
+
+                                                // Save dry copy for bypass/delta
+                                                if (bypass || delta) {
+                                                    std::memcpy(dryCopy.data(), inputBuf.data(), inFloats * sizeof(float));
+                                                }
+
+                                                if (bypass) {
+                                                    // Send silence to plugin (keep it alive)
+                                                    std::vector<float> silenceBuf(inFloats, 0.0f);
+                                                    [&]() {
+                                                        __try {
+                                                            host->processAudioBlock(
+                                                                silenceBuf.data(), outputBuf.data(),
+                                                                inCh, outCh, bs);
+                                                        } __except(captureExceptionFilter(GetExceptionInformation())) {
+                                                            spdlog::error("SEH exception 0x{:08X} during bypass process",
+                                                                          s_capturedEx.code);
+                                                            processingOk = false;
                                                         }
-                                                        spdlog::default_logger()->flush();
-                                                        processingOk = false;
-                                                        std::fill(outputBuf.begin(), outputBuf.end(), 0.0f);
+                                                    }();
+                                                    // Output = dry input (bypass)
+                                                    // Copy input channels to output (handles in != out channel count)
+                                                    for (uint32_t s = 0; s < bs; ++s) {
+                                                        for (uint32_t c = 0; c < outCh; ++c) {
+                                                            outputBuf[s * outCh + c] = (c < inCh)
+                                                                ? dryCopy[s * inCh + c] : 0.0f;
+                                                        }
                                                     }
-                                                }();
+                                                } else {
+                                                    // Normal processing
+                                                    [&]() {
+                                                        __try {
+                                                            host->processAudioBlock(
+                                                                inputBuf.data(), outputBuf.data(),
+                                                                inCh, outCh, bs);
+                                                        } __except(captureExceptionFilter(GetExceptionInformation())) {
+                                                            if (s_capturedEx.code == 0xC0000005 && s_capturedEx.numParams >= 2) {
+                                                                spdlog::error(
+                                                                    "ACCESS_VIOLATION: {} at address 0x{:016X}, instruction at 0x{:016X}",
+                                                                    s_capturedEx.accessType == 0 ? "READ" : "WRITE",
+                                                                    s_capturedEx.faultAddress,
+                                                                    s_capturedEx.instruction);
+                                                            } else {
+                                                                spdlog::error(
+                                                                    "SEH exception 0x{:08X} at instruction 0x{:016X}",
+                                                                    s_capturedEx.code,
+                                                                    s_capturedEx.instruction);
+                                                            }
+                                                            spdlog::default_logger()->flush();
+                                                            processingOk = false;
+                                                            std::fill(outputBuf.begin(), outputBuf.end(), 0.0f);
+                                                        }
+                                                    }();
+
+                                                    // Delta: output = wet - dry_delayed
+                                                    if (delta && processingOk) {
+                                                        deltaDelay.process(dryCopy.data(), dryDelayed.data(), bs);
+                                                        for (uint32_t s = 0; s < bs; ++s) {
+                                                            for (uint32_t c = 0; c < outCh; ++c) {
+                                                                float dry = (c < inCh)
+                                                                    ? dryDelayed[s * inCh + c] : 0.0f;
+                                                                outputBuf[s * outCh + c] -= dry;
+                                                            }
+                                                        }
+                                                    }
+                                                }
 
                                                 // Write to output ring (for Python collection)
                                                 audioRing->writeOutputBlock(outputBuf.data());
@@ -424,11 +524,14 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
 
                     // ---- Offline polling mode (no device, or device failed) ----
                     if (!audioDevice) {
+                        // Capture latency before thread starts
+                        uint32_t latSamples = host->getLatencySamples();
                         audioThread = std::thread([&audioRing, &host, &audioShutdown,
                                                    inFloats, outFloats,
                                                    bs = hdr.blockSize,
                                                    inCh = audioLayout.numInputChannels,
-                                                   outCh = audioLayout.numOutputChannels]() {
+                                                   outCh = audioLayout.numOutputChannels,
+                                                   latSamples]() {
                             spdlog::info("Audio thread started (polling mode)");
 
 #ifdef _WIN32
@@ -440,15 +543,53 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
                             }
 #endif
 
+                            // Delay buffer for delta mode latency compensation
+                            DelaySamples deltaDelay;
+                            deltaDelay.resize(latSamples, inCh);
+
                             std::vector<float> inputBuf(inFloats);
                             std::vector<float> outputBuf(outFloats);
+                            std::vector<float> dryCopy(inFloats);
+                            std::vector<float> dryDelayed(inFloats);
 
                             while (!audioShutdown.load(std::memory_order_relaxed)) {
                                 if (audioRing->waitForInput(std::chrono::milliseconds(10))) {
                                     if (audioRing->readInputBlock(inputBuf.data())) {
-                                        host->processAudioBlock(
-                                            inputBuf.data(), outputBuf.data(),
-                                            inCh, outCh, bs);
+                                        bool bypass = g_bypassActive.load(std::memory_order_relaxed);
+                                        bool delta = g_deltaActive.load(std::memory_order_relaxed);
+
+                                        if (bypass || delta) {
+                                            std::memcpy(dryCopy.data(), inputBuf.data(), inFloats * sizeof(float));
+                                        }
+
+                                        if (bypass) {
+                                            // Send silence to plugin, output dry
+                                            std::vector<float> silenceBuf(inFloats, 0.0f);
+                                            host->processAudioBlock(
+                                                silenceBuf.data(), outputBuf.data(),
+                                                inCh, outCh, bs);
+                                            for (uint32_t s = 0; s < bs; ++s) {
+                                                for (uint32_t c = 0; c < outCh; ++c) {
+                                                    outputBuf[s * outCh + c] = (c < inCh)
+                                                        ? dryCopy[s * inCh + c] : 0.0f;
+                                                }
+                                            }
+                                        } else {
+                                            host->processAudioBlock(
+                                                inputBuf.data(), outputBuf.data(),
+                                                inCh, outCh, bs);
+
+                                            if (delta) {
+                                                deltaDelay.process(dryCopy.data(), dryDelayed.data(), bs);
+                                                for (uint32_t s = 0; s < bs; ++s) {
+                                                    for (uint32_t c = 0; c < outCh; ++c) {
+                                                        float dry = (c < inCh)
+                                                            ? dryDelayed[s * inCh + c] : 0.0f;
+                                                        outputBuf[s * outCh + c] -= dry;
+                                                    }
+                                                }
+                                            }
+                                        }
 
                                         // Spin-wait until output ring has space
                                         while (!audioShutdown.load(std::memory_order_relaxed)) {
@@ -553,6 +694,18 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
 
         spdlog::info("Entering GUI event loop (with parameter polling)...");
         std::string closeReason;
+
+        // Wire toolbar bypass/delta callbacks to the audio thread atomics
+        host->setToolbarCallbacks(rps::gui::ToolbarCallbacks{
+            .onBypassChanged = [](bool active) {
+                g_bypassActive.store(active, std::memory_order_relaxed);
+                spdlog::info("Toolbar: bypass {}", active ? "ON" : "OFF");
+            },
+            .onDeltaChanged = [](bool active) {
+                g_deltaActive.store(active, std::memory_order_relaxed);
+                spdlog::info("Toolbar: delta {}", active ? "ON" : "OFF");
+            }
+        });
 
         // Parameter change callback: sends delta updates over IPC
         auto paramChangeCb = [&connection](std::vector<rps::ipc::ParameterValueUpdate> changes) {

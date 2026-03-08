@@ -53,10 +53,12 @@ void SdlWindow::create(const std::string& title, uint32_t width, uint32_t height
                         bool resizable, bool enableSidebar) {
     m_sidebarEnabled = enableSidebar;
 
-    // If sidebar is enabled, make the window wider to accommodate it
+    // If sidebar is enabled, make the window wider/taller to accommodate sidebar + toolbar
     uint32_t totalWidth = width;
+    uint32_t totalHeight = height;
     if (m_sidebarEnabled) {
         totalWidth += getSidebarWidth();
+        totalHeight += kToolbarHeight;
     }
 
     Uint32 flags = 0;
@@ -82,7 +84,7 @@ void SdlWindow::create(const std::string& title, uint32_t width, uint32_t height
     m_window = SDL_CreateWindow(
         title.c_str(),
         static_cast<int>(totalWidth),
-        static_cast<int>(height),
+        static_cast<int>(totalHeight),
         flags
     );
     if (!m_window) {
@@ -186,30 +188,36 @@ void SdlWindow::resize(uint32_t width, uint32_t height) {
     if (!m_window) return;
 
     uint32_t totalWidth = width;
+    uint32_t totalHeight = height;
     if (m_sidebarEnabled) {
         totalWidth += getSidebarWidth();
+        totalHeight += kToolbarHeight;
     }
 
-    SDL_SetWindowSize(m_window, static_cast<int>(totalWidth), static_cast<int>(height));
+    SDL_SetWindowSize(m_window, static_cast<int>(totalWidth), static_cast<int>(totalHeight));
 }
 
 void SdlWindow::setMinimumSize(uint32_t width, uint32_t height) {
     if (m_window) {
         uint32_t totalWidth = width;
+        uint32_t totalHeight = height;
         if (m_sidebarEnabled) {
             totalWidth += getSidebarWidth();
+            totalHeight += kToolbarHeight;
         }
-        SDL_SetWindowMinimumSize(m_window, static_cast<int>(totalWidth), static_cast<int>(height));
+        SDL_SetWindowMinimumSize(m_window, static_cast<int>(totalWidth), static_cast<int>(totalHeight));
     }
 }
 
 void SdlWindow::setMaximumSize(uint32_t width, uint32_t height) {
     if (m_window) {
         uint32_t totalWidth = width;
+        uint32_t totalHeight = height;
         if (m_sidebarEnabled) {
             totalWidth += getSidebarWidth();
+            totalHeight += kToolbarHeight;
         }
-        SDL_SetWindowMaximumSize(m_window, static_cast<int>(totalWidth), static_cast<int>(height));
+        SDL_SetWindowMaximumSize(m_window, static_cast<int>(totalWidth), static_cast<int>(totalHeight));
     }
 }
 
@@ -246,6 +254,99 @@ bool SdlWindow::pollEvents(ResizeCallback /*resizeCb*/) {
     return true;
 }
 
+void SdlWindow::renderToolbar(int winW, int winH) {
+    (void)winH;
+    float toolbarH = static_cast<float>(kToolbarHeight);
+    float toolbarW = static_cast<float>(winW);
+
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(ImVec2(toolbarW, toolbarH));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6, 4));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.10f, 0.10f, 0.12f, 1.0f));
+    ImGui::Begin("##Toolbar", nullptr,
+                 ImGuiWindowFlags_NoTitleBar |
+                 ImGuiWindowFlags_NoResize |
+                 ImGuiWindowFlags_NoMove |
+                 ImGuiWindowFlags_NoCollapse |
+                 ImGuiWindowFlags_NoScrollbar |
+                 ImGuiWindowFlags_NoBringToFrontOnFocus);
+
+    float btnH = toolbarH - 8.0f; // button height with padding
+
+    // --- Left: Presets toggle ---
+    if (m_sidebarCollapsed) {
+        if (ImGui::Button("<< Presets", ImVec2(0, btnH))) {
+            toggleSidebar(false);
+        }
+    } else {
+        if (ImGui::Button(">> Presets", ImVec2(0, btnH))) {
+            toggleSidebar(true);
+        }
+    }
+
+    // --- Right side buttons ---
+    // Calculate right-aligned positions
+    float spacing = ImGui::GetStyle().ItemSpacing.x;
+    ImVec2 levelsSize = ImGui::CalcTextSize("Output Levels >>");
+    ImVec2 bypassSize = ImGui::CalcTextSize("Bypass");
+    ImVec2 deltaSize = ImGui::CalcTextSize("Delta");
+    float btnPadX = ImGui::GetStyle().FramePadding.x * 2.0f;
+
+    float rightEdge = toolbarW - ImGui::GetStyle().WindowPadding.x;
+    float levelsW = levelsSize.x + btnPadX;
+    float bypassW = bypassSize.x + btnPadX;
+    float deltaW = deltaSize.x + btnPadX;
+
+    float levelsX = rightEdge - levelsW;
+    float bypassX = levelsX - spacing - bypassW;
+    float deltaX = bypassX - spacing - deltaW;
+
+    // Delta toggle
+    ImGui::SameLine();
+    ImGui::SetCursorPosX(deltaX);
+    if (m_deltaActive) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.55f, 0.10f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.65f, 0.15f, 1.0f));
+    }
+    if (ImGui::Button("Delta", ImVec2(deltaW, btnH))) {
+        m_deltaActive = !m_deltaActive;
+        if (m_toolbarCallbacks.onDeltaChanged) {
+            m_toolbarCallbacks.onDeltaChanged(m_deltaActive);
+        }
+    }
+    if (m_deltaActive) {
+        ImGui::PopStyleColor(2);
+    }
+
+    // Bypass toggle
+    ImGui::SameLine();
+    ImGui::SetCursorPosX(bypassX);
+    if (m_bypassActive) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.80f, 0.20f, 0.20f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.90f, 0.30f, 0.30f, 1.0f));
+    }
+    if (ImGui::Button("Bypass", ImVec2(bypassW, btnH))) {
+        m_bypassActive = !m_bypassActive;
+        if (m_toolbarCallbacks.onBypassChanged) {
+            m_toolbarCallbacks.onBypassChanged(m_bypassActive);
+        }
+    }
+    if (m_bypassActive) {
+        ImGui::PopStyleColor(2);
+    }
+
+    // Output Levels placeholder
+    ImGui::SameLine();
+    ImGui::SetCursorPosX(levelsX);
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.20f, 0.22f, 1.0f));
+    ImGui::Button("Output Levels >>", ImVec2(levelsW, btnH));
+    ImGui::PopStyleColor();
+
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
+}
+
 void SdlWindow::renderSidebar() {
     // Start ImGui frame
     ImGui_ImplSDLRenderer3_NewFrame();
@@ -256,8 +357,15 @@ void SdlWindow::renderSidebar() {
     int winW = 0, winH = 0;
     SDL_GetWindowSize(m_window, &winW, &winH);
 
+    // Render toolbar first (always visible)
+    renderToolbar(winW, winH);
+
     // Current effective sidebar width
     uint32_t effectiveWidth = getSidebarWidth();
+
+    // Sidebar content area starts below toolbar
+    float sidebarY = static_cast<float>(kToolbarHeight);
+    float sidebarH = static_cast<float>(winH) - sidebarY;
 
     // --- Splitter: only active when sidebar is expanded ---
     if (!m_sidebarCollapsed) {
@@ -267,7 +375,7 @@ void SdlWindow::renderSidebar() {
 
         bool hovered = (io.MousePos.x >= splitterX - splitterHalfW &&
                         io.MousePos.x <= splitterX + splitterHalfW &&
-                        io.MousePos.y >= 0.0f &&
+                        io.MousePos.y >= sidebarY &&
                         io.MousePos.y <= static_cast<float>(winH));
 
         if (hovered || m_splitterDragging) {
@@ -297,35 +405,11 @@ void SdlWindow::renderSidebar() {
     }
 
     if (m_sidebarCollapsed) {
-        // ===== COLLAPSED: narrow vertical strip with expand button =====
-        ImGui::SetNextWindowPos(ImVec2(0, 0));
-        ImGui::SetNextWindowSize(ImVec2(static_cast<float>(kCollapsedStripWidth), static_cast<float>(winH)));
-        ImGui::Begin("##SidebarStrip", nullptr,
-                     ImGuiWindowFlags_NoTitleBar |
-                     ImGuiWindowFlags_NoResize |
-                     ImGuiWindowFlags_NoMove |
-                     ImGuiWindowFlags_NoCollapse |
-                     ImGuiWindowFlags_NoScrollbar |
-                     ImGuiWindowFlags_NoBringToFrontOnFocus);
-
-        // Center the expand button vertically
-        float buttonSize = 30.0f;
-        float yCenter = static_cast<float>(winH) * 0.5f - buttonSize * 0.5f;
-        ImGui::SetCursorPosY(yCenter);
-        ImGui::SetCursorPosX((static_cast<float>(kCollapsedStripWidth) - buttonSize) * 0.5f);
-
-        if (ImGui::Button("<<", ImVec2(buttonSize, buttonSize))) {
-            toggleSidebar(false); // expand
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Show Presets");
-        }
-
-        ImGui::End();
+        // ===== COLLAPSED: no sidebar panel, only toolbar button =====
     } else {
         // ===== EXPANDED: full preset browser sidebar =====
-        ImGui::SetNextWindowPos(ImVec2(0, 0));
-        ImGui::SetNextWindowSize(ImVec2(static_cast<float>(m_sidebarWidth), static_cast<float>(winH)));
+        ImGui::SetNextWindowPos(ImVec2(0, sidebarY));
+        ImGui::SetNextWindowSize(ImVec2(static_cast<float>(m_sidebarWidth), sidebarH));
         ImGui::Begin("##Sidebar", nullptr,
                      ImGuiWindowFlags_NoTitleBar |
                      ImGuiWindowFlags_NoResize |
@@ -333,15 +417,8 @@ void SdlWindow::renderSidebar() {
                      ImGuiWindowFlags_NoCollapse |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-        // Header row: "PRESETS" left, ">>" collapse button right-aligned
+        // Header row: "PRESETS"
         ImGui::TextDisabled("PRESETS");
-        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 20.0f);
-        if (ImGui::Button(">>", ImVec2(24, 0))) {
-            toggleSidebar(true); // collapse
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Hide Presets");
-        }
         ImGui::Separator();
         ImGui::Spacing();
 
@@ -597,10 +674,19 @@ void SdlWindow::renderSidebar() {
     // Render ImGui
     ImGui::Render();
 
-    // Draw the sidebar background
-    SDL_FRect sidebarFillRect{0.0f, 0.0f, static_cast<float>(getSidebarWidth()), static_cast<float>(winH)};
-    SDL_SetRenderDrawColor(m_renderer, 30, 30, 36, 255);
-    SDL_RenderFillRect(m_renderer, &sidebarFillRect);
+    // Draw the toolbar background
+    SDL_FRect toolbarFillRect{0.0f, 0.0f, static_cast<float>(winW), static_cast<float>(kToolbarHeight)};
+    SDL_SetRenderDrawColor(m_renderer, 25, 25, 30, 255);
+    SDL_RenderFillRect(m_renderer, &toolbarFillRect);
+
+    // Draw the sidebar background (below toolbar)
+    if (!m_sidebarCollapsed) {
+        SDL_FRect sidebarFillRect{0.0f, static_cast<float>(kToolbarHeight),
+                                  static_cast<float>(getSidebarWidth()),
+                                  static_cast<float>(winH) - static_cast<float>(kToolbarHeight)};
+        SDL_SetRenderDrawColor(m_renderer, 30, 30, 36, 255);
+        SDL_RenderFillRect(m_renderer, &sidebarFillRect);
+    }
 
     // Render ImGui draw data
     ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), m_renderer);
@@ -651,8 +737,8 @@ void SdlWindow::handleResize(uint32_t width, uint32_t height) {
 
             // Absorb width delta into sidebar width
             int newSidebarW = static_cast<int>(m_sidebarWidth) + wDelta;
-            if (newSidebarW < static_cast<int>(kCollapsedStripWidth)) {
-                newSidebarW = static_cast<int>(kCollapsedStripWidth);
+            if (newSidebarW < 150) {
+                newSidebarW = 150;
             }
             if (newSidebarW > curW - 100) {
                 newSidebarW = curW - 100;
@@ -669,25 +755,27 @@ void SdlWindow::handleResize(uint32_t width, uint32_t height) {
     m_prevWinW = curW;
 
     uint32_t effSidebar = getSidebarWidth();
+    uint32_t effToolbar = getToolbarHeight();
     uint32_t pluginWidth = width;
-    if (m_sidebarEnabled && width > effSidebar) {
+    uint32_t pluginHeight = height > effToolbar ? height - effToolbar : height;
+    if (m_sidebarEnabled && pluginWidth > effSidebar) {
         pluginWidth -= effSidebar;
     }
 
     if (leftEdgeDragged) {
         // Left-edge drag: sidebar absorbed the change, but still update child HWND offset
         if (m_resizeCb) {
-            m_resizeCb(pluginWidth, height);
+            m_resizeCb(pluginWidth, pluginHeight);
         }
     } else {
         // Normal resize (right/top/bottom edge or programmatic)
         if (m_resizeCb) {
-            m_resizeCb(pluginWidth, height);
+            m_resizeCb(pluginWidth, pluginHeight);
         }
     }
 
-    // Reposition the plugin's child window to account for sidebar offset
-    repositionChildHwnd(pluginWidth, height);
+    // Reposition the plugin's child window to account for sidebar + toolbar offset
+    repositionChildHwnd(pluginWidth, pluginHeight);
 }
 
 void SdlWindow::repositionChildHwnd(uint32_t pluginW, uint32_t pluginH) {
@@ -698,7 +786,8 @@ void SdlWindow::repositionChildHwnd(uint32_t pluginW, uint32_t pluginH) {
     HWND child = GetWindow(parentHwnd, GW_CHILD);
     if (child) {
         int sidebarW = static_cast<int>(getSidebarWidth());
-        SetWindowPos(child, nullptr, sidebarW, 0,
+        int toolbarH = static_cast<int>(getToolbarHeight());
+        SetWindowPos(child, nullptr, sidebarW, toolbarH,
                      static_cast<int>(pluginW), static_cast<int>(pluginH),
                      SWP_NOZORDER | SWP_NOACTIVATE);
     }
@@ -787,9 +876,15 @@ void SdlWindow::getSize(uint32_t& width, uint32_t& height) const {
         width = static_cast<uint32_t>(w);
         height = static_cast<uint32_t>(h);
         // Return plugin area, not total
-        uint32_t effSidebar = getSidebarWidth();
-        if (m_sidebarEnabled && width > effSidebar) {
-            width -= effSidebar;
+        if (m_sidebarEnabled) {
+            uint32_t effSidebar = getSidebarWidth();
+            if (width > effSidebar) {
+                width -= effSidebar;
+            }
+            uint32_t effToolbar = getToolbarHeight();
+            if (height > effToolbar) {
+                height -= effToolbar;
+            }
         }
     }
 }
@@ -803,6 +898,10 @@ void SdlWindow::setPresets(const std::vector<rps::ipc::PresetInfo>& presets) {
 
 void SdlWindow::setPresetSelectedCallback(PresetSelectedCallback cb) {
     m_presetSelectedCb = std::move(cb);
+}
+
+void SdlWindow::setToolbarCallbacks(ToolbarCallbacks cb) {
+    m_toolbarCallbacks = std::move(cb);
 }
 
 } // namespace rps::gui
