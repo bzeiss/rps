@@ -254,6 +254,18 @@ def _list_and_select_plugin(
                     ctrl.choice_count - 1, ctrl.selected_choice_index + page_jump,
                 )
 
+        @prompt._kb.add(Keys.Home)
+        def _home(_event):
+            ctrl = prompt.content_control
+            if ctrl.choice_count > 0:
+                ctrl.selected_choice_index = 0
+
+        @prompt._kb.add(Keys.End)
+        def _end(_event):
+            ctrl = prompt.content_control
+            if ctrl.choice_count > 0:
+                ctrl.selected_choice_index = ctrl.choice_count - 1
+
         result = prompt.execute()
     except KeyboardInterrupt:
         return None
@@ -672,6 +684,278 @@ def _handle_send_audio_grpc(
         f"  [green]✓ Written {len(output) // wav_ch} frames → {out_path}[/green]"
     )
 
+def _open_gui_session(
+    client: RpsClient,
+    plugin_path: str,
+    fmt: str,
+    enable_audio: bool,
+    sample_rate: int,
+    num_channels: int,
+    block_size: int,
+    audio_device: str,
+) -> None:
+    """Open a plugin GUI and manage its lifecycle. Returns when GUI closes."""
+    store = ParameterStore()
+    preset_store = PresetStore()
+    plugin_name = ""
+    gui_closed = threading.Event()
+    audio_ring: AudioRing | None = None
+
+    def _stream_consumer():
+        """Background thread: consumes gRPC event stream."""
+        nonlocal plugin_name, audio_ring
+        try:
+            if enable_audio:
+                event_stream = client.open_plugin_gui_with_audio(
+                    plugin_path, fmt,
+                    sample_rate=sample_rate,
+                    block_size=block_size,
+                    num_channels=num_channels,
+                    audio_device=audio_device,
+                )
+            else:
+                event_stream = client.open_plugin_gui(plugin_path, fmt)
+            for event in event_stream:
+                if gui_closed.is_set():
+                    break
+                if event.HasField("gui_opened"):
+                    g = event.gui_opened
+                    plugin_name = g.plugin_name
+                    console.print(
+                        f"[green]✓ GUI Opened:[/green] {g.plugin_name} "
+                        f"({g.width}×{g.height})"
+                    )
+                    cmds = (
+                        "[dim]Commands: save-state <file>, load-state <file>, "
+                        "presets, load-preset <#|name>, params"
+                    )
+                    if enable_audio:
+                        cmds += ", send-audio <file.wav>"
+                        if audio_device:
+                            cmds += ", play-audio <file.wav>, play-audio-looped <file.wav>"
+                    cmds += ", close-gui, help[/dim]\n"
+                    console.print(cmds)
+                elif event.HasField("parameter_list"):
+                    store.load_list(event.parameter_list)
+                    store.print_table(plugin_name)
+                    console.print()
+                elif event.HasField("parameter_updates"):
+                    changed = store.apply_updates(event.parameter_updates)
+                    for p in changed:
+                        val_str = p['display'] or f"{p['value']:.4f}"
+                        console.print(
+                            f"  [cyan]⟳[/cyan] {p['name']}: [bold]{val_str}[/bold]"
+                        )
+                elif event.HasField("gui_closed"):
+                    console.print(
+                        f"\n[yellow]✗ GUI Closed:[/yellow] {event.gui_closed.reason}"
+                    )
+                    gui_closed.set()
+                    break
+                elif event.HasField("gui_error"):
+                    e = event.gui_error
+                    console.print(f"[red]✗ Error:[/red] {e.error}")
+                    if e.details:
+                        console.print(f"  [dim]{e.details}[/dim]")
+                elif event.HasField("preset_list"):
+                    preset_store.load_list(event.preset_list)
+                    count = len(preset_store.presets)
+                    console.print(
+                        f"  [green]✓[/green] {count} preset(s) available "
+                        f"(type [bold]presets[/bold] to list)"
+                    )
+                elif event.HasField("preset_loaded"):
+                    pl = event.preset_loaded
+                    console.print(
+                        f"  [green]✓ Preset loaded:[/green] {pl.preset_name}"
+                    )
+                elif event.HasField("audio_ready"):
+                    ar = event.audio_ready
+                    try:
+                        audio_ring = AudioRing(ar.shm_name)
+                        console.print(
+                            f"  [green]✓ Audio ready:[/green] "
+                            f"{ar.sample_rate}Hz, bs={ar.block_size}, "
+                            f"ch={ar.num_channels}"
+                        )
+                    except Exception as e:
+                        console.print(f"  [red]✗ Audio ring error:[/red] {e}")
+        except Exception as e:
+            if not gui_closed.is_set():
+                console.print(f"[red]Stream error: {e}[/red]")
+                gui_closed.set()
+
+    # Start stream consumer thread
+    stream_thread = threading.Thread(target=_stream_consumer, daemon=True)
+    stream_thread.start()
+
+    # Wait for GUI to close (block the caller)
+    try:
+        while not gui_closed.is_set():
+            line = _read_line_nonblocking(gui_closed)
+            if line is None:
+                break
+            if not line:
+                continue
+
+            parts = line.split(maxsplit=1)
+            cmd = parts[0].lower()
+
+            if cmd in ("close-gui", "close"):
+                console.print("[yellow]Closing GUI...[/yellow]")
+                try:
+                    client.close_plugin_gui(plugin_path)
+                except Exception:
+                    pass
+                gui_closed.set()
+                break
+
+            elif cmd == "save-state" and len(parts) == 2:
+                filepath = parts[1]
+                try:
+                    resp = client.get_plugin_state(plugin_path)
+                    if resp.success:
+                        with open(filepath, "wb") as f:
+                            f.write(resp.state_data)
+                        console.print(
+                            f"[green]✓ State saved:[/green] "
+                            f"{len(resp.state_data)} bytes → {filepath}"
+                        )
+                    else:
+                        console.print(f"[red]✗ Save failed:[/red] {resp.error}")
+                except Exception as e:
+                    console.print(f"[red]✗ Save error:[/red] {e}")
+
+            elif cmd == "load-state" and len(parts) == 2:
+                filepath = parts[1]
+                try:
+                    with open(filepath, "rb") as f:
+                        state_data = f.read()
+                    console.print(
+                        f"[dim]Loading {len(state_data)} bytes from {filepath}...[/dim]"
+                    )
+                    resp = client.set_plugin_state(plugin_path, state_data)
+                    if resp.success:
+                        console.print("[green]✓ State restored[/green]")
+                    else:
+                        console.print(f"[red]✗ Load failed:[/red] {resp.error}")
+                except FileNotFoundError:
+                    console.print(f"[red]✗ File not found:[/red] {filepath}")
+                except Exception as e:
+                    console.print(f"[red]✗ Load error:[/red] {e}")
+
+            elif cmd == "params":
+                store.print_table(plugin_name)
+
+            elif cmd == "presets":
+                preset_store.print_table()
+
+            elif cmd == "load-preset" and len(parts) == 2:
+                query = parts[1]
+                match = preset_store.find_by_query(query)
+                if not match:
+                    console.print(
+                        f"[red]✗ No preset matching '{query}'.[/red] "
+                        f"Type [bold]presets[/bold] to list all."
+                    )
+                else:
+                    console.print(
+                        f"[dim]Loading preset '{match['name']}'...[/dim]"
+                    )
+                    try:
+                        resp = client.load_preset(plugin_path, match["id"])
+                        if resp.success:
+                            console.print(
+                                f"[green]✓ Preset loaded:[/green] {match['name']}"
+                            )
+                        else:
+                            console.print(
+                                f"[red]✗ Load failed:[/red] {resp.error}"
+                            )
+                    except Exception as e:
+                        console.print(f"[red]✗ Preset error:[/red] {e}")
+
+            elif cmd == "send-audio" and len(parts) == 2:
+                if not enable_audio or not audio_ring:
+                    console.print(
+                        "[red]✗ Audio not enabled.[/red] "
+                        "Use [bold]open-gui --audio[/bold] to enable."
+                    )
+                else:
+                    _handle_send_audio(audio_ring, parts[1], console)
+
+            elif cmd == "send-audio-grpc" and len(parts) == 2:
+                if not enable_audio:
+                    console.print(
+                        "[red]✗ Audio not enabled.[/red] "
+                        "Use [bold]open-gui --audio[/bold] to enable."
+                    )
+                else:
+                    _handle_send_audio_grpc(
+                        client, plugin_path, parts[1], console,
+                        block_size=block_size, num_channels=num_channels,
+                        sample_rate=sample_rate,
+                    )
+
+            elif cmd == "play-audio" and len(parts) == 2:
+                if not enable_audio or not audio_ring:
+                    console.print(
+                        "[red]✗ Audio not enabled.[/red] "
+                        "Use [bold]open-gui --audio[/bold] to enable."
+                    )
+                elif not audio_device:
+                    console.print(
+                        "[red]✗ No audio device.[/red] "
+                        "Use [bold]open-gui --audio --audio-device sdl3[/bold] for real-time playback."
+                    )
+                else:
+                    _handle_play_audio(audio_ring, parts[1], console)
+
+            elif cmd == "play-audio-looped" and len(parts) == 2:
+                if not enable_audio or not audio_ring:
+                    console.print(
+                        "[red]✗ Audio not enabled.[/red] "
+                        "Use [bold]open-gui --audio[/bold] to enable."
+                    )
+                elif not audio_device:
+                    console.print(
+                        "[red]✗ No audio device.[/red] "
+                        "Use [bold]open-gui --audio --audio-device sdl3[/bold] for real-time playback."
+                    )
+                else:
+                    _handle_play_audio_looped(audio_ring, parts[1], console)
+
+            elif cmd == "help":
+                console.print("[bold]GUI session commands:[/bold]")
+                console.print("  save-state <file>     — Save plugin state to file")
+                console.print("  load-state <file>     — Restore plugin state from file")
+                console.print("  presets               — List available presets")
+                console.print("  load-preset <#|name>  — Load a preset by index or name")
+                console.print("  params                — Print all parameters")
+                if enable_audio:
+                    console.print("  send-audio <file.wav> — Process via shared memory (write output file)")
+                    console.print("  send-audio-grpc <file.wav> — Process via gRPC stream (networked)")
+                    if audio_device:
+                        console.print("  play-audio <file.wav>  — Real-time playback through audio device")
+                        console.print("  play-audio-looped <file.wav> — Looped playback (Enter/Esc to stop)")
+                console.print("  close-gui             — Close the GUI window")
+
+            else:
+                console.print(
+                    f"[dim]Unknown command: '{cmd}'. Type 'help' for commands.[/dim]"
+                )
+
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Closing GUI...[/yellow]")
+        try:
+            client.close_plugin_gui(plugin_path)
+        except Exception:
+            pass
+        gui_closed.set()
+
+    stream_thread.join(timeout=3)
+
+
 def run_open_gui(
     client: RpsClient, format_filter: str = "", enable_audio: bool = False,
     sample_rate: int = 48000, num_channels: int = 2, block_size: int = 128,
@@ -688,252 +972,67 @@ def run_open_gui(
         last_selected = selection  # Remember (path, format) for cursor position
 
         plugin_path, fmt = selection
-        console.print(f"\n[bold]Opening GUI:[/bold] {plugin_path} ({fmt})")
+        console.print(f"\n[bold]Selected:[/bold] {plugin_path} ({fmt})")
 
-        store = ParameterStore()
-        preset_store = PresetStore()
-        plugin_name = ""
-        gui_closed = threading.Event()
-        audio_ring: AudioRing | None = None
+        # Auto-open the GUI immediately
+        console.print(f"[bold]Opening GUI:[/bold] {plugin_path} ({fmt})")
+        _open_gui_session(
+            client, plugin_path, fmt,
+            enable_audio=enable_audio,
+            sample_rate=sample_rate,
+            num_channels=num_channels,
+            block_size=block_size,
+            audio_device=audio_device,
+        )
 
-        def _stream_consumer():
-            """Background thread: consumes gRPC event stream."""
-            nonlocal plugin_name, audio_ring
-            try:
-                if enable_audio:
-                    event_stream = client.open_plugin_gui_with_audio(
-                        plugin_path, fmt,
-                        sample_rate=sample_rate,
-                        block_size=block_size,
-                        num_channels=num_channels,
-                        audio_device=audio_device,
-                    )
-                else:
-                    event_stream = client.open_plugin_gui(plugin_path, fmt)
-                for event in event_stream:
-                    if gui_closed.is_set():
-                        break
-                    if event.HasField("gui_opened"):
-                        g = event.gui_opened
-                        plugin_name = g.plugin_name
-                        console.print(
-                            f"[green]✓ GUI Opened:[/green] {g.plugin_name} "
-                            f"({g.width}×{g.height})"
-                        )
-                        cmds = (
-                            "[dim]Commands: save-state <file>, load-state <file>, "
-                            "presets, load-preset <#|name>, params"
-                        )
-                        if enable_audio:
-                            cmds += ", send-audio <file.wav>"
-                            if audio_device:
-                                cmds += ", play-audio <file.wav>, play-audio-looped <file.wav>"
-                        cmds += ", help, quit[/dim]\n"
-                        console.print(cmds)
-                    elif event.HasField("parameter_list"):
-                        store.load_list(event.parameter_list)
-                        store.print_table(plugin_name)
-                        console.print()
-                    elif event.HasField("parameter_updates"):
-                        changed = store.apply_updates(event.parameter_updates)
-                        for p in changed:
-                            val_str = p['display'] or f"{p['value']:.4f}"
-                            console.print(
-                                f"  [cyan]⟳[/cyan] {p['name']}: [bold]{val_str}[/bold]"
-                            )
-                    elif event.HasField("gui_closed"):
-                        console.print(
-                            f"\n[yellow]✗ GUI Closed:[/yellow] {event.gui_closed.reason}"
-                        )
-                        gui_closed.set()
-                        break
-                    elif event.HasField("gui_error"):
-                        e = event.gui_error
-                        console.print(f"[red]✗ Error:[/red] {e.error}")
-                        if e.details:
-                            console.print(f"  [dim]{e.details}[/dim]")
-                    elif event.HasField("preset_list"):
-                        preset_store.load_list(event.preset_list)
-                        count = len(preset_store.presets)
-                        console.print(
-                            f"  [green]✓[/green] {count} preset(s) available "
-                            f"(type [bold]presets[/bold] to list)"
-                        )
-                    elif event.HasField("preset_loaded"):
-                        pl = event.preset_loaded
-                        console.print(
-                            f"  [green]✓ Preset loaded:[/green] {pl.preset_name}"
-                        )
-                    elif event.HasField("audio_ready"):
-                        ar = event.audio_ready
-                        try:
-                            audio_ring = AudioRing(ar.shm_name)
-                            console.print(
-                                f"  [green]✓ Audio ready:[/green] "
-                                f"{ar.sample_rate}Hz, bs={ar.block_size}, "
-                                f"ch={ar.num_channels}"
-                            )
-                        except Exception as e:
-                            console.print(f"  [red]✗ Audio ring error:[/red] {e}")
-            except Exception as e:
-                if not gui_closed.is_set():
-                    console.print(f"[red]Stream error: {e}[/red]")
-                    gui_closed.set()
+        # After GUI closes, stay in session for re-opening
+        session_stop = threading.Event()
 
-        # Start stream consumer thread
-        stream_thread = threading.Thread(target=_stream_consumer, daemon=True)
-        stream_thread.start()
+        def _print_session_help():
+            console.print("[bold]Session commands:[/bold]")
+            console.print("  open-gui              — Reopen the plugin's native GUI window")
+            console.print("  back                  — Return to plugin selection")
+            console.print("  quit                  — Exit")
 
-        # Main thread: accept commands
+        console.print(
+            "[dim]GUI closed. Type 'open-gui' to reopen, "
+            "'back' for plugin list, 'quit' to exit.[/dim]\n"
+        )
+
         try:
-            while not gui_closed.is_set():
-                line = _read_line_nonblocking(gui_closed)
+            while not session_stop.is_set():
+                line = _read_line_nonblocking(session_stop)
                 if line is None:
-                    break  # GUI closed or EOF
+                    break
                 if not line:
                     continue
 
                 parts = line.split(maxsplit=1)
                 cmd = parts[0].lower()
 
-                if cmd in ("quit", "exit", "close", "q"):
-                    console.print("[yellow]Closing GUI...[/yellow]")
-                    try:
-                        client.close_plugin_gui(plugin_path)
-                    except Exception:
-                        pass
-                    gui_closed.set()
-                    break
+                if cmd in ("quit", "exit", "q"):
+                    return  # Exit completely
 
-                elif cmd == "save-state" and len(parts) == 2:
-                    filepath = parts[1]
-                    try:
-                        resp = client.get_plugin_state(plugin_path)
-                        if resp.success:
-                            with open(filepath, "wb") as f:
-                                f.write(resp.state_data)
-                            console.print(
-                                f"[green]✓ State saved:[/green] "
-                                f"{len(resp.state_data)} bytes → {filepath}"
-                            )
-                        else:
-                            console.print(f"[red]✗ Save failed:[/red] {resp.error}")
-                    except Exception as e:
-                        console.print(f"[red]✗ Save error:[/red] {e}")
+                elif cmd in ("back", "b"):
+                    break  # Return to plugin selection
 
-                elif cmd == "load-state" and len(parts) == 2:
-                    filepath = parts[1]
-                    try:
-                        with open(filepath, "rb") as f:
-                            state_data = f.read()
-                        console.print(
-                            f"[dim]Loading {len(state_data)} bytes from {filepath}...[/dim]"
-                        )
-                        resp = client.set_plugin_state(plugin_path, state_data)
-                        if resp.success:
-                            console.print("[green]✓ State restored[/green]")
-                        else:
-                            console.print(f"[red]✗ Load failed:[/red] {resp.error}")
-                    except FileNotFoundError:
-                        console.print(f"[red]✗ File not found:[/red] {filepath}")
-                    except Exception as e:
-                        console.print(f"[red]✗ Load error:[/red] {e}")
-
-                elif cmd == "params":
-                    store.print_table(plugin_name)
-
-                elif cmd == "presets":
-                    preset_store.print_table()
-
-                elif cmd == "load-preset" and len(parts) == 2:
-                    query = parts[1]
-                    match = preset_store.find_by_query(query)
-                    if not match:
-                        console.print(
-                            f"[red]✗ No preset matching '{query}'.[/red] "
-                            f"Type [bold]presets[/bold] to list all."
-                        )
-                    else:
-                        console.print(
-                            f"[dim]Loading preset '{match['name']}'...[/dim]"
-                        )
-                        try:
-                            resp = client.load_preset(plugin_path, match["id"])
-                            if resp.success:
-                                console.print(
-                                    f"[green]✓ Preset loaded:[/green] {match['name']}"
-                                )
-                            else:
-                                console.print(
-                                    f"[red]✗ Load failed:[/red] {resp.error}"
-                                )
-                        except Exception as e:
-                            console.print(f"[red]✗ Preset error:[/red] {e}")
+                elif cmd == "open-gui":
+                    console.print(f"\n[bold]Reopening GUI:[/bold] {plugin_path} ({fmt})")
+                    _open_gui_session(
+                        client, plugin_path, fmt,
+                        enable_audio=enable_audio,
+                        sample_rate=sample_rate,
+                        num_channels=num_channels,
+                        block_size=block_size,
+                        audio_device=audio_device,
+                    )
+                    console.print(
+                        "[dim]GUI closed. Type 'open-gui' to reopen, "
+                        "'back' for plugin list, 'quit' to exit.[/dim]\n"
+                    )
 
                 elif cmd == "help":
-                    console.print("[bold]Available commands:[/bold]")
-                    console.print("  save-state <file>     — Save plugin state to file")
-                    console.print("  load-state <file>     — Restore plugin state from file")
-                    console.print("  presets               — List available presets")
-                    console.print("  load-preset <#|name>  — Load a preset by index or name")
-                    console.print("  params                — Print all parameters")
-                    if enable_audio:
-                        console.print("  send-audio <file.wav> — Process via shared memory (write output file)")
-                        console.print("  send-audio-grpc <file.wav> — Process via gRPC stream (networked)")
-                        if audio_device:
-                            console.print("  play-audio <file.wav>  — Real-time playback through audio device")
-                            console.print("  play-audio-looped <file.wav> — Looped playback (Enter/Esc to stop)")
-                    console.print("  quit                  — Close the GUI and exit")
-
-                elif cmd == "send-audio" and len(parts) == 2:
-                    if not enable_audio or not audio_ring:
-                        console.print(
-                            "[red]✗ Audio not enabled.[/red] "
-                            "Use [bold]open-gui --audio[/bold] to enable."
-                        )
-                    else:
-                        _handle_send_audio(audio_ring, parts[1], console)
-
-                elif cmd == "send-audio-grpc" and len(parts) == 2:
-                    if not enable_audio:
-                        console.print(
-                            "[red]✗ Audio not enabled.[/red] "
-                            "Use [bold]open-gui --audio[/bold] to enable."
-                        )
-                    else:
-                        _handle_send_audio_grpc(
-                            client, plugin_path, parts[1], console,
-                            block_size=block_size, num_channels=num_channels,
-                            sample_rate=sample_rate,
-                        )
-
-                elif cmd == "play-audio" and len(parts) == 2:
-                    if not enable_audio or not audio_ring:
-                        console.print(
-                            "[red]✗ Audio not enabled.[/red] "
-                            "Use [bold]open-gui --audio[/bold] to enable."
-                        )
-                    elif not audio_device:
-                        console.print(
-                            "[red]✗ No audio device.[/red] "
-                            "Use [bold]open-gui --audio --audio-device sdl3[/bold] for real-time playback."
-                        )
-                    else:
-                        _handle_play_audio(audio_ring, parts[1], console)
-
-                elif cmd == "play-audio-looped" and len(parts) == 2:
-                    if not enable_audio or not audio_ring:
-                        console.print(
-                            "[red]✗ Audio not enabled.[/red] "
-                            "Use [bold]open-gui --audio[/bold] to enable."
-                        )
-                    elif not audio_device:
-                        console.print(
-                            "[red]✗ No audio device.[/red] "
-                            "Use [bold]open-gui --audio --audio-device sdl3[/bold] for real-time playback."
-                        )
-                    else:
-                        _handle_play_audio_looped(audio_ring, parts[1], console)
+                    _print_session_help()
 
                 else:
                     console.print(
@@ -941,13 +1040,7 @@ def run_open_gui(
                     )
 
         except KeyboardInterrupt:
-            console.print("\n[yellow]Closing GUI...[/yellow]")
-            try:
-                client.close_plugin_gui(plugin_path)
-            except Exception:
-                pass
-            gui_closed.set()
+            return
 
-        stream_thread.join(timeout=3)
         console.print()  # Blank line before next selection
 
