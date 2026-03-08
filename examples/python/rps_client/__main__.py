@@ -171,7 +171,7 @@ def open_gui(ctx, format_filter, enable_audio, sample_rate, channels, block_size
                     audio_device=audio_device,
                 )
     except KeyboardInterrupt:
-        pass
+        click.echo("\nInterrupted.")
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)

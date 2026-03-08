@@ -8,6 +8,7 @@
 #endif
 
 #include <rps/engine/ProcessPool.hpp>
+#include <scanner.pb.h>
 #include <string>
 #include <iostream>
 #include <algorithm>
@@ -395,12 +396,13 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
         // joinable, triggering std::terminate().
         try {
 
-        rps::ipc::Message reqMsg;
-        reqMsg.type = rps::ipc::MessageType::ScanRequest;
-        reqMsg.payload = rps::ipc::ScanRequest{ job.pluginPath.string(), job.format, false };
+        rps::scanner::ScanCommand scanCmd;
+        scanCmd.set_plugin_path(job.pluginPath.string());
+        scanCmd.set_format(job.format);
+        scanCmd.set_requires_ui(false);
         
-        if (!connection->sendMessage(reqMsg)) {
-            std::string errMsg = "Failed to send ScanRequest";
+        if (!connection->sendProto(scanCmd)) {
+            std::string errMsg = "Failed to send ScanCommand";
             if (!enqueueRetry(job, errMsg, workerId)) {
                 if (m_observer) {
                     m_observer->onPluginCompleted(workerId, pluginFullPath, ScanOutcome::Fail, 0, nullptr, &errMsg);
@@ -421,7 +423,8 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
         auto lastResponseTime = startTime;
 
         while (!done && !m_stop) {
-            auto maybeMsg = connection->receiveMessage(100); // 100ms polling
+            rps::scanner::ScannerEvent evt;
+            bool gotEvent = connection->receiveProto(evt, 100); // 100ms polling
             auto now = std::chrono::steady_clock::now();
 
             // Warn once if scan is taking unusually long
@@ -435,18 +438,38 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                 }
             }
             
-            if (maybeMsg.has_value()) {
-                lastResponseTime = now; 
-                const auto& msg = maybeMsg.value();
-                if (msg.type == rps::ipc::MessageType::ProgressEvent) {
-                    auto evt = std::get<rps::ipc::ProgressEvent>(msg.payload);
+            if (gotEvent) {
+                lastResponseTime = now;
+                if (evt.has_progress()) {
+                    const auto& prog = evt.progress();
                     if (m_observer) {
-                        m_observer->onPluginProgress(workerId, pluginFullPath, evt.progressPercentage, evt.status);
+                        m_observer->onPluginProgress(workerId, pluginFullPath, prog.progress_percentage(), prog.status());
                     }
                 } 
-                else if (msg.type == rps::ipc::MessageType::ScanResult) {
-                    auto res = std::get<rps::ipc::ScanResult>(msg.payload);
+                else if (evt.has_scan_result()) {
+                    const auto& pbRes = evt.scan_result();
                     auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count();
+
+                    // Convert proto → C++ struct at the IPC boundary
+                    rps::ipc::ScanResult res;
+                    res.name = pbRes.name();
+                    res.vendor = pbRes.vendor();
+                    res.version = pbRes.version();
+                    res.uid = pbRes.uid();
+                    res.description = pbRes.description();
+                    res.url = pbRes.url();
+                    res.category = pbRes.category();
+                    res.format = pbRes.format();
+                    res.scanMethod = pbRes.scan_method();
+                    res.numInputs = pbRes.num_inputs();
+                    res.numOutputs = pbRes.num_outputs();
+                    for (const auto& pp : pbRes.parameters()) {
+                        res.parameters.push_back({ pp.id(), pp.name(), pp.default_value() });
+                    }
+                    for (const auto& [k, v] : pbRes.extra_data()) {
+                        res.extraData[k] = v;
+                    }
+
                     if (m_observer) {
                         m_observer->onPluginCompleted(workerId, pluginFullPath, ScanOutcome::Success, elapsedMs, &res, nullptr);
                     }
@@ -471,17 +494,17 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                     ++m_success;
                     done = true;
                 }
-                else if (msg.type == rps::ipc::MessageType::ErrorMessage) {
-                    auto err = std::get<rps::ipc::ErrorMessage>(msg.payload);
+                else if (evt.has_error()) {
+                    const auto& pbErr = evt.error();
                     auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count();
-                    std::string errMsg = err.error + ": " + err.details;
+                    std::string errMsg = pbErr.error() + ": " + pbErr.details();
                     // Detect SKIP: prefix — plugin is not scannable (e.g. empty bundle)
-                    bool isSkip = err.details.rfind("SKIP:", 0) == 0;
+                    bool isSkip = pbErr.details().rfind("SKIP:", 0) == 0;
                     if (isSkip) {
                         if (m_observer) {
                             m_observer->onPluginCompleted(workerId, pluginFullPath, ScanOutcome::Skipped, elapsedMs, nullptr, &errMsg);
                         }
-                        if (m_db) m_db->recordPluginSkip(job.pluginPath, job.format, err.details, fileMtime);
+                        if (m_db) m_db->recordPluginSkip(job.pluginPath, job.format, pbErr.details(), fileMtime);
                         ++m_skipped;
                     } else if (!enqueueRetry(job, errMsg, workerId)) {
                         if (m_observer) {

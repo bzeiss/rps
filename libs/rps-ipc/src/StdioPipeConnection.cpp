@@ -185,18 +185,4 @@ bool StdioPipeConnection::receiveProto(google::protobuf::MessageLite& msg, unsig
     }
 }
 
-// ---------------------------------------------------------------------------
-// JSON methods — not supported on pipe transport
-// ---------------------------------------------------------------------------
-
-bool StdioPipeConnection::sendMessage(const Message& /*msg*/) {
-    std::cerr << "[pipe] sendMessage: JSON not supported on pipe transport\n";
-    return false;
-}
-
-std::optional<Message> StdioPipeConnection::receiveMessage(unsigned int /*timeoutMs*/) {
-    std::cerr << "[pipe] receiveMessage: JSON not supported on pipe transport\n";
-    return std::nullopt;
-}
-
 } // namespace rps::ipc

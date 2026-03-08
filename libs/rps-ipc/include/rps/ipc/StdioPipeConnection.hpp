@@ -45,10 +45,6 @@ public:
     bool sendProto(const google::protobuf::MessageLite& msg) override;
     bool receiveProto(google::protobuf::MessageLite& msg, unsigned int timeoutMs = 0) override;
 
-    // JSON methods — not supported on pipe transport
-    bool sendMessage(const Message& msg) override;
-    std::optional<Message> receiveMessage(unsigned int timeoutMs = 0) override;
-
 private:
     bool writeAll(const void* data, size_t n);
     bool readAll(void* data, size_t n);

@@ -28,14 +28,12 @@ MessageQueueConnection::MessageQueueConnection(const std::string& name, bool isS
 
     try {
         if (isServer) {
-            // Server creates the queues
             message_queue::remove(txName.c_str());
             message_queue::remove(rxName.c_str());
 
             m_txQueue = std::make_unique<message_queue>(create_only, txName.c_str(), MAX_NUM_MSGS, MAX_MSG_SIZE);
             m_rxQueue = std::make_unique<message_queue>(create_only, rxName.c_str(), MAX_NUM_MSGS, MAX_MSG_SIZE);
         } else {
-            // Client connects to the existing queues
             m_txQueue = std::make_unique<message_queue>(open_only, txName.c_str());
             m_rxQueue = std::make_unique<message_queue>(open_only, rxName.c_str());
         }
@@ -59,77 +57,6 @@ std::unique_ptr<MessageQueueConnection> MessageQueueConnection::createServer(con
 
 std::unique_ptr<MessageQueueConnection> MessageQueueConnection::createClient(const std::string& name) {
     return std::unique_ptr<MessageQueueConnection>(new MessageQueueConnection(name, false));
-}
-
-bool MessageQueueConnection::sendMessage(const Message& msg) {
-    try {
-        boost::json::value jv = boost::json::value_from(msg);
-        std::string serialized = boost::json::serialize(jv);
-
-        if (serialized.size() > MAX_MSG_SIZE) {
-            std::cerr << "IPC Error: Message too large to send (" << serialized.size()
-                      << " bytes, max " << MAX_MSG_SIZE << ")\n";
-            return false;
-        }
-
-        // Log payload size for diagnostics (only for large messages)
-        if (serialized.size() > 65536) {
-            std::cerr << "[ipc] Sending large message: " << serialized.size() << " bytes\n";
-        }
-
-        m_txQueue->send(serialized.data(), serialized.size(), 0);
-        return true;
-    } catch (const std::exception& e) {
-        std::cerr << "IPC Send Error: " << e.what() << "\n";
-        return false;
-    }
-}
-
-std::optional<Message> MessageQueueConnection::receiveMessage(unsigned int timeoutMs) {
-    try {
-        std::vector<char> buffer(MAX_MSG_SIZE);
-        size_t receivedSize = 0;
-        unsigned int priority = 0;
-
-        bool received = false;
-
-        if (timeoutMs == 0) {
-            // Blocking wait indefinitely
-            m_rxQueue->receive(buffer.data(), buffer.size(), receivedSize, priority);
-            received = true;
-        } else {
-            // Timeout wait
-            boost::posix_time::ptime timeout = boost::posix_time::microsec_clock::universal_time() +
-                                               boost::posix_time::milliseconds(timeoutMs);
-            received = m_rxQueue->timed_receive(buffer.data(), buffer.size(), receivedSize, priority, timeout);
-        }
-
-        if (received && receivedSize > 0) {
-            std::string serialized(buffer.data(), receivedSize);
-            try {
-                boost::json::value jv = boost::json::parse(serialized);
-                return boost::json::value_to<Message>(jv);
-            } catch (const std::exception& parseErr) {
-                std::cerr << "IPC Receive Error: " << parseErr.what() << "\n";
-                std::cerr << "  receivedSize=" << receivedSize << " bytes\n";
-                // Dump first 200 chars for diagnosis
-                size_t dumpLen = std::min(receivedSize, size_t(200));
-                std::cerr << "  raw[0.." << dumpLen << "]: [";
-                for (size_t i = 0; i < dumpLen; ++i) {
-                    char c = serialized[i];
-                    if (c >= 32 && c < 127) std::cerr << c;
-                    else std::cerr << "\\x" << std::hex << (int)(unsigned char)c << std::dec;
-                }
-                std::cerr << "]\n";
-                return std::nullopt;
-            }
-        }
-
-        return std::nullopt;
-    } catch (const std::exception& e) {
-        std::cerr << "IPC Receive Error (transport): " << e.what() << "\n";
-        return std::nullopt;
-    }
 }
 
 bool MessageQueueConnection::sendProto(const google::protobuf::MessageLite& msg) {

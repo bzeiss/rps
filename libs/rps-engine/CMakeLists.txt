@@ -13,7 +13,6 @@ target_link_libraries(rps-engine
     PUBLIC
         rps-core
         rps-ipc
-        Boost::json
         Boost::filesystem
         SQLite::SQLite3
     PRIVATE

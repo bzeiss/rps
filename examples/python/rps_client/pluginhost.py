@@ -748,7 +748,7 @@ def _open_gui_session(
         except Exception as e:
             if not session_done.is_set():
                 console.print(f"[red]Stream error: {e}[/red]")
-                session_done.set()
+            session_done.set()
 
     # Start stream consumer thread
     stream_thread = threading.Thread(target=_stream_consumer, daemon=True)
@@ -964,13 +964,18 @@ def _open_gui_session(
                 console.print(f"\n[dim]Commands: {_commands_hint()}[/dim]\n")
 
     except KeyboardInterrupt:
-        console.print("\n[yellow]Exiting...[/yellow]")
+        session_done.set()  # Signal stream thread first to suppress gRPC errors
+        console.print("\n[yellow]Interrupted — cleaning up...[/yellow]")
         audio_playback.stop()
+        if audio_ring:
+            try:
+                audio_ring.close()
+            except Exception:
+                pass
         try:
             client.close_plugin_session(plugin_path)
         except Exception:
             pass
-        session_done.set()
 
     stream_thread.join(timeout=3)
     return False
@@ -984,28 +989,31 @@ def run_open_gui(
     """Main logic for the open-gui command. Loops so user can open multiple plugins."""
     last_selected = None
 
-    while True:
-        selection = _list_and_select_plugin(client, format_filter, last_selected)
-        if not selection:
-            return
+    try:
+        while True:
+            selection = _list_and_select_plugin(client, format_filter, last_selected)
+            if not selection:
+                return
 
-        last_selected = selection  # Remember (path, format) for cursor position
+            last_selected = selection  # Remember (path, format) for cursor position
 
-        plugin_path, fmt = selection
-        console.print(f"\n[bold]Selected:[/bold] {plugin_path} ({fmt})")
+            plugin_path, fmt = selection
+            console.print(f"\n[bold]Selected:[/bold] {plugin_path} ({fmt})")
 
-        # Start a headless session — user can open-gui, send-audio, etc.
-        should_continue = _open_gui_session(
-            client, plugin_path, fmt,
-            enable_audio=enable_audio,
-            sample_rate=sample_rate,
-            num_channels=num_channels,
-            block_size=block_size,
-            audio_device=audio_device,
-        )
+            # Start a headless session — user can open-gui, send-audio, etc.
+            should_continue = _open_gui_session(
+                client, plugin_path, fmt,
+                enable_audio=enable_audio,
+                sample_rate=sample_rate,
+                num_channels=num_channels,
+                block_size=block_size,
+                audio_device=audio_device,
+            )
 
-        if not should_continue:
-            return
+            if not should_continue:
+                return
 
-        console.print()  # Blank line before next selection
+            console.print()  # Blank line before next selection
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Interrupted.[/yellow]")
 

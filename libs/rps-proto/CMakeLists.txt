@@ -53,16 +53,31 @@ add_custom_command(
     COMMENT "Generating protobuf C++ sources from host.proto"
 )
 
+# --- Generate C++ from scanner.proto ---
+set(SCANNER_PROTO_SRCS "${PROTO_OUT_DIR}/scanner.pb.cc")
+set(SCANNER_PROTO_HDRS "${PROTO_OUT_DIR}/scanner.pb.h")
+
+add_custom_command(
+    OUTPUT ${SCANNER_PROTO_SRCS} ${SCANNER_PROTO_HDRS}
+    COMMAND ${PROTOC_EXECUTABLE}
+        --cpp_out=${PROTO_OUT_DIR}
+        -I "${PROTO_DIR}"
+        "${PROTO_DIR}/scanner.proto"
+    DEPENDS "${PROTO_DIR}/scanner.proto"
+    COMMENT "Generating protobuf C++ sources from scanner.proto"
+)
+
 # Suppress warnings on generated code
 if(MSVC)
-    set_source_files_properties(${RPS_PROTO_SRCS} ${HOST_PROTO_SRCS} PROPERTIES COMPILE_FLAGS "/W0")
+    set_source_files_properties(${RPS_PROTO_SRCS} ${HOST_PROTO_SRCS} ${SCANNER_PROTO_SRCS} PROPERTIES COMPILE_FLAGS "/W0")
 else()
-    set_source_files_properties(${RPS_PROTO_SRCS} ${HOST_PROTO_SRCS} PROPERTIES COMPILE_FLAGS "-Wno-error -w")
+    set_source_files_properties(${RPS_PROTO_SRCS} ${HOST_PROTO_SRCS} ${SCANNER_PROTO_SRCS} PROPERTIES COMPILE_FLAGS "-Wno-error -w")
 endif()
 
 add_library(rps-proto STATIC
     ${RPS_PROTO_SRCS}
     ${HOST_PROTO_SRCS}
+    ${SCANNER_PROTO_SRCS}
 )
 
 target_include_directories(rps-proto PUBLIC ${PROTO_OUT_DIR})

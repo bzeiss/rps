@@ -24,6 +24,7 @@
 #pragma warning(pop)
 #endif
 #include <rps/ipc/Connection.hpp>
+#include <scanner.pb.h>
 #include <rps/scanner/IPluginFormatScanner.hpp>
 #include <rps/scanner/ClapScanner.hpp>
 #include <rps/scanner/Vst3Scanner.hpp>
@@ -120,15 +121,17 @@ int main(int argc, char* argv[]) {
         // 1. Connect to Orchestrator IPC Queue
         auto connection = rps::ipc::MessageQueueConnection::createClient(ipcId);
 
-        logStage("Waiting for ScanRequest...");
-        // 2. Wait for the ScanRequest
-        auto maybeMsg = connection->receiveMessage(5000); // 5 sec timeout
-        if (!maybeMsg.has_value() || maybeMsg.value().type != rps::ipc::MessageType::ScanRequest) {
-            std::cerr << "Failed to receive ScanRequest from Orchestrator.\n";
+        logStage("Waiting for ScanCommand...");
+        // 2. Wait for the ScanCommand (protobuf over MQ)
+        rps::scanner::ScanCommand scanCmd;
+        if (!connection->receiveProto(scanCmd, 5000)) {
+            std::cerr << "Failed to receive ScanCommand from Orchestrator.\n";
             return 1;
         }
 
-        auto req = std::get<rps::ipc::ScanRequest>(maybeMsg.value().payload);
+        std::string reqFormat = scanCmd.format();
+        pluginPathStr = scanCmd.plugin_path();
+        pluginPath = boost::filesystem::path(pluginPathStr);
 
         logStage("Finding appropriate scanner...");
         // 3. Find appropriate scanner
@@ -136,12 +139,11 @@ int main(int argc, char* argv[]) {
         rps::scanner::IPluginFormatScanner* activeScanner = nullptr;
 
         // Ensure we only try to parse the plugin with a scanner that natively handles its format.
-        // E.g. don't try to parse a .vst3 file with a ClapScanner.
         rps::core::FormatRegistry formatRegistry;
 
         for (auto& s : scanners) {
             auto formatName = s->getFormatName();
-            if (formatName == req.format) {
+            if (formatName == reqFormat) {
                 const auto* traits = formatRegistry.getTraits(formatName);
                 if (traits && traits->isPluginPath(pluginPath)) {
                     if (s->canHandle(pluginPath)) {
@@ -153,19 +155,21 @@ int main(int argc, char* argv[]) {
         }
 
         if (!activeScanner && pluginPathStr != "CRASH_ME" && pluginPathStr != "HANG_ME") {
-            rps::ipc::Message errMsg;
-            errMsg.type = rps::ipc::MessageType::ErrorMessage;
-            errMsg.payload = rps::ipc::ErrorMessage{"Unsupported Format", "No scanner handles: " + pluginPathStr};
-            connection->sendMessage(errMsg);
+            rps::scanner::ScannerEvent evtMsg;
+            auto* err = evtMsg.mutable_error();
+            err->set_error("Unsupported Format");
+            err->set_details("No scanner handles: " + pluginPathStr);
+            connection->sendProto(evtMsg);
             return 1;
         }
 
         // 4. Progress Callback closure
         auto progressCb = [&connection](int percentage, const std::string& status) {
-            rps::ipc::Message progMsg;
-            progMsg.type = rps::ipc::MessageType::ProgressEvent;
-            progMsg.payload = rps::ipc::ProgressEvent{status, percentage};
-            connection->sendMessage(progMsg);
+            rps::scanner::ScannerEvent evtMsg;
+            auto* prog = evtMsg.mutable_progress();
+            prog->set_status(status);
+            prog->set_progress_percentage(percentage);
+            connection->sendProto(evtMsg);
         };
 
         // --- CRASH TEST SIMULATION ---
@@ -200,27 +204,48 @@ int main(int argc, char* argv[]) {
                               << " (" << result.parameters.size() << " params)" << std::endl;
                 }
 
-                rps::ipc::Message resMsg;
-                resMsg.type = rps::ipc::MessageType::ScanResult;
-                resMsg.payload = result;
+                // Convert C++ struct → proto at the IPC boundary
+                rps::scanner::ScannerEvent evtMsg;
+                auto* pbRes = evtMsg.mutable_scan_result();
+                pbRes->set_name(result.name);
+                pbRes->set_vendor(result.vendor);
+                pbRes->set_version(result.version);
+                pbRes->set_uid(result.uid);
+                pbRes->set_description(result.description);
+                pbRes->set_url(result.url);
+                pbRes->set_category(result.category);
+                pbRes->set_format(result.format);
+                pbRes->set_scan_method(result.scanMethod);
+                pbRes->set_num_inputs(result.numInputs);
+                pbRes->set_num_outputs(result.numOutputs);
+                for (const auto& p : result.parameters) {
+                    auto* pp = pbRes->add_parameters();
+                    pp->set_id(p.id);
+                    pp->set_name(p.name);
+                    pp->set_default_value(p.defaultValue);
+                }
+                for (const auto& [k, v] : result.extraData) {
+                    (*pbRes->mutable_extra_data())[k] = v;
+                }
 
                 auto t2 = std::chrono::steady_clock::now();
-                bool sent = connection->sendMessage(resMsg);
+                bool sent = connection->sendProto(evtMsg);
                 auto t3 = std::chrono::steady_clock::now();
 
                 if (g_verbose) {
                     auto sendMs = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
                     std::cerr << "[scanner] " << pluginPath.filename().string()
-                              << ": IPC sendMessage " << (sent ? "OK" : "FAILED")
+                              << ": IPC sendProto " << (sent ? "OK" : "FAILED")
                               << " in " << sendMs << "ms" << std::endl;
                 }
             } catch (const std::exception& scanErr) {
                 std::string what = scanErr.what();
                 std::cerr << "Scanner Fatal Error: " << what << "\n";
-                rps::ipc::Message errMsg;
-                errMsg.type = rps::ipc::MessageType::ErrorMessage;
-                errMsg.payload = rps::ipc::ErrorMessage{"Scan Error", what};
-                connection->sendMessage(errMsg);
+                rps::scanner::ScannerEvent evtMsg;
+                auto* err = evtMsg.mutable_error();
+                err->set_error("Scan Error");
+                err->set_details(what);
+                connection->sendProto(evtMsg);
             }
         }
 
