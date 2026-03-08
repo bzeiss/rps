@@ -1,24 +1,27 @@
 # RPS Developer Guide
 
-Welcome to the **RPS** project! This guide explains the architecture, design choices, and implementation details of what we have built so far, serving as an onboarding manual for new developers.
+Welcome to the **RPS** project! This guide covers the implementation details, design choices, and internal workings of both major domains — plugin scanning and the audio engine — serving as an onboarding manual for new developers. For the high-level system design and rationale, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
 ## 1. Core Architecture
 
-The audio plugin ecosystem is heavily reliant on dynamically loaded libraries (`.dll`, `.so`, `.dylib`). These libraries execute arbitrary, third-party C/C++ code inside the host's memory space. If a plugin has a bug, deadlocks during an iLok license check, or simply crashes, it will take the host application down with it.
+RPS is a cross-platform audio infrastructure system with a strict **multi-process architecture**. Audio plugins are dynamically loaded libraries (`.dll`, `.so`, `.dylib`) that execute arbitrary, third-party C/C++ code. They crash, hang, deadlock, and corrupt memory. RPS isolates all plugin code in disposable worker processes so that failures never propagate to the server or other plugins.
 
-RPS solves this problem by using a strict **multi-process architecture**:
+The system has two major domains:
 
-1. **`rps-engine`** (The Core Library)
+### Domain A: Plugin Scanning
+
+1. **`rps-engine`** (The Core Scan Library)
    - A reusable static library (`libs/rps-engine/`) containing all scan orchestration logic: plugin discovery, process pool management, watchdog timers, retry logic, incremental caching, and SQLite persistence.
    - Exposes `ScanEngine::runScan(ScanConfig, ScanObserver*)` — a single entry point for any consumer.
 
 2. **`rps-server`** (The gRPC Server)
-   - A long-lived daemon that exposes `rps-engine` via a gRPC streaming API.
+   - A long-lived daemon that exposes both scanning and audio engine functionality via a gRPC streaming API.
    - Implements `GrpcScanObserver` to serialize scan events into protobuf messages streamed to clients.
+   - Manages `GuiSessionManager` for plugin hosting and graph coordination.
    - Logs to console and file via `spdlog`.
-   - Can be driven from any language (Python, C++, etc.).
+   - Can be driven from any language (Python, C++, Java, etc.).
 
 3. **`rps-standalone`** (Standalone CLI)
    - A thin CLI wrapper (~100 lines) around `rps-engine`. No server needed.
@@ -28,23 +31,26 @@ RPS solves this problem by using a strict **multi-process architecture**:
    - Accepts the same CLI arguments (`-prefPath`, `-licenceLevel`, `-hostName`, `-progress`, `-rescan`, `-timeout`).
    - Uses `rps-engine` for crash-isolated VST3 scanning, then reads the SQLite DB and writes Steinberg-compatible XML cache files (`vst3plugins.xml`, `vst3blocklist.xml`, `vst3allowlist.xml`).
 
-5. **`rps-pluginscanner`** (The Worker)
+5. **`rps-pluginscanner`** (The Scanner Worker)
    - A disposable, isolated process.
    - It connects to the engine via IPC (Boost.Interprocess message queues with Protobuf serialization), receives a `ScanCommand`, and loads a single target plugin into its own memory space.
    - It extracts the necessary metadata (name, parameters, inputs/outputs) and reports it back via `ScanProgressEvent` and `ScanResultEvent` messages.
 
-6. **`rps-pluginhost-vst3`** (VST3 GUI Host Worker)
-   - An isolated process that loads a VST3 plugin, creates an SDL3 window, and embeds the plugin's native editor view.
-   - Features an ImGui preset browser sidebar (collapsible, searchable, multi-column table).
-   - Discovers presets from `IUnitInfo` (`IProgramListData`) and `.vstpreset` file scanning across standard directories (`%APPDATA%/VST3 Presets/`, `Documents/VST3 Presets/`, `%COMMONPROGRAMFILES%/VST3 Presets/`) with vendor-agnostic matching.
-   - Loads presets via `IUnitInfo` + minimal audio process pass, or `.vstpreset` file parsing (inline binary parser for component/controller state chunks).
-   - Communicates with the server via length-prefixed Protobuf over stdin/stdout pipes.
+### Domain B: Audio Engine & Plugin Hosting
 
-7. **`rps-pluginhost-clap`** (CLAP GUI Host Worker)
-   - An isolated process that loads a CLAP plugin, creates an SDL3 window, and embeds the plugin's native editor view.
-   - Same ImGui preset sidebar architecture as the VST3 host.
-   - Discovers and loads presets via the CLAP preset-load extension.
-   - Communicates with the server via length-prefixed Protobuf over stdin/stdout pipes.
+6. **`rps-pluginhost`** (The Plugin Host Worker)
+   - An isolated process that loads and hosts plugins. Operates in two modes:
+   - **Single-plugin GUI mode** (`rps-pluginhost-vst3`, `rps-pluginhost-clap`): Loads a plugin, creates an SDL3 window, embeds the plugin's native editor with an ImGui preset sidebar. Communicates via Protobuf over stdin/stdout pipes.
+   - **Graph mode**: Hosts multiple plugins in an arbitrary DAG-based audio processing graph with wavefront-parallel execution. Communicates via shared memory (`SharedAudioRing`).
+
+7. **`rps-coordinator`** (Graph Audio Engine Core)
+   - `libs/rps-coordinator/`: The graph model (`Graph`, `Node`, `Edge`), parallel wavefront executor (`GraphExecutor`), and graph worker main loop (`GraphWorkerMain`).
+   - Supports 10 node types: Input, Output, Plugin, Mixer, Gain, ChannelRouter, Downmix, Send, Receive, SidechainInput.
+   - `GraphExecutor`: Computes wavefronts (nodes grouped by topological depth) and dispatches them in parallel using a generation-counter thread pool. Zero allocations on the audio thread.
+   - `CpuTopology` (in `rps-core`): Cross-platform CPU topology discovery (P-cores / E-cores), thread affinity pinning, and real-time priority (MMCSS on Windows, QoS on macOS, SCHED_FIFO on Linux).
+
+8. **`rps-audio`** (Shared Memory Audio Transport)
+   - `libs/rps-audio/`: SPSC lock-free ring buffer over shared memory with OS-level signaling (Windows events / POSIX semaphores).
 
 ---
 
@@ -103,7 +109,7 @@ We have successfully completed **Phase 1 (IPC Foundation)**, **Phase 2 (Process 
 ### 3.1 Project Structure
 
 #### Libraries
-- `libs/rps-core/`: Format traits, registry, and filesystem discovery logic.
+- `libs/rps-core/`: Format traits, registry, filesystem discovery logic, logging (`initLogging`), and CPU topology discovery (`CpuTopology.hpp/.cpp`).
 - `libs/rps-ipc/`: Shared IPC transport layer (engine ↔ scanner/host). Provides two transport implementations:
   - `Connection.hpp/.cpp` (`MessageQueueConnection`): Boost.Interprocess message queues with Protobuf serialization. Used by the scanner path.
   - `StdioPipeConnection.hpp/.cpp`: Length-prefixed Protobuf over stdin/stdout pipes. Used by the pluginhost path.
@@ -120,7 +126,12 @@ We have successfully completed **Phase 1 (IPC Foundation)**, **Phase 2 (Process 
   - `SdlWindow.hpp/.cpp`: SDL3 window management with Dear ImGui integration. Implements the collapsible preset browser sidebar (search filter, multi-column sortable table), "Stationary Content" window expansion pattern, and child HWND positioning to solve the Windows Airspace Problem.
   - `GuiWorkerMain.hpp/.cpp`: Common IPC event loop for host worker processes. Spawns a dedicated real-time audio thread (AVRT Pro Audio priority on Windows) when `--audio-shm` is present.
 - `libs/rps-audio/`: **Shared memory audio transport library**:
-  - `SharedAudioRing.hpp/.cpp`: SPSC (Single Producer, Single Consumer) lock-free ring buffer over shared memory. Uses `boost::interprocess::windows_shared_memory` on Windows (pagefile-backed named kernel sections) and `boost::interprocess::shared_memory_object` on POSIX. Header contains audio format config, cache-line-aligned atomic positions, and extension points for future DAW features (sidechain, sends, transport state).
+  - `SharedAudioRing.hpp/.cpp`: SPSC (Single Producer, Single Consumer) lock-free ring buffer over shared memory. Uses `boost::interprocess::windows_shared_memory` on Windows (pagefile-backed named kernel sections) and `boost::interprocess::shared_memory_object` on POSIX. Header contains audio format config, cache-line-aligned atomic positions, and extension points for future DAW features (sidechain, sends, transport state). OS-level signaling (Windows events / POSIX semaphores) for efficient wake-ups.
+- `libs/rps-coordinator/`: **Graph-based audio engine**:
+  - `Graph.hpp/.cpp`: Graph model with typed nodes, edges, ports, channel layouts. Topological sort and wavefront computation.
+  - `GraphExecutor.hpp/.cpp`: Parallel wavefront executor with generation-counter thread pool. Zero-allocation hot path via pre-computed O(1) buffer lookups.
+  - `GraphWorkerMain.hpp/.cpp`: Graph mode entry point for `rps-pluginhost`. Pre-allocates all buffers, pins to P-cores, runs the audio loop.
+  - `LatencyCalculator.hpp/.cpp`: Per-output latency tracking through the graph.
 
 #### Applications
 - `apps/rps-standalone/`: Standalone CLI wrapper. A thin `main.cpp` (~100 lines) that parses CLI args into `ScanConfig` and calls `ScanEngine::runScan()`.
@@ -323,13 +334,16 @@ Dependencies: `grpcio`, `grpcio-tools`, `rich`, `click`, `InquirerPy` (see `exam
 
 ---
 
-## 4. Next Steps (Phase 8+)
+## 4. Next Steps
 
-The immediate next goals are:
-1. **OS-Specific Formats**: Implement scanners for **AU** (macOS via CoreAudio) and **LV2** (Linux/Windows).
-2. **Vendor SQLite**: Bundle the SQLite amalgamation to remove the system dependency.
-3. **Extended Metadata**: Store additional plugin details (e.g., bus arrangements) if exposed by the SDKs.
-4. **Multi-Channel Audio**: Extend the shared memory ring buffer to support flexible bus layouts (mono/stereo/surround/Atmos), per-channel routing, and bus layout negotiation.
-5. **Plugin Chains**: Support hosting entire effects chains (e.g., EQ → Compressor) within a single worker process, with chain splitters for parallel processing and per-plugin routing.
-6. **Delay Compensation**: Implement plugin delay compensation (PDC) across chains using reported latency values.
-7. **Authentication**: Optional TLS/token auth for remote gRPC connections.
+The audio engine is currently at Phase 6 (CPU Topology Awareness) of the graph-based multi-plugin hosting plan (see `plans/rps-pluginhost-graph.md`). Remaining phases:
+
+1. **Phase 7: Multi-Process Graph Slicing** — Split large graphs across multiple `rps-pluginhost` worker processes for vendor isolation and crash containment. SendNode/ReceiveNode bridged by SharedAudioRing.
+2. **Phase 8: Dynamic Graph Mutation** — Add/remove/reconfigure nodes and edges in a running graph without stopping audio. Lockfree reader-writer handoff.
+3. **Phase 9: Plugin Delay Compensation (PDC)** — Automatic DelayNode insertion to align paths with different latencies at mixer inputs.
+4. **Phase 10: Session Persistence** — Save/load complete graph state (topology + all plugin state blobs) via gRPC.
+5. **Phase 11: Per-Node GUI** — Open/close individual plugin GUIs within a running graph session.
+
+Other goals:
+- **OS-Specific Scanners**: AU (macOS), LV2 (Linux/Windows) scanner implementations.
+- **Authentication**: Optional TLS/token auth for remote gRPC connections.

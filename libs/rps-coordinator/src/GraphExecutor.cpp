@@ -1,4 +1,5 @@
 #include <rps/coordinator/GraphExecutor.hpp>
+#include <rps/core/CpuTopology.hpp>
 
 #include <spdlog/spdlog.h>
 
@@ -37,6 +38,12 @@ void GraphExecutor::shutdownWorkers() {
 // ---------------------------------------------------------------------------
 
 void GraphExecutor::workerLoop() {
+    // Pin this worker thread to P-cores (best-effort)
+    if (m_topology.isHybrid) {
+        rps::core::pinThreadToPerformanceCores(m_topology);
+    }
+    rps::core::setRealtimeThreadPriority();
+
     uint64_t localGen = 0;
 
     while (true) {
@@ -128,10 +135,19 @@ void GraphExecutor::prepare(const Graph& graph, PluginProcessCallback pluginCall
     m_useParallel = m_parallelEnabled && hasParallelWork;
 
     if (m_useParallel) {
+        // Discover CPU topology for thread count and affinity
+        m_topology = rps::core::discoverTopology();
+        spdlog::info("GraphExecutor: CPU topology: {}", rps::core::topologySummary(m_topology));
+
         uint32_t threadCount = m_requestedThreadCount;
         if (threadCount == 0) {
-            uint32_t hw = std::thread::hardware_concurrency();
-            threadCount = std::max(2u, std::min(hw / 2, 8u));
+            if (m_topology.isHybrid && m_topology.pCoreCount > 1) {
+                // On hybrid CPUs, use P-core count (minus 1 for the main thread)
+                threadCount = std::max(2u, m_topology.pCoreCount - 1);
+            } else {
+                uint32_t hw = std::thread::hardware_concurrency();
+                threadCount = std::max(2u, std::min(hw / 2, 8u));
+            }
         }
 
         spdlog::debug("GraphExecutor: parallel mode, {} worker threads", threadCount);

@@ -5,6 +5,7 @@
 #include <rps/coordinator/ChannelFormat.hpp>
 #include <rps/coordinator/LatencyCalculator.hpp>
 #include <rps/audio/SharedAudioRing.hpp>
+#include <rps/core/CpuTopology.hpp>
 #include <rps/core/LoggingInit.hpp>
 
 #include <fstream>
@@ -453,6 +454,21 @@ int GraphWorkerMain::run(int argc, char* argv[], HostFactory factory) {
         }
 
         report(spdlog::level::info, "Audio I/O: input='{}', output='{}'", inputNodeId, outputNodeId);
+
+        // Pin audio thread to P-cores and set real-time priority (Phase 6)
+        {
+            auto topo = rps::core::discoverTopology();
+            report(spdlog::level::info, "CPU topology: {}", rps::core::topologySummary(topo));
+            if (topo.isHybrid) {
+                if (rps::core::pinThreadToPerformanceCores(topo)) {
+                    report(spdlog::level::info, "Audio thread pinned to {} P-cores", topo.pCoreCount);
+                }
+            }
+            if (rps::core::setRealtimeThreadPriority()) {
+                report(spdlog::level::info, "Audio thread set to real-time priority (MMCSS Pro Audio)");
+            }
+        }
+
         report(spdlog::level::info, "Processing... (Ctrl+C to stop)");
 
         // Pre-allocate I/O buffers and maps ONCE (Phase 4: zero allocations in hot path)

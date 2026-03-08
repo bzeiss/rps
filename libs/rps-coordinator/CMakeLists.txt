@@ -35,6 +35,7 @@ if(RPS_BUILD_COORDINATOR_TESTS)
         tests/GraphSerializerTest.cpp
         tests/AudioBufferTest.cpp
         tests/GraphExecutorTest.cpp
+        tests/CpuTopologyTest.cpp
         tests/TestMain.cpp
     )
     target_link_libraries(rps-coordinator-tests

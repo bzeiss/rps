@@ -1,28 +1,41 @@
 # RPS
 
-RPS is a modern, cross-platform audio plugin scanner and host designed from the ground up for extreme robustness and reliability. It supports scanning VST2, VST3, CLAP, AU, AAX, LV2, and LADSPA formats on Windows, macOS, and Linux. Beyond scanning, RPS can host plugin GUIs in isolated processes and route audio through plugins via a lock-free shared memory transport.
+RPS is a cross-platform audio infrastructure system built on a **multi-process architecture** for unconditional stability. All third-party plugin code runs in disposable worker processes — if a plugin crashes, only that worker dies.
 
-RPS exposes a **gRPC API** so it can be driven from any language. Example clients in C++, Python and Java (possibly others) are included.
+RPS has two major domains:
+
+1. **Plugin Scanning** — A robust, parallel scanning system that discovers and catalogs audio plugins across all major formats (VST2, VST3, CLAP, AAX, AU, LV2, LADSPA) on Windows, macOS, and Linux. Results are stored in a central SQLite database.
+2. **Audio Engine & Plugin Hosting** — A graph-based, out-of-process audio engine with single- and multi-plugin hosting, native GUI embedding (SDL3 + ImGui), parallel wavefront execution, zero-allocation real-time audio path, and CPU topology-aware scheduling. Currently supports **VST3** and **CLAP** plugins.
+
+RPS exposes a **gRPC API** so it can be driven from any language. Example clients in C++, Python and Java are included.
 
 ## Why RPS?
 
-Scanning audio plugins is notoriously unreliable. Many plugins contain bugs, fail iLok license checks, or enter infinite loops during initialization. When a DAW or host application attempts to scan these plugins directly in its main process, a single bad plugin can crash the entire application.
+Audio plugins are dynamically loaded libraries that execute arbitrary third-party code. They crash during initialization, hang on iLok license checks, write to stdout, corrupt memory, and deadlock during cleanup. When a DAW or host application loads these plugins directly in its main process, a single bad plugin can crash the entire application.
 
-RPS solves this by using a **multi-process architecture**:
-- **`rps-server`**: A gRPC server that coordinates scanning and plugin GUI hosting. It manages a pool of worker processes, handles watchdogs/timeouts, streams progress events to clients, and aggregates results into a central SQLite database. If a plugin crashes, only the worker dies—the server logs the failure and moves on.
-- **`rps-standalone`**: A standalone CLI wrapper around the same scan engine (no server needed).
-- **`rps-pluginscanner`**: The worker. It isolates the unsafe, third-party plugin code from the rest of your system. Communicates with the engine via Protobuf over Boost.Interprocess message queues.
-- **`rps-pluginhost-vst3`**: An isolated GUI host process for VST3 plugins. Opens the plugin's native editor in an SDL3 window with an ImGui preset sidebar. Communicates via Protobuf over stdin/stdout pipes. Supports real-time audio processing.
-- **`rps-pluginhost-clap`**: An isolated GUI host process for CLAP plugins, using the same SDL3/ImGui sidebar architecture. Communicates via Protobuf over stdin/stdout pipes. Supports real-time audio processing.
-- **`rps-audio`** (`libs/rps-audio/`): Shared memory SPSC lock-free ring buffer library for low-latency audio transport between processes.
-- **`examples/`**: Client examples.
+RPS solves this with a **multi-process architecture** where all plugin code runs in isolated worker processes:
+
+### Scanning
+- **`rps-server`**: A gRPC server daemon that coordinates both scanning and the audio engine. Manages worker process pools, handles watchdogs/timeouts, and streams progress events to clients.
+- **`rps-standalone`**: A standalone CLI wrapper around the scan engine (no server needed).
+- **`rps-pluginscanner`**: The disposable scanner worker. Isolates unsafe plugin loading in its own process. Communicates via Protobuf over Boost.Interprocess message queues.
+
+### Audio Engine & Plugin Hosting
+- **`rps-pluginhost`**: An isolated plugin host worker process. Operates in two modes:
+  - *Single-plugin GUI mode* — Opens a plugin's native editor in an SDL3 window with an ImGui preset sidebar.
+  - *Graph mode* — Hosts multiple plugins in an arbitrary audio processing graph with wavefront-parallel execution.
+- **`rps-coordinator`** (`libs/rps-coordinator/`): The graph model, parallel wavefront executor, and graph worker runtime. The core of the audio engine.
+- **`rps-audio`** (`libs/rps-audio/`): Shared memory SPSC lock-free ring buffer for low-latency inter-process audio transport.
+
+### Example Clients
+- **`examples/`**: Python TUI, C++ CLI, and Java clients demonstrating the full gRPC API.
 
 ## Project Goals
-1. **Primary Objective**: Robustness (Crash and stall isolation).
-2. **Secondary Objective**: Performance / Speed (Parallel scanning).
-3. **Third Objective**: Ease of use via central SQLite database (external tools can simply query the DB).
+1. **Robustness**: Unconditional crash and stall isolation through multi-process architecture.
+2. **Performance**: Lock-free shared memory audio transport, parallel wavefront graph execution, CPU topology-aware scheduling.
+3. **Accessibility**: Language-agnostic gRPC API. Central SQLite database queryable by external tools.
 4. **Language**: Strictly Modern C++23 (core engine). Python for example clients.
-5. **Dependencies**: STL, Boost, SQLite, gRPC/Protobuf, spdlog, and Plugin SDKs.
+5. **Dependencies**: STL, Boost, SQLite, gRPC/Protobuf, spdlog, SDL3, Dear ImGui, and Plugin SDKs.
 
 ## Building
 
@@ -464,7 +477,8 @@ rps-standalone --formats vst3
 
 ## Documentation
 
-For developers looking to contribute, understand the architecture, or build the project from source, please read the [Developer Guide](DEVELOPMENT.md).
+- **[Architecture](ARCHITECTURE.md)** — Full system design: process architecture, IPC mechanisms, graph engine, real-time audio path, CPU topology, and design rationale.
+- **[Developer Guide](DEVELOPMENT.md)** — Implementation details, component walkthroughs, and onboarding guide for contributors.
 
 ## License
 

@@ -2,6 +2,7 @@
 
 #include <rps/coordinator/AudioBuffer.hpp>
 #include <rps/coordinator/Graph.hpp>
+#include <rps/core/CpuTopology.hpp>
 
 #include <atomic>
 #include <condition_variable>
@@ -116,6 +117,9 @@ private:
     bool m_parallelEnabled = true;     // User setting
     bool m_useParallel = false;        // Actual mode (auto-detected)
     uint32_t m_requestedThreadCount = 0; // 0 = auto
+
+    // CPU topology (discovered once when parallel mode starts)
+    rps::core::CpuTopologyInfo m_topology;
 
     // -- Thread pool --
     std::vector<std::thread> m_workers;
