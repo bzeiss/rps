@@ -107,6 +107,13 @@ public:
     /// Full validation: acyclic, connected, channel compatibility, no dangling ports.
     ValidationResult validate() const;
 
+    /// Compute wavefronts — nodes grouped by topological depth.
+    /// Depth 0 = nodes with no incoming edges (InputNodes).
+    /// Depth N = nodes whose all predecessors are at depth < N.
+    /// Nodes within the same wavefront can be processed in parallel.
+    /// Returns empty if the graph has a cycle.
+    std::vector<std::vector<std::string>> computeWavefronts() const;
+
     /// Clear all nodes and edges.
     void clear();
 

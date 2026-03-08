@@ -186,3 +186,83 @@ TEST(Graph_Clear) {
     ASSERT_EQ(g.nodeCount(), 0u);
     ASSERT_EQ(g.edges().size(), 0u);
 }
+
+// ---------------------------------------------------------------------------
+// Phase 5: Wavefront tests
+// ---------------------------------------------------------------------------
+
+TEST(Graph_Wavefronts_SimpleChain) {
+    // input -> gain -> output: 3 wavefronts, each with 1 node
+    auto g = buildSimpleChain();
+    auto waves = g.computeWavefronts();
+    ASSERT_EQ(waves.size(), 3u);
+    ASSERT_EQ(waves[0].size(), 1u); // in
+    ASSERT_EQ(waves[1].size(), 1u); // gain
+    ASSERT_EQ(waves[2].size(), 1u); // out
+}
+
+TEST(Graph_Wavefronts_Diamond) {
+    // in -> A -> mixer -> out
+    // in -> B -> mixer -> out
+    // Wavefronts: [in], [A, B], [mixer], [out]
+    Graph g(Graph::Config{48000, 128});
+    g.addNode(createInputNode("in", {stereoLayout(), ""}));
+    g.addNode(createGainNode("A", {stereoLayout(), 0.5f, false, false}));
+    g.addNode(createGainNode("B", {stereoLayout(), 0.8f, false, false}));
+    MixerNodeConfig mixCfg;
+    mixCfg.outputLayout = stereoLayout();
+    mixCfg.numInputs = 2;
+    g.addNode(createMixerNode("mix", mixCfg));
+    g.addNode(createOutputNode("out", {stereoLayout(), ""}));
+    g.addEdge("in", 0, "A", 0);
+    g.addEdge("in", 0, "B", 0);
+    g.addEdge("A", 0, "mix", 0);
+    g.addEdge("B", 0, "mix", 1);
+    g.addEdge("mix", 0, "out", 0);
+
+    auto waves = g.computeWavefronts();
+    ASSERT_EQ(waves.size(), 4u);
+    ASSERT_EQ(waves[0].size(), 1u); // in
+    ASSERT_EQ(waves[1].size(), 2u); // A and B (parallel!)
+    ASSERT_EQ(waves[2].size(), 1u); // mix
+    ASSERT_EQ(waves[3].size(), 1u); // out
+}
+
+TEST(Graph_Wavefronts_Wide) {
+    // 4 parallel input->gain chains merging at a mixer
+    // Wavefronts: [in1,in2,in3,in4], [g1,g2,g3,g4], [mix], [out]
+    Graph g(Graph::Config{48000, 128});
+    for (int i = 1; i <= 4; ++i) {
+        auto inId = "in" + std::to_string(i);
+        auto gId = "g" + std::to_string(i);
+        g.addNode(createInputNode(inId, {stereoLayout(), ""}));
+        g.addNode(createGainNode(gId, {stereoLayout(), 1.0f, false, false}));
+        g.addEdge(inId, 0, gId, 0);
+    }
+    MixerNodeConfig mixCfg;
+    mixCfg.outputLayout = stereoLayout();
+    mixCfg.numInputs = 4;
+    g.addNode(createMixerNode("mix", mixCfg));
+    g.addNode(createOutputNode("out", {stereoLayout(), ""}));
+    for (int i = 1; i <= 4; ++i) {
+        g.addEdge("g" + std::to_string(i), 0, "mix", static_cast<uint32_t>(i - 1));
+    }
+    g.addEdge("mix", 0, "out", 0);
+
+    auto waves = g.computeWavefronts();
+    ASSERT_EQ(waves.size(), 4u);
+    ASSERT_EQ(waves[0].size(), 4u); // 4 inputs
+    ASSERT_EQ(waves[1].size(), 4u); // 4 gains
+    ASSERT_EQ(waves[2].size(), 1u); // mixer
+    ASSERT_EQ(waves[3].size(), 1u); // output
+}
+
+TEST(Graph_Wavefronts_CycleReturnsEmpty) {
+    Graph g;
+    g.addNode(createGainNode("a", {stereoLayout(), 1.0f, false, false}));
+    g.addNode(createGainNode("b", {stereoLayout(), 1.0f, false, false}));
+    g.addEdge("a", 0, "b", 0);
+    g.addEdge("b", 0, "a", 0);
+    auto waves = g.computeWavefronts();
+    ASSERT_TRUE(waves.empty());
+}

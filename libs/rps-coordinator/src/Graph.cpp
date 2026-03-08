@@ -261,6 +261,51 @@ ValidationResult Graph::validate() const {
     return result;
 }
 
+std::vector<std::vector<std::string>> Graph::computeWavefronts() const {
+    auto adj = adjacencyList();
+
+    // Compute in-degrees
+    std::unordered_map<std::string, int> inDegree;
+    for (const auto& [id, _] : m_nodes) {
+        inDegree[id] = 0;
+    }
+    for (const auto& e : m_edges) {
+        inDegree[e.destNodeId]++;
+    }
+
+    // Seed: all nodes with in-degree 0 form wavefront 0
+    std::vector<std::string> currentWave;
+    for (const auto& [id, deg] : inDegree) {
+        if (deg == 0) currentWave.push_back(id);
+    }
+
+    std::vector<std::vector<std::string>> wavefronts;
+    size_t visited = 0;
+
+    while (!currentWave.empty()) {
+        // Sort for deterministic ordering within a wavefront
+        std::sort(currentWave.begin(), currentWave.end());
+        wavefronts.push_back(currentWave);
+        visited += currentWave.size();
+
+        std::vector<std::string> nextWave;
+        for (const auto& nodeId : currentWave) {
+            for (const auto& neighbor : adj[nodeId]) {
+                if (--inDegree[neighbor] == 0) {
+                    nextWave.push_back(neighbor);
+                }
+            }
+        }
+        currentWave = std::move(nextWave);
+    }
+
+    // Cycle detection: if we didn't visit all nodes, there's a cycle
+    if (visited != m_nodes.size()) {
+        return {};
+    }
+    return wavefronts;
+}
+
 void Graph::clear() {
     m_nodes.clear();
     m_edges.clear();
