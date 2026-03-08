@@ -517,11 +517,6 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
 #ifdef _WIN32
                                 // Launch with 8MB stack via CreateThread (Windows)
                                 auto winWorkerBody = [](LPVOID param) -> DWORD {
-                                    auto* args = static_cast<WorkerArgs*>(param);
-                                    // workerFunc is captureless-compatible by design;
-                                    // we re-derive it from the args pointer.
-                                    // However, since we need to call workerFunc, we use
-                                    // a two-level indirection: args carries a function ptr.
                                     auto* funcAndArgs = static_cast<std::pair<decltype(workerFunc)*, WorkerArgs*>*>(param);
                                     (*funcAndArgs->first)(funcAndArgs->second);
                                     delete funcAndArgs;
