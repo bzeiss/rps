@@ -1,21 +1,74 @@
 set(VST3_SDK_ROOT "${CMAKE_SOURCE_DIR}/libs/rps-core/include/rps/core/vst3sdk")
 
-# ---- Unified plugin host: all formats in one binary ----
+# ---------------------------------------------------------------------------
+# VST3 SDK hosting helpers — compiled as a separate object library
+# to avoid our strict warning flags being applied to third-party code.
+# ---------------------------------------------------------------------------
+add_library(vst3-hosting-helpers OBJECT
+    ${VST3_SDK_ROOT}/public.sdk/source/vst/hosting/module.cpp
+    ${VST3_SDK_ROOT}/public.sdk/source/vst/hosting/hostclasses.cpp
+    ${VST3_SDK_ROOT}/public.sdk/source/vst/hosting/pluginterfacesupport.cpp
+    # Base SDK sources for FUID, IID symbol definitions
+    ${VST3_SDK_ROOT}/pluginterfaces/base/funknown.cpp
+    ${VST3_SDK_ROOT}/pluginterfaces/base/coreiids.cpp
+    # VST-specific IID definitions (IComponentHandler, IPlugFrame, etc.)
+    ${VST3_SDK_ROOT}/public.sdk/source/vst/vstinitiids.cpp
+    # String conversion utilities (used by module_win32.cpp)
+    ${VST3_SDK_ROOT}/public.sdk/source/vst/utility/stringconvert.cpp
+    ${VST3_SDK_ROOT}/public.sdk/source/common/commonstringconvert.cpp
+    ${VST3_SDK_ROOT}/public.sdk/source/common/commoniids.cpp
+    ${VST3_SDK_ROOT}/public.sdk/source/common/memorystream.cpp
+    # Parameter changes support (for delivering changes to processor)
+    ${VST3_SDK_ROOT}/public.sdk/source/vst/hosting/parameterchanges.cpp
+)
+
+# Platform-specific module loader
+if(WIN32)
+    target_sources(vst3-hosting-helpers PRIVATE
+        ${VST3_SDK_ROOT}/public.sdk/source/vst/hosting/module_win32.cpp
+    )
+elseif(APPLE)
+    target_sources(vst3-hosting-helpers PRIVATE
+        ${VST3_SDK_ROOT}/public.sdk/source/vst/hosting/module_mac.mm
+    )
+else()
+    target_sources(vst3-hosting-helpers PRIVATE
+        ${VST3_SDK_ROOT}/public.sdk/source/vst/hosting/module_linux.cpp
+    )
+endif()
+
+target_include_directories(vst3-hosting-helpers PRIVATE
+    ${VST3_SDK_ROOT}
+)
+
+# Minimal warning flags for third-party SDK code (no -WX/rps_warnings)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(vst3-hosting-helpers PRIVATE
+        -Wno-unnecessary-virtual-specifier
+        -Wno-pragma-pack
+        -Wno-error=unused-parameter
+    )
+endif()
+# Do NOT link rps_warnings here — third-party code.
+
+# ---------------------------------------------------------------------------
+# Unified plugin host: all formats in one binary
+# ---------------------------------------------------------------------------
 add_executable(rps-pluginhost
     src/main.cpp
-    # VST3 format host sources
-    ${CMAKE_SOURCE_DIR}/apps/rps-pluginhost-vst3/src/Vst3GuiHost.cpp
-    # CLAP format host sources
-    ${CMAKE_SOURCE_DIR}/apps/rps-pluginhost-clap/src/ClapGuiHost.cpp
+    # VST3 format host
+    src/vst3/Vst3GuiHost.cpp
+    # CLAP format host
+    src/clap/ClapGuiHost.cpp
 )
 
 target_include_directories(rps-pluginhost PRIVATE
     src
     # VST3 host headers and SDK
-    ${CMAKE_SOURCE_DIR}/apps/rps-pluginhost-vst3/src
+    src/vst3
     ${VST3_SDK_ROOT}
     # CLAP host headers and SDK
-    ${CMAKE_SOURCE_DIR}/apps/rps-pluginhost-clap/src
+    src/clap
     ${CMAKE_SOURCE_DIR}/libs/rps-core/include/rps/core/clap/include
 )
 

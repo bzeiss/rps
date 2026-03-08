@@ -99,7 +99,7 @@ target_link_libraries(rps-server
 )
 
 # Ensure the scanner and plugin host are built before we try to copy them
-add_dependencies(rps-server rps-pluginscanner rps-pluginhost-clap rps-pluginhost-vst3)
+add_dependencies(rps-server rps-pluginscanner rps-pluginhost)
 
 # POST_BUILD: copy on rebuild
 add_custom_command(TARGET rps-server POST_BUILD
@@ -107,11 +107,8 @@ add_custom_command(TARGET rps-server POST_BUILD
         $<TARGET_FILE:rps-pluginscanner>
         "$<TARGET_FILE_DIR:rps-server>/$<TARGET_FILE_NAME:rps-pluginscanner>"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        $<TARGET_FILE:rps-pluginhost-clap>
-        "$<TARGET_FILE_DIR:rps-server>/$<TARGET_FILE_NAME:rps-pluginhost-clap>"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        $<TARGET_FILE:rps-pluginhost-vst3>
-        "$<TARGET_FILE_DIR:rps-server>/$<TARGET_FILE_NAME:rps-pluginhost-vst3>"
+        $<TARGET_FILE:rps-pluginhost>
+        "$<TARGET_FILE_DIR:rps-server>/$<TARGET_FILE_NAME:rps-pluginhost>"
     COMMAND ${CMAKE_COMMAND}
         -DSRC=$<TARGET_FILE:rps-server>
         -DDST=${CMAKE_SOURCE_DIR}/examples/python/$<TARGET_FILE_NAME:rps-server>

@@ -60,8 +60,8 @@ static LONG WINAPI crashHandler(EXCEPTION_POINTERS* exInfo) {
 #include <rps/gui/GuiWorkerMain.hpp>
 
 // Format-specific hosts
-#include "../../rps-pluginhost-vst3/src/Vst3GuiHost.hpp"
-#include "../../rps-pluginhost-clap/src/ClapGuiHost.hpp"
+#include "vst3/Vst3GuiHost.hpp"
+#include "clap/ClapGuiHost.hpp"
 
 #include <algorithm>
 #include <string>
