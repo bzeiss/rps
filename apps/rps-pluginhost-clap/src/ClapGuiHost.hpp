@@ -85,6 +85,10 @@ private:
     void cleanup();
     void discoverPresets();  // Crawl CLAP preset discovery factory
 
+    /// Internal: loads the CLAP DLL, creates plugin instance, queries extensions.
+    /// Does NOT create any GUI. Called by open().
+    void loadPlugin(const boost::filesystem::path& pluginPath);
+
     // Audio processing state
     const clap_plugin_audio_ports* m_audioPorts = nullptr;
     const clap_plugin_latency* m_latencyExt = nullptr;

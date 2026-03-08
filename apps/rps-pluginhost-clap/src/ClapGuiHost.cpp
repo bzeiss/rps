@@ -498,8 +498,11 @@ void ClapGuiHost::onPluginRequestResize(uint32_t width, uint32_t height) {
     }
 }
 
-rps::gui::IPluginGuiHost::OpenResult ClapGuiHost::open(const boost::filesystem::path& pluginPath) {
-    spdlog::info("ClapGuiHost::open({})", pluginPath.string());
+// ---------------------------------------------------------------------------
+// loadPlugin — headless plugin loading (no GUI)
+// ---------------------------------------------------------------------------
+void ClapGuiHost::loadPlugin(const boost::filesystem::path& pluginPath) {
+    spdlog::info("ClapGuiHost::loadPlugin({})", pluginPath.string());
 
     // 1. Load the CLAP DLL
     spdlog::info("  Step 1: Loading CLAP DLL...");
@@ -634,6 +637,18 @@ rps::gui::IPluginGuiHost::OpenResult ClapGuiHost::open(const boost::filesystem::
 
     // 5e. Discover presets via preset_discovery_factory
     discoverPresets();
+
+    spdlog::info("  Plugin loaded successfully: '{}'", m_pluginName);
+}
+
+// ---------------------------------------------------------------------------
+// open — load plugin + create GUI (calls loadPlugin internally)
+// ---------------------------------------------------------------------------
+rps::gui::IPluginGuiHost::OpenResult ClapGuiHost::open(const boost::filesystem::path& pluginPath) {
+    spdlog::info("ClapGuiHost::open({})", pluginPath.string());
+
+    // Load the plugin (DLL, plugin instance, extensions, presets)
+    loadPlugin(pluginPath);
 
     // 6. Query GUI extension
     spdlog::info("  Step 6: Querying CLAP_EXT_GUI...");

@@ -38,6 +38,8 @@
 #include <filesystem>
 #include <fstream>
 #include <chrono>
+#include <array>
+#include <atomic>
 
 using namespace Steinberg;
 using namespace Steinberg::Vst;
@@ -66,8 +68,20 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// IComponentHandler stub — satisfies controllers that require one
+// IComponentHandler — forwards parameter edits from GUI to audio thread
 // ---------------------------------------------------------------------------
+
+/// Thread-safe queue for parameter changes (GUI thread → audio thread).
+struct PendingParamChange {
+    Steinberg::Vst::ParamID id;
+    Steinberg::Vst::ParamValue value;
+};
+
+static constexpr size_t kParamQueueCapacity = 1024;
+static std::array<PendingParamChange, kParamQueueCapacity> s_paramQueue;
+static std::atomic<size_t> s_paramQueueHead{0}; // written by GUI thread
+static std::atomic<size_t> s_paramQueueTail{0}; // read by audio thread
+
 class Vst3ComponentHandler : public U::ImplementsNonDestroyable<U::Directly<IComponentHandler>> {
 public:
     tresult PLUGIN_API beginEdit(ParamID id) override {
@@ -75,7 +89,15 @@ public:
         return kResultOk;
     }
     tresult PLUGIN_API performEdit(ParamID id, ParamValue value) override {
-        spdlog::debug("performEdit({}, {})", id, value);
+        // Enqueue for the audio thread to pick up
+        size_t head = s_paramQueueHead.load(std::memory_order_relaxed);
+        size_t next = (head + 1) % kParamQueueCapacity;
+        if (next != s_paramQueueTail.load(std::memory_order_acquire)) {
+            s_paramQueue[head] = {id, value};
+            s_paramQueueHead.store(next, std::memory_order_release);
+        } else {
+            spdlog::warn("Parameter queue full, dropping performEdit({}, {})", id, value);
+        }
         return kResultOk;
     }
     tresult PLUGIN_API endEdit(ParamID id) override {
@@ -383,11 +405,23 @@ bool Vst3GuiHost::processAudioBlock(
     processContext.timeSigDenominator = 4;
     processData.processContext = &processContext;
 
-    // 5. Provide empty ParameterChanges — plugins like FabFilter call
-    // outputParameterChanges->addParameterData() during process() to report
-    // metering (gain reduction etc.). If null, they may skip processing.
+    // 5. Drain GUI parameter changes into inputParameterChanges
     Steinberg::Vst::ParameterChanges inputParamChanges;
     Steinberg::Vst::ParameterChanges outputParamChanges;
+    {
+        size_t tail = s_paramQueueTail.load(std::memory_order_relaxed);
+        size_t head = s_paramQueueHead.load(std::memory_order_acquire);
+        while (tail != head) {
+            auto& pc = s_paramQueue[tail];
+            int32 index = 0;
+            auto* queue = inputParamChanges.addParameterData(pc.id, index);
+            if (queue) {
+                queue->addPoint(0, pc.value, index);
+            }
+            tail = (tail + 1) % kParamQueueCapacity;
+        }
+        s_paramQueueTail.store(tail, std::memory_order_release);
+    }
     processData.inputParameterChanges = &inputParamChanges;
     processData.outputParameterChanges = &outputParamChanges;
 
@@ -517,8 +551,11 @@ void Vst3GuiHost::onPluginRequestResize(ViewRect* newSize) {
     }
 }
 
-rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::path& pluginPath) {
-    spdlog::info("Vst3GuiHost::open({})", pluginPath.string());
+// ---------------------------------------------------------------------------
+// loadPlugin — headless plugin loading (no GUI)
+// ---------------------------------------------------------------------------
+void Vst3GuiHost::loadPlugin(const boost::filesystem::path& pluginPath) {
+    spdlog::info("Vst3GuiHost::loadPlugin({})", pluginPath.string());
 
     // 1. Load the VST3 module
     spdlog::info("  Step 1: Loading VST3 module...");
@@ -613,11 +650,23 @@ rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::
     // 5b. Set component handler so the controller can report parameter changes
     m_controller->setComponentHandler(&s_componentHandler);
 
-    // 5c. Connect component and controller via IConnectionPoint.
-    //     Direct connection is needed during initialization — JUCE plugins
-    //     require messages like 'JuceVST3EditController' to flow during
-    //     createView(). After view creation, we switch to ConnectionStub
-    //     to prevent async recursive message bouncing during the event loop.
+    spdlog::info("  Plugin loaded successfully: '{}'", m_pluginName);
+}
+
+// ---------------------------------------------------------------------------
+// open — load plugin + create GUI (calls loadPlugin internally)
+// ---------------------------------------------------------------------------
+rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::path& pluginPath) {
+    spdlog::info("Vst3GuiHost::open({})", pluginPath.string());
+
+    // Load the plugin (module, component, controller)
+    loadPlugin(pluginPath);
+
+    // Connect component and controller via IConnectionPoint.
+    // Direct connection is needed during initialization — JUCE plugins
+    // require messages like 'JuceVST3EditController' to flow during
+    // createView(). After view creation, we switch to ConnectionProxy.
+    // IMPORTANT: keep componentCP/controllerCP alive for the proxy switch below.
     FUnknownPtr<IConnectionPoint> componentCP(m_component);
     FUnknownPtr<IConnectionPoint> controllerCP(m_controller);
     if (componentCP && controllerCP) {
@@ -626,8 +675,8 @@ rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::
         spdlog::info("  Component and controller connected (direct)");
     }
 
-    // 5d. Sync component state to controller
-    //     Some plugins crash during createView() without this.
+    // Sync component state to controller
+    // Some plugins crash during createView() without this.
     {
         auto* stream = new MemoryStream();
         if (m_component->getState(stream) == kResultTrue) {
@@ -670,9 +719,8 @@ rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::
     }
     spdlog::info("  Editor view created");
 
-    // 6b. Switch to ConnectionProxy for the event loop.
-    //     Direct connection can cause async recursive message bouncing in
-    //     JUCE plugins. The proxy forwards messages with reentrancy protection.
+    // Switch to ConnectionProxy for the event loop.
+    // Uses the SAME componentCP/controllerCP from above so disconnect() matches.
     if (componentCP && controllerCP) {
         componentCP->disconnect(controllerCP);
         controllerCP->disconnect(componentCP);

@@ -135,6 +135,10 @@ private:
     std::vector<std::vector<float*>> m_extraOutputBusPtrs;
 
     void cleanup();
+
+    /// Internal: loads the VST3 module, creates component/controller, syncs state.
+    /// Does NOT create any GUI. Called by open().
+    void loadPlugin(const boost::filesystem::path& pluginPath);
 };
 
 } // namespace rps::scanner
