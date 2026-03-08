@@ -64,3 +64,11 @@ libs/rps-gui/src/GuiWorkerMain.cpp
 examples/python/rps-pluginhost.log
 examples/python/logs
 examples/python/logs/*
+vcpkg_installed
+vcpkg_installed/*
+CMakeFiles/*
+cmake_install.cmake
+examples/python/rps-pluginhost
+vcpkg-manifest-install.log
+build.ninja
+CMakeCache.txt

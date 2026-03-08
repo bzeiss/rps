@@ -131,8 +131,12 @@ int main(int argc, char* argv[]) {
                          GetExceptionCode());
         }
 #endif
-        // Use ExitProcess to avoid triggering more static destructors that might crash
+        // Use ExitProcess/_Exit to avoid triggering more static destructors that might crash
+#ifdef _WIN32
         ExitProcess(static_cast<UINT>(result));
+#else
+        std::_Exit(result);
+#endif
     }
 
     // --- Legacy single-plugin mode ---

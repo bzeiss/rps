@@ -37,6 +37,7 @@
 #pragma comment(lib, "Avrt.lib")
 #else
 #include <unistd.h>   // dup, dup2, STDOUT_FILENO, STDERR_FILENO
+#include <pthread.h>  // pthread_create, pthread_join, pthread_attr_*
 #endif
 
 namespace po = boost::program_options;
@@ -360,10 +361,10 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
                                     host->getLatencySamples()
                                 };
 
-                                // Worker body — captureless, castable to LPTHREAD_START_ROUTINE.
-                                // On x64 Windows __stdcall == __cdecl, so the cast is safe.
-                                auto workerBody = [](LPVOID param) -> DWORD {
-                                    auto* args = static_cast<WorkerArgs*>(param);
+                                // Common worker function body for both platforms.
+                                // Processes audio blocks from shared memory ring, applies
+                                // bypass/delta, writes to output ring and playback ring.
+                                auto workerFunc = [](WorkerArgs* args) {
                                     auto& audioRing = *args->audioRing;
                                     auto& host = *args->host;
                                     auto& audioShutdown = *args->audioShutdown;
@@ -374,15 +375,16 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
                                     const uint32_t inCh = args->inCh;
                                     const uint32_t outCh = args->outCh;
                                     const uint32_t latencySamples = args->latencySamples;
-                                    delete args;
 
                                     spdlog::info("Audio worker thread started (device mode, 8MB stack)");
 
+#ifdef _WIN32
                                     DWORD taskIndex = 0;
                                     auto hTask = AvSetMmThreadCharacteristicsW(L"Pro Audio", &taskIndex);
                                     if (hTask) {
                                         spdlog::info("Audio worker thread elevated to Pro Audio priority");
                                     }
+#endif
 
                                     // Delay buffer for delta mode latency compensation
                                     DelaySamples deltaDelay;
@@ -420,6 +422,7 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
                                                 if (bypass) {
                                                     // Send silence to plugin (keep it alive)
                                                     std::vector<float> silenceBuf(inFloats, 0.0f);
+#ifdef _WIN32
                                                     [&]() {
                                                         __try {
                                                             host->processAudioBlock(
@@ -431,6 +434,11 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
                                                             processingOk = false;
                                                         }
                                                     }();
+#else
+                                                    host->processAudioBlock(
+                                                        silenceBuf.data(), outputBuf.data(),
+                                                        inCh, outCh, bs);
+#endif
                                                     // Output = dry input (bypass)
                                                     // Copy input channels to output (handles in != out channel count)
                                                     for (uint32_t s = 0; s < bs; ++s) {
@@ -441,6 +449,7 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
                                                     }
                                                 } else {
                                                     // Normal processing
+#ifdef _WIN32
                                                     [&]() {
                                                         __try {
                                                             host->processAudioBlock(
@@ -464,6 +473,11 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
                                                             std::fill(outputBuf.begin(), outputBuf.end(), 0.0f);
                                                         }
                                                     }();
+#else
+                                                    host->processAudioBlock(
+                                                        inputBuf.data(), outputBuf.data(),
+                                                        inCh, outCh, bs);
+#endif
 
                                                     // Delta: output = wet - dry_delayed
                                                     if (delta && processingOk) {
@@ -498,15 +512,28 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
                                     }
 
                                     spdlog::info("Audio worker thread exiting");
-                                    return 0;
                                 };
 
-                                // Launch with 8MB stack via CreateThread
+#ifdef _WIN32
+                                // Launch with 8MB stack via CreateThread (Windows)
+                                auto winWorkerBody = [](LPVOID param) -> DWORD {
+                                    auto* args = static_cast<WorkerArgs*>(param);
+                                    // workerFunc is captureless-compatible by design;
+                                    // we re-derive it from the args pointer.
+                                    // However, since we need to call workerFunc, we use
+                                    // a two-level indirection: args carries a function ptr.
+                                    auto* funcAndArgs = static_cast<std::pair<decltype(workerFunc)*, WorkerArgs*>*>(param);
+                                    (*funcAndArgs->first)(funcAndArgs->second);
+                                    delete funcAndArgs;
+                                    return 0;
+                                };
+                                auto* funcAndArgs = new std::pair<decltype(workerFunc)*, WorkerArgs*>(&workerFunc, workerArgs);
+
                                 constexpr SIZE_T kWorkerStackSize = 8 * 1024 * 1024; // 8MB
                                 HANDLE hWorker = CreateThread(
                                     nullptr, kWorkerStackSize,
-                                    static_cast<LPTHREAD_START_ROUTINE>(+workerBody),
-                                    workerArgs, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+                                    static_cast<LPTHREAD_START_ROUTINE>(+winWorkerBody),
+                                    funcAndArgs, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
                                 if (hWorker) {
                                     spdlog::info("Audio worker thread created with 8MB stack");
                                     // Wrap the native handle so we can join later
@@ -516,8 +543,36 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
                                     });
                                 } else {
                                     spdlog::error("Failed to create audio worker thread");
-                                    delete workerArgs;
+                                    delete funcAndArgs;
                                 }
+#else
+                                // Launch with 8MB stack via pthread (Linux/macOS)
+                                pthread_attr_t attr;
+                                pthread_attr_init(&attr);
+                                constexpr size_t kWorkerStackSize = 8 * 1024 * 1024; // 8MB
+                                pthread_attr_setstacksize(&attr, kWorkerStackSize);
+
+                                pthread_t workerThread;
+                                auto* capturedFunc = new std::pair<decltype(workerFunc)*, WorkerArgs*>(&workerFunc, workerArgs);
+                                int pret = pthread_create(&workerThread, &attr,
+                                    [](void* param) -> void* {
+                                        auto* fa = static_cast<std::pair<decltype(workerFunc)*, WorkerArgs*>*>(param);
+                                        (*fa->first)(fa->second);
+                                        delete fa;
+                                        return nullptr;
+                                    }, capturedFunc);
+                                pthread_attr_destroy(&attr);
+
+                                if (pret == 0) {
+                                    spdlog::info("Audio worker thread created with 8MB stack");
+                                    audioThread = std::thread([workerThread]() {
+                                        pthread_join(workerThread, nullptr);
+                                    });
+                                } else {
+                                    spdlog::error("Failed to create audio worker thread: {}", strerror(pret));
+                                    delete capturedFunc;
+                                }
+#endif
                             } else {
                                 spdlog::error("Failed to open audio device: {}",
                                               audioDeviceBackend);
