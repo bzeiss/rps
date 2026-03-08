@@ -16,6 +16,8 @@
 #pragma warning(disable: 4244)
 #endif
 #include <boost/process/v1/child.hpp>
+#include <boost/process/v1/pipe.hpp>
+#include <boost/process/v1/io.hpp>
 #include <boost/filesystem.hpp>
 #ifdef _MSC_VER
 #pragma warning(pop)
@@ -82,11 +84,13 @@ public:
 private:
     struct Session {
         std::string pluginPath;
-        std::string ipcId;
         std::string shmName;  // Audio shared memory name (empty if no audio)
         std::unique_ptr<rps::audio::SharedAudioRing> audioRing;
-        std::unique_ptr<rps::ipc::MessageQueueConnection> connection;
+        std::unique_ptr<rps::ipc::Connection> connection;
         std::unique_ptr<boost::process::v1::child> process;
+        // Pipe endpoints — owned by session, referenced by StdioPipeConnection
+        std::unique_ptr<boost::process::v1::opstream> cmdPipe;  // server writes commands
+        std::unique_ptr<boost::process::v1::ipstream> evtPipe;  // server reads events
 
         // Response channels — set by callers, fulfilled by openGui relay loop
         std::mutex stateMutex;

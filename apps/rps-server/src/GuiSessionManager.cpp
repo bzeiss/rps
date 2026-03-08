@@ -1,4 +1,5 @@
 #include <rps/server/GuiSessionManager.hpp>
+#include <rps/ipc/StdioPipeConnection.hpp>
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -10,6 +11,7 @@
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
 #include <boost/process/v1/child.hpp>
+#include <boost/process/v1/args.hpp>
 #include <boost/process/v1/io.hpp>
 #ifdef _MSC_VER
 #pragma warning(pop)
@@ -91,21 +93,7 @@ void GuiSessionManager::openGui(const std::string& pluginPath, const std::string
         return;
     }
 
-    // Generate IPC ID
-    auto ipcId = "rps_gui_" + boost::uuids::to_string(boost::uuids::random_generator()());
-
-    // Create IPC connection (server side)
-    auto connection = rps::ipc::MessageQueueConnection::createServer(ipcId);
-    if (!connection) {
-        rps::v1::PluginEvent event;
-        auto* err = event.mutable_gui_error();
-        err->set_error("ipc_failed");
-        err->set_details("Failed to create IPC message queue.");
-        writer->Write(event);
-        return;
-    }
-
-    spdlog::info("Launching plugin host: {} for {} (ipc: {})", hostBin.string(), pluginPath, ipcId);
+    spdlog::info("Launching plugin host: {} for {}", hostBin.string(), pluginPath);
 
     // Create shared memory for audio if requested
     std::unique_ptr<rps::audio::SharedAudioRing> audioRing;
@@ -123,45 +111,31 @@ void GuiSessionManager::openGui(const std::string& pluginPath, const std::string
         }
     }
 
-    // Spawn the host process
+    // Build spawn args (no --ipc-id, IPC is via stdin/stdout pipes)
+    std::vector<std::string> spawnArgs = {
+        "--plugin-path", pluginPath,
+        "--format", format
+    };
+    if (!shmName.empty()) {
+        spawnArgs.push_back("--audio-shm");
+        spawnArgs.push_back(shmName);
+    }
+    if (!audioConfig.audioDevice.empty()) {
+        spawnArgs.push_back("--audio-device");
+        spawnArgs.push_back(audioConfig.audioDevice);
+    }
+
+    // Spawn the host process with pipe-based IPC
+    auto cmdPipe = std::make_unique<bp::opstream>();  // server writes commands to child's stdin
+    auto evtPipe = std::make_unique<bp::ipstream>();  // server reads events from child's stdout
     std::unique_ptr<bp::child> child;
     try {
-        const bool hasShm = !shmName.empty();
-        const bool hasDev = !audioConfig.audioDevice.empty();
-
-        if (hasShm && hasDev) {
-            child = std::make_unique<bp::child>(
-                hostBin.string(),
-                "--ipc-id", ipcId,
-                "--plugin-path", pluginPath,
-                "--format", format,
-                "--audio-shm", shmName,
-                "--audio-device", audioConfig.audioDevice
-            );
-        } else if (hasShm) {
-            child = std::make_unique<bp::child>(
-                hostBin.string(),
-                "--ipc-id", ipcId,
-                "--plugin-path", pluginPath,
-                "--format", format,
-                "--audio-shm", shmName
-            );
-        } else if (hasDev) {
-            child = std::make_unique<bp::child>(
-                hostBin.string(),
-                "--ipc-id", ipcId,
-                "--plugin-path", pluginPath,
-                "--format", format,
-                "--audio-device", audioConfig.audioDevice
-            );
-        } else {
-            child = std::make_unique<bp::child>(
-                hostBin.string(),
-                "--ipc-id", ipcId,
-                "--plugin-path", pluginPath,
-                "--format", format
-            );
-        }
+        child = std::make_unique<bp::child>(
+            hostBin.string(),
+            bp::args(spawnArgs),
+            bp::std_in < *cmdPipe,
+            bp::std_out > *evtPipe
+        );
     } catch (const std::exception& e) {
         rps::v1::PluginEvent event;
         auto* err = event.mutable_gui_error();
@@ -171,14 +145,21 @@ void GuiSessionManager::openGui(const std::string& pluginPath, const std::string
         return;
     }
 
+    // Create pipe-based IPC connection using native handles
+    // (bypass iostream — use OS handles directly for reliable timeout support)
+    auto writeHandle = cmdPipe->pipe().native_sink();    // server writes commands
+    auto readHandle = evtPipe->pipe().native_source();   // server reads events
+    auto connection = std::make_unique<rps::ipc::StdioPipeConnection>(writeHandle, readHandle);
+
     // Register the session
     auto session = std::make_unique<Session>();
     session->pluginPath = pluginPath;
-    session->ipcId = ipcId;
     session->shmName = shmName;
     session->audioRing = std::move(audioRing);
     session->connection = std::move(connection);
     session->process = std::move(child);
+    session->cmdPipe = std::move(cmdPipe);
+    session->evtPipe = std::move(evtPipe);
 
     {
         std::lock_guard<std::mutex> lock(m_mutex);

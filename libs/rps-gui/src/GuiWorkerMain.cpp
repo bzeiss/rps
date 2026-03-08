@@ -1,6 +1,6 @@
 #include <rps/gui/GuiWorkerMain.hpp>
 #include <rps/gui/SdlWindow.hpp>
-#include <rps/ipc/Connection.hpp>
+#include <rps/ipc/StdioPipeConnection.hpp>
 #include <host.pb.h>
 #include <rps.pb.h>
 #include <rps/audio/SharedAudioRing.hpp>
@@ -33,7 +33,11 @@
 #endif
 #include <windows.h>
 #include <avrt.h>
+#include <io.h>       // _dup, _dup2
+#include <fcntl.h>
 #pragma comment(lib, "Avrt.lib")
+#else
+#include <unistd.h>   // dup, dup2, STDOUT_FILENO, STDERR_FILENO
 #endif
 
 namespace po = boost::program_options;
@@ -167,7 +171,6 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
     // Parse command-line arguments
     po::options_description desc("Plugin GUI Host Worker");
     desc.add_options()
-        ("ipc-id", po::value<std::string>(), "IPC queue identifier")
         ("plugin-path", po::value<std::string>(), "Path to plugin binary")
         ("format", po::value<std::string>()->default_value("clap"), "Plugin format")
         ("audio-shm", po::value<std::string>(), "Shared memory segment name for audio processing")
@@ -188,16 +191,29 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
         return 0;
     }
 
-    if (!vm.count("ipc-id") || !vm.count("plugin-path")) {
-        std::cerr << "Error: --ipc-id and --plugin-path are required.\n";
+    if (!vm.count("plugin-path")) {
+        std::cerr << "Error: --plugin-path is required.\n";
         return 1;
     }
 
-    const auto ipcId = vm["ipc-id"].as<std::string>();
     const auto pluginPath = vm["plugin-path"].as<std::string>();
     const auto format = vm["format"].as<std::string>();
 
+    // --- Redirect stdout to stderr BEFORE any plugin code runs ---
+    // Some plugins write to stdout during initialization. Since we use stdout
+    // for length-prefixed protobuf IPC, any stray output would corrupt the stream.
+    // Save the original stdout fd, then redirect stdout -> stderr.
+    int savedStdoutFd = -1;
+#ifdef _WIN32
+    savedStdoutFd = _dup(1);      // Save original stdout
+    _dup2(2, 1);                  // Redirect stdout -> stderr
+#else
+    savedStdoutFd = dup(STDOUT_FILENO);
+    dup2(STDERR_FILENO, STDOUT_FILENO);
+#endif
+
     // Set up logging — both console and file for crash diagnostics
+    // (Must happen AFTER stdout redirect so console sink goes to stderr)
     try {
         auto consoleSink = std::make_shared<spdlog::sinks::stderr_color_sink_mt>();
         auto fileSink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(
@@ -215,17 +231,16 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
     }
 
     spdlog::info("=== rps-pluginhost [{}] starting ===", format);
-    spdlog::info("  ipc-id: {}", ipcId);
     spdlog::info("  plugin-path: {}", pluginPath);
 
-    // Connect to IPC queue
-    spdlog::info("Connecting to IPC queue...");
-    auto connection = rps::ipc::MessageQueueConnection::createClient(ipcId);
+    // Set up pipe-based IPC using saved stdout fd
+    spdlog::info("Setting up pipe IPC...");
+    auto connection = rps::ipc::StdioPipeConnection::fromStdio(savedStdoutFd);
     if (!connection) {
-        spdlog::error("Failed to connect to IPC queue: {}", ipcId);
+        spdlog::error("Failed to create pipe IPC connection");
         return 1;
     }
-    spdlog::info("IPC connected");
+    spdlog::info("Pipe IPC connected");
 
     // Initialize SDL3 — only audio subsystem if needed; VIDEO deferred to ShowGui
     const std::string audioDeviceBackend = vm.count("audio-device")
