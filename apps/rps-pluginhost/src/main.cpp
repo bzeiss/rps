@@ -58,6 +58,7 @@ static LONG WINAPI crashHandler(EXCEPTION_POINTERS* exInfo) {
 #endif
 
 #include <rps/gui/GuiWorkerMain.hpp>
+#include <rps/coordinator/GraphWorkerMain.hpp>
 
 // Format-specific hosts
 #include "vst3/Vst3GuiHost.hpp"
@@ -95,6 +96,11 @@ static std::string detectFormat(int argc, char* argv[]) {
     return "";
 }
 
+/// Check if graph mode is requested (--graph or --graph-file flag present).
+static bool isGraphMode(int argc, char* argv[]) {
+    return hasFlag(argc, argv, "--graph") || hasFlag(argc, argv, "--graph-file");
+}
+
 int main(int argc, char* argv[]) {
 #ifdef _WIN32
     SetUnhandledExceptionFilter(crashHandler);
@@ -102,6 +108,34 @@ int main(int argc, char* argv[]) {
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 #endif
 
+    // --- Graph mode ---
+    if (isGraphMode(argc, argv)) {
+        int result = 0;
+#ifdef _WIN32
+        // Top-level SEH to catch crashes in VST3 COM static destructors during teardown.
+        // Some VST3 plugins crash in global destructors when the module unloads.
+        __try {
+#endif
+            result = rps::coordinator::GraphWorkerMain::run(argc, argv,
+                [](const std::string& format) -> std::unique_ptr<rps::gui::IPluginGuiHost> {
+                    if (format == "vst3") return std::make_unique<rps::scanner::Vst3GuiHost>();
+                    if (format == "clap") return std::make_unique<rps::scanner::ClapGuiHost>();
+                    return nullptr;
+                });
+#ifdef _WIN32
+            CoUninitialize();
+        } __except(EXCEPTION_EXECUTE_HANDLER) {
+            // Silently swallow teardown crashes — the graph worker already completed.
+            // This catches crashes in VST3 DllMain or COM static destructors.
+            spdlog::warn("Caught exception 0x{:08X} during graph mode shutdown (suppressed)",
+                         GetExceptionCode());
+        }
+#endif
+        // Use ExitProcess to avoid triggering more static destructors that might crash
+        ExitProcess(static_cast<UINT>(result));
+    }
+
+    // --- Legacy single-plugin mode ---
     auto format = detectFormat(argc, argv);
 
     // For --help, create any host so GuiWorkerMain can print its help text
@@ -136,3 +170,4 @@ int main(int argc, char* argv[]) {
 #endif
     return result;
 }
+

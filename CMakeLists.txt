@@ -120,6 +120,7 @@ add_subdirectory(libs/rps-audio)
 add_subdirectory(libs/rps-host)
 add_subdirectory(libs/rps-engine)
 add_subdirectory(libs/rps-gui)
+add_subdirectory(libs/rps-coordinator)
 
 # Include directories for applications
 add_subdirectory(apps/rps-standalone)

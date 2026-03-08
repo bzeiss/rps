@@ -121,6 +121,7 @@ public:
 class ConnectionProxy : public U::ImplementsNonDestroyable<U::Directly<IConnectionPoint>> {
 public:
     void setPeer(IConnectionPoint* peer) { m_peer = peer; }
+    bool hasPeer() const { return m_peer != nullptr; }
 
     tresult PLUGIN_API connect(IConnectionPoint* /*other*/) override {
         return kResultTrue;
@@ -499,17 +500,76 @@ void Vst3GuiHost::cleanup() {
         m_view = nullptr;
     }
 
-    // Disconnect IConnectionPoint proxies
+    // Disconnect IConnectionPoint proxies — only if open() actually connected them.
+    // In headless/graph mode (loadPlugin-only), proxies were never connected;
+    // calling disconnect() with a never-connected peer crashes some plugins.
     {
         FUnknownPtr<IConnectionPoint> componentCP(m_component);
         FUnknownPtr<IConnectionPoint> controllerCP(m_controller);
-        if (componentCP) componentCP->disconnect(&s_controllerProxy);
-        if (controllerCP) controllerCP->disconnect(&s_componentProxy);
+        if (componentCP && s_controllerProxy.hasPeer())
+            componentCP->disconnect(&s_controllerProxy);
+        if (controllerCP && s_componentProxy.hasPeer())
+            controllerCP->disconnect(&s_componentProxy);
         s_componentProxy.setPeer(nullptr);
         s_controllerProxy.setPeer(nullptr);
     }
 
 
+
+    // Each teardown step wrapped in SEH — some plugins crash during specific
+    // lifecycle calls. Isolating each step lets cleanup continue after a crash.
+#ifdef _WIN32
+    // Release m_processor FIRST — it's a QI'd reference to the same COM object
+    // as m_component. If not released before terminate/module-unload, its destructor
+    // would call Release() on a freed object (crash in graph/headless mode).
+    m_processor = nullptr;
+
+    if (m_component) {
+        [&]() {
+            __try {
+                m_component->setActive(false);
+            } __except(EXCEPTION_EXECUTE_HANDLER) {
+                spdlog::warn("  SEH 0x{:08X} in setActive(false)", GetExceptionCode());
+            }
+        }();
+    }
+
+    if (m_controller) {
+        spdlog::debug("  releasing controller");
+        [&]() {
+            __try {
+                m_controller->terminate();
+            } __except(EXCEPTION_EXECUTE_HANDLER) {
+                spdlog::warn("  SEH 0x{:08X} in controller->terminate()", GetExceptionCode());
+            }
+        }();
+        m_controller = nullptr;
+    }
+
+    if (m_component) {
+        spdlog::debug("  releasing component");
+        [&]() {
+            __try {
+                m_component->terminate();
+            } __except(EXCEPTION_EXECUTE_HANDLER) {
+                spdlog::warn("  SEH 0x{:08X} in component->terminate()", GetExceptionCode());
+            }
+        }();
+        m_component = nullptr;
+    }
+
+    if (m_module) {
+        spdlog::debug("  releasing module");
+        [&]() {
+            __try {
+                m_module.reset();
+            } __except(EXCEPTION_EXECUTE_HANDLER) {
+                spdlog::warn("  SEH 0x{:08X} in module.reset()", GetExceptionCode());
+            }
+        }();
+    }
+#else
+    m_processor = nullptr;
 
     // Deactivate before terminating
     if (m_component) {
@@ -532,6 +592,7 @@ void Vst3GuiHost::cleanup() {
         spdlog::debug("  releasing module");
         m_module.reset();
     }
+#endif
 }
 
 void Vst3GuiHost::onPluginRequestResize(ViewRect* newSize) {
