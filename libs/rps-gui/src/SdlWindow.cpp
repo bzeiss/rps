@@ -455,10 +455,11 @@ void SdlWindow::renderSidebar() {
             }
         };
         CatNode catRoot;
-        for (const auto& preset : m_presets) {
-            if (preset.category.empty()) continue;
+        for (int pi = 0; pi < m_presets.presets_size(); ++pi) {
+            const auto& preset = m_presets.presets(pi);
+            if (preset.category().empty()) continue;
             // Split by '|' (VST3) or '/' (CLAP)
-            std::string cat = preset.category;
+            std::string cat = preset.category();
             CatNode* node = &catRoot;
             std::string pathSoFar;
             size_t start = 0;
@@ -565,7 +566,7 @@ void SdlWindow::renderSidebar() {
 
         ImGui::BeginChild("PresetListScroll", ImVec2(0, 0), true);
 
-        if (m_presets.empty()) {
+        if (m_presets.presets_size() == 0) {
             ImGui::TextDisabled("No presets found.");
         } else {
             std::string filterLower = m_presetFilter;
@@ -573,10 +574,10 @@ void SdlWindow::renderSidebar() {
 
             // Build filtered index list
             std::vector<int> filteredIndices;
-            filteredIndices.reserve(m_presets.size());
+            filteredIndices.reserve(m_presets.presets_size());
 
-            for (int i = 0; i < static_cast<int>(m_presets.size()); ++i) {
-                const auto& preset = m_presets[static_cast<size_t>(i)];
+            for (int i = 0; i < m_presets.presets_size(); ++i) {
+                const auto& preset = m_presets.presets(i);
 
                 // Category filter
                 if (!m_allCategoriesSelected) {
@@ -586,9 +587,9 @@ void SdlWindow::renderSidebar() {
                     }
                     // Check if preset's category matches any selected category
                     bool catMatch = false;
-                    if (!preset.category.empty()) {
+                    if (!preset.category().empty()) {
                         // Normalize to '|' separator to match tree paths
-                        std::string cat = preset.category;
+                        std::string cat = preset.category();
                         std::replace(cat.begin(), cat.end(), '/', '|');
                         // Check exact match
                         if (m_selectedCategories.contains(cat)) {
@@ -610,8 +611,8 @@ void SdlWindow::renderSidebar() {
 
                 // Text filter
                 if (!filterLower.empty()) {
-                    std::string nameLower = preset.name;
-                    std::string authorLower = preset.creator;
+                    std::string nameLower = preset.name();
+                    std::string authorLower = preset.creator();
                     std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(), ::tolower);
                     std::transform(authorLower.begin(), authorLower.end(), authorLower.begin(), ::tolower);
 
@@ -640,8 +641,8 @@ void SdlWindow::renderSidebar() {
                             [&presets, sortSpecs](int lhs, int rhs) {
                                 for (int n = 0; n < sortSpecs->SpecsCount; ++n) {
                                     const ImGuiTableColumnSortSpecs& spec = sortSpecs->Specs[n];
-                                    int cmp = presets[static_cast<size_t>(lhs)].name.compare(
-                                              presets[static_cast<size_t>(rhs)].name);
+                                    int cmp = presets.presets(lhs).name().compare(
+                                              presets.presets(rhs).name());
                                     if (cmp != 0) {
                                         return (spec.SortDirection == ImGuiSortDirection_Ascending) ? cmp < 0 : cmp > 0;
                                     }
@@ -653,7 +654,7 @@ void SdlWindow::renderSidebar() {
                 }
 
                 for (int idx : filteredIndices) {
-                    const auto& preset = m_presets[static_cast<size_t>(idx)];
+                    const auto& preset = m_presets.presets(idx);
 
                     ImGui::TableNextRow();
                     ImGui::TableNextColumn();
@@ -662,18 +663,18 @@ void SdlWindow::renderSidebar() {
 
                     // Build display text: "Name" or "Name  — Author"
                     ImGui::PushID(idx);
-                    if (ImGui::Selectable(preset.name.c_str(), isSelected, ImGuiSelectableFlags_SpanAllColumns)) {
+                    if (ImGui::Selectable(preset.name().c_str(), isSelected, ImGuiSelectableFlags_SpanAllColumns)) {
                         m_selectedPresetIndex = idx;
                         if (m_presetSelectedCb) {
-                            m_presetSelectedCb(preset.id);
+                            m_presetSelectedCb(preset.id());
                         }
                     }
 
                     // Append dimmed author suffix on the same line
-                    if (!preset.creator.empty()) {
+                    if (!preset.creator().empty()) {
                         ImGui::SameLine();
                         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
-                        ImGui::TextUnformatted(preset.creator.c_str());
+                        ImGui::TextUnformatted(preset.creator().c_str());
                         ImGui::PopStyleColor();
                     }
                     ImGui::PopID();
@@ -912,11 +913,11 @@ void SdlWindow::getSize(uint32_t& width, uint32_t& height) const {
     }
 }
 
-void SdlWindow::setPresets(const std::vector<rps::ipc::PresetInfo>& presets) {
+void SdlWindow::setPresets(const rps::v1::PresetList& presets) {
     m_presets = presets;
     m_selectedPresetIndex = -1;
     std::memset(m_presetFilter, 0, sizeof(m_presetFilter));
-    spdlog::info("SdlWindow: {} presets loaded into sidebar", m_presets.size());
+    spdlog::info("SdlWindow: {} presets loaded into sidebar", m_presets.presets_size());
 }
 
 void SdlWindow::setPresetSelectedCallback(PresetSelectedCallback cb) {

@@ -1,7 +1,7 @@
 #pragma once
 
 #include <rps/ipc/Connection.hpp>
-#include <rps/ipc/Messages.hpp>
+#include <host.pb.h>
 #include <rps/audio/SharedAudioRing.hpp>
 #include <string>
 #include <map>
@@ -65,15 +65,15 @@ public:
     void closeAll();
 
     /// Get the complete state of a running plugin as an opaque binary blob.
-    rps::ipc::GetStateResponse getState(const std::string& pluginPath);
+    rps::host::GetStateResult getState(const std::string& pluginPath);
 
     /// Set (restore) plugin state from a previously saved blob.
-    rps::ipc::SetStateResponse setState(const std::string& pluginPath,
-                                        const std::vector<uint8_t>& stateData);
+    rps::host::SetStateResult setState(const std::string& pluginPath,
+                                       const std::string& stateData);
 
     /// Load a preset on a running plugin by its preset id.
-    rps::ipc::LoadPresetResponse loadPreset(const std::string& pluginPath,
-                                            const std::string& presetId);
+    rps::host::LoadPresetResult loadPreset(const std::string& pluginPath,
+                                           const std::string& presetId);
 
     /// Get the audio ring for a session (for gRPC streaming proxy).
     /// Returns nullptr if no audio ring exists for this session.
@@ -90,9 +90,9 @@ private:
 
         // Response channels — set by callers, fulfilled by openGui relay loop
         std::mutex stateMutex;
-        std::optional<std::promise<rps::ipc::GetStateResponse>> pendingGetState;
-        std::optional<std::promise<rps::ipc::SetStateResponse>> pendingSetState;
-        std::optional<std::promise<rps::ipc::LoadPresetResponse>> pendingLoadPreset;
+        std::optional<std::promise<rps::host::GetStateResult>> pendingGetState;
+        std::optional<std::promise<rps::host::SetStateResult>> pendingSetState;
+        std::optional<std::promise<rps::host::LoadPresetResult>> pendingLoadPreset;
     };
 
     std::string m_hostBinDir;

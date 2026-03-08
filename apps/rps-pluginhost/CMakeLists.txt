@@ -88,7 +88,6 @@ target_link_libraries(rps-pluginhost
         rps_warnings
         vst3-hosting-helpers
         Boost::program_options
-        Boost::json
         Boost::filesystem
 )
 

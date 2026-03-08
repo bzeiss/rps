@@ -1,5 +1,4 @@
 #include <rps/server/GuiSessionManager.hpp>
-#include <rps/ipc/Messages.hpp>
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -12,7 +11,6 @@
 #include <boost/uuid/uuid_io.hpp>
 #include <boost/process/v1/child.hpp>
 #include <boost/process/v1/io.hpp>
-#include <boost/json.hpp>
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
@@ -199,8 +197,8 @@ void GuiSessionManager::openGui(const std::string& pluginPath, const std::string
         }
         if (!currentSession) break;
 
-        auto msg = currentSession->connection->receiveMessage(500);
-        if (!msg) {
+        rps::host::HostEvent evt;
+        if (!currentSession->connection->receiveProto(evt, 500)) {
             // Check if process is still running
             std::lock_guard<std::mutex> lock(m_mutex);
             auto it = m_sessions.find(pluginPath);
@@ -216,143 +214,92 @@ void GuiSessionManager::openGui(const std::string& pluginPath, const std::string
             continue;
         }
 
-        switch (msg->type) {
-            case rps::ipc::MessageType::PluginLoadedEvent: {
-                auto& evt = std::get<rps::ipc::PluginLoadedEvent>(msg->payload);
-                spdlog::info("Plugin loaded (headless): '{}'", evt.pluginName);
+        // Handle the HostEvent oneof
+        if (evt.has_plugin_loaded()) {
+            const auto& loaded = evt.plugin_loaded();
+            spdlog::info("Plugin loaded (headless): '{}'", loaded.plugin_name());
 
-                // Forward as PluginLoaded event to gRPC
-                rps::v1::PluginEvent event;
-                auto* opened = event.mutable_gui_opened();
-                opened->set_plugin_name(evt.pluginName);
-                opened->set_width(0);  // No GUI yet
-                opened->set_height(0);
-                writer->Write(event);
+            // Forward as PluginLoaded event to gRPC
+            rps::v1::PluginEvent event;
+            auto* opened = event.mutable_gui_opened();
+            opened->set_plugin_name(loaded.plugin_name());
+            opened->set_width(0);  // No GUI yet
+            opened->set_height(0);
+            writer->Write(event);
 
-                // Send AudioReady if audio shared memory was created
-                if (!currentSession->shmName.empty() && currentSession->audioRing) {
-                    rps::v1::PluginEvent audioEvent;
-                    auto* ready = audioEvent.mutable_audio_ready();
-                    ready->set_shm_name(currentSession->shmName);
-                    const auto& hdr = currentSession->audioRing->header();
-                    ready->set_sample_rate(hdr.sampleRate);
-                    ready->set_block_size(hdr.blockSize);
-                    ready->set_num_channels(hdr.numChannels);
-                    ready->set_ring_blocks(hdr.ringBlocks);
-                    ready->set_latency_samples(hdr.latencySamples);
-                    writer->Write(audioEvent);
-                    spdlog::info("AudioReady sent: shm={}", currentSession->shmName);
-                }
-                break;
+            // Send AudioReady if audio shared memory was created
+            if (!currentSession->shmName.empty() && currentSession->audioRing) {
+                rps::v1::PluginEvent audioEvent;
+                auto* ready = audioEvent.mutable_audio_ready();
+                ready->set_shm_name(currentSession->shmName);
+                const auto& hdr = currentSession->audioRing->header();
+                ready->set_sample_rate(hdr.sampleRate);
+                ready->set_block_size(hdr.blockSize);
+                ready->set_num_channels(hdr.numChannels);
+                ready->set_ring_blocks(hdr.ringBlocks);
+                ready->set_latency_samples(hdr.latencySamples);
+                writer->Write(audioEvent);
+                spdlog::info("AudioReady sent: shm={}", currentSession->shmName);
             }
-            case rps::ipc::MessageType::GuiOpenedEvent: {
-                auto& evt = std::get<rps::ipc::GuiOpenedEvent>(msg->payload);
-                rps::v1::PluginEvent event;
-                auto* opened = event.mutable_gui_opened();
-                opened->set_plugin_name(evt.pluginName);
-                opened->set_width(evt.width);
-                opened->set_height(evt.height);
-                writer->Write(event);
-                spdlog::info("Plugin GUI opened: {} ({}x{})", evt.pluginName, evt.width, evt.height);
-                break;
+        } else if (evt.has_gui_opened()) {
+            rps::v1::PluginEvent event;
+            *event.mutable_gui_opened() = evt.gui_opened();
+            writer->Write(event);
+            spdlog::info("Plugin GUI opened: {} ({}x{})",
+                         evt.gui_opened().plugin_name(),
+                         evt.gui_opened().width(),
+                         evt.gui_opened().height());
+        } else if (evt.has_gui_closed()) {
+            rps::v1::PluginEvent event;
+            *event.mutable_gui_closed() = evt.gui_closed();
+            writer->Write(event);
+            spdlog::info("Plugin GUI closed: {} (reason: {})",
+                         pluginPath, evt.gui_closed().reason());
+            // session_ended means the host process is shutting down
+            if (evt.gui_closed().reason() == "session_ended" ||
+                evt.gui_closed().reason() == "crash") {
+                done = true;
             }
-            case rps::ipc::MessageType::GuiClosedEvent: {
-                auto& evt = std::get<rps::ipc::GuiClosedEvent>(msg->payload);
-                rps::v1::PluginEvent event;
-                auto* closed = event.mutable_gui_closed();
-                closed->set_reason(evt.reason);
-                writer->Write(event);
-                spdlog::info("Plugin GUI closed: {} (reason: {})", pluginPath, evt.reason);
-                // session_ended means the host process is shutting down
-                if (evt.reason == "session_ended" || evt.reason == "crash") {
-                    done = true;
-                }
-                // Otherwise the process stays alive headless — GUI was just closed
-                break;
+        } else if (evt.has_parameter_list()) {
+            rps::v1::PluginEvent event;
+            *event.mutable_parameter_list() = evt.parameter_list();
+            writer->Write(event);
+            spdlog::info("Sent ParameterList ({} params)",
+                         evt.parameter_list().parameters_size());
+        } else if (evt.has_parameter_updates()) {
+            rps::v1::PluginEvent event;
+            *event.mutable_parameter_updates() = evt.parameter_updates();
+            writer->Write(event);
+        } else if (evt.has_get_state_result()) {
+            std::lock_guard<std::mutex> slock(currentSession->stateMutex);
+            if (currentSession->pendingGetState) {
+                currentSession->pendingGetState->set_value(
+                    std::move(*evt.mutable_get_state_result()));
+                currentSession->pendingGetState.reset();
+                spdlog::info("Fulfilled pendingGetState");
             }
-            case rps::ipc::MessageType::ParameterListEvent: {
-                auto& evt = std::get<rps::ipc::ParameterListEvent>(msg->payload);
-                rps::v1::PluginEvent event;
-                auto* paramList = event.mutable_parameter_list();
-                for (const auto& p : evt.parameters) {
-                    auto* pp = paramList->add_parameters();
-                    pp->set_id(p.id);
-                    pp->set_index(p.index);
-                    pp->set_name(p.name);
-                    pp->set_module(p.module);
-                    pp->set_min_value(p.minValue);
-                    pp->set_max_value(p.maxValue);
-                    pp->set_default_value(p.defaultValue);
-                    pp->set_current_value(p.currentValue);
-                    pp->set_display_text(p.displayText);
-                    pp->set_flags(p.flags);
-                }
-                writer->Write(event);
-                spdlog::info("Sent ParameterList ({} params)", evt.parameters.size());
-                break;
+        } else if (evt.has_set_state_result()) {
+            std::lock_guard<std::mutex> slock(currentSession->stateMutex);
+            if (currentSession->pendingSetState) {
+                currentSession->pendingSetState->set_value(
+                    std::move(*evt.mutable_set_state_result()));
+                currentSession->pendingSetState.reset();
+                spdlog::info("Fulfilled pendingSetState");
             }
-            case rps::ipc::MessageType::ParameterValuesEvent: {
-                auto& evt = std::get<rps::ipc::ParameterValuesEvent>(msg->payload);
-                rps::v1::PluginEvent event;
-                auto* updates = event.mutable_parameter_updates();
-                for (const auto& u : evt.updates) {
-                    auto* pu = updates->add_updates();
-                    pu->set_param_id(u.paramId);
-                    pu->set_value(u.value);
-                    pu->set_display_text(u.displayText);
-                }
-                writer->Write(event);
-                break;
+        } else if (evt.has_preset_list()) {
+            rps::v1::PluginEvent event;
+            *event.mutable_preset_list() = evt.preset_list();
+            writer->Write(event);
+            spdlog::info("Sent PresetList ({} presets)",
+                         evt.preset_list().presets_size());
+        } else if (evt.has_load_preset_result()) {
+            std::lock_guard<std::mutex> slock(currentSession->stateMutex);
+            if (currentSession->pendingLoadPreset) {
+                currentSession->pendingLoadPreset->set_value(
+                    std::move(*evt.mutable_load_preset_result()));
+                currentSession->pendingLoadPreset.reset();
+                spdlog::info("Fulfilled pendingLoadPreset");
             }
-            case rps::ipc::MessageType::GetStateResponse: {
-                auto& resp = std::get<rps::ipc::GetStateResponse>(msg->payload);
-                std::lock_guard<std::mutex> slock(currentSession->stateMutex);
-                if (currentSession->pendingGetState) {
-                    currentSession->pendingGetState->set_value(std::move(resp));
-                    currentSession->pendingGetState.reset();
-                    spdlog::info("Fulfilled pendingGetState");
-                }
-                break;
-            }
-            case rps::ipc::MessageType::SetStateResponse: {
-                auto& resp = std::get<rps::ipc::SetStateResponse>(msg->payload);
-                std::lock_guard<std::mutex> slock(currentSession->stateMutex);
-                if (currentSession->pendingSetState) {
-                    currentSession->pendingSetState->set_value(std::move(resp));
-                    currentSession->pendingSetState.reset();
-                    spdlog::info("Fulfilled pendingSetState");
-                }
-                break;
-            }
-            case rps::ipc::MessageType::PresetListEvent: {
-                auto& evt = std::get<rps::ipc::PresetListEvent>(msg->payload);
-                rps::v1::PluginEvent event;
-                auto* presetList = event.mutable_preset_list();
-                for (const auto& p : evt.presets) {
-                    auto* pp = presetList->add_presets();
-                    pp->set_id(p.id);
-                    pp->set_name(p.name);
-                    pp->set_category(p.category);
-                    pp->set_creator(p.creator);
-                    pp->set_index(p.index);
-                    pp->set_flags(p.flags);
-                }
-                writer->Write(event);
-                spdlog::info("Sent PresetList ({} presets)", evt.presets.size());
-                break;
-            }
-            case rps::ipc::MessageType::LoadPresetResponse: {
-                auto& resp = std::get<rps::ipc::LoadPresetResponse>(msg->payload);
-                std::lock_guard<std::mutex> slock(currentSession->stateMutex);
-                if (currentSession->pendingLoadPreset) {
-                    currentSession->pendingLoadPreset->set_value(std::move(resp));
-                    currentSession->pendingLoadPreset.reset();
-                    spdlog::info("Fulfilled pendingLoadPreset");
-                }
-                break;
-            }
-            default:
-                break;
         }
     }
 
@@ -377,11 +324,10 @@ bool GuiSessionManager::closeGui(const std::string& pluginPath) {
         return false;
     }
 
-    // Send CloseGuiRequest via IPC — closes the window but keeps the process alive
-    rps::ipc::Message msg;
-    msg.type = rps::ipc::MessageType::CloseGuiRequest;
-    msg.payload = rps::ipc::CloseGuiRequest{};
-    it->second->connection->sendMessage(msg);
+    // Send CloseGuiCommand via IPC — closes the window but keeps the process alive
+    rps::host::HostCommand cmd;
+    cmd.mutable_close_gui();
+    it->second->connection->sendProto(cmd);
 
     return true;
 }
@@ -393,11 +339,10 @@ bool GuiSessionManager::showGui(const std::string& pluginPath) {
         return false;
     }
 
-    // Send ShowGuiRequest via IPC — opens the GUI window
-    rps::ipc::Message msg;
-    msg.type = rps::ipc::MessageType::ShowGuiRequest;
-    msg.payload = rps::ipc::ShowGuiRequest{};
-    it->second->connection->sendMessage(msg);
+    // Send ShowGuiCommand via IPC — opens the GUI window
+    rps::host::HostCommand cmd;
+    cmd.mutable_show_gui();
+    it->second->connection->sendProto(cmd);
 
     return true;
 }
@@ -409,11 +354,10 @@ bool GuiSessionManager::closeSession(const std::string& pluginPath) {
         return false;
     }
 
-    // Send CloseSessionRequest via IPC — terminates the host process
-    rps::ipc::Message msg;
-    msg.type = rps::ipc::MessageType::CloseSessionRequest;
-    msg.payload = rps::ipc::CloseSessionRequest{};
-    it->second->connection->sendMessage(msg);
+    // Send CloseSessionCommand via IPC — terminates the host process
+    rps::host::HostCommand cmd;
+    cmd.mutable_close_session();
+    it->second->connection->sendProto(cmd);
 
     return true;
 }
@@ -421,12 +365,11 @@ bool GuiSessionManager::closeSession(const std::string& pluginPath) {
 void GuiSessionManager::closeAll() {
     std::lock_guard<std::mutex> lock(m_mutex);
     for (auto& [path, session] : m_sessions) {
-        // Send CloseSessionRequest (terminates the host process)
-        rps::ipc::Message msg;
-        msg.type = rps::ipc::MessageType::CloseSessionRequest;
-        msg.payload = rps::ipc::CloseSessionRequest{};
+        // Send CloseSessionCommand (terminates the host process)
+        rps::host::HostCommand cmd;
+        cmd.mutable_close_session();
         try {
-            session->connection->sendMessage(msg);
+            session->connection->sendProto(cmd);
         } catch (...) {}
 
         // Give it a moment then force kill
@@ -441,14 +384,17 @@ void GuiSessionManager::closeAll() {
     m_sessions.clear();
 }
 
-rps::ipc::GetStateResponse GuiSessionManager::getState(const std::string& pluginPath) {
-    std::future<rps::ipc::GetStateResponse> future;
+rps::host::GetStateResult GuiSessionManager::getState(const std::string& pluginPath) {
+    std::future<rps::host::GetStateResult> future;
 
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         auto it = m_sessions.find(pluginPath);
         if (it == m_sessions.end()) {
-            return {{}, false, "No active GUI session for: " + pluginPath};
+            rps::host::GetStateResult errResp;
+            errResp.set_success(false);
+            errResp.set_error("No active GUI session for: " + pluginPath);
+            return errResp;
         }
         auto* session = it->second.get();
 
@@ -459,11 +405,10 @@ rps::ipc::GetStateResponse GuiSessionManager::getState(const std::string& plugin
             future = session->pendingGetState->get_future();
         }
 
-        // Send GetStateRequest
-        rps::ipc::Message req;
-        req.type = rps::ipc::MessageType::GetStateRequest;
-        req.payload = rps::ipc::GetStateRequest{};
-        session->connection->sendMessage(req);
+        // Send GetStateCommand
+        rps::host::HostCommand cmd;
+        cmd.mutable_get_state();
+        session->connection->sendProto(cmd);
     }
 
     // Wait for response (unlocked — relay loop will fulfill the promise)
@@ -471,18 +416,24 @@ rps::ipc::GetStateResponse GuiSessionManager::getState(const std::string& plugin
         spdlog::info("GetState completed");
         return future.get();
     }
-    return {{}, false, "Timeout waiting for state response"};
+    rps::host::GetStateResult timeoutResp;
+    timeoutResp.set_success(false);
+    timeoutResp.set_error("Timeout waiting for state response");
+    return timeoutResp;
 }
 
-rps::ipc::SetStateResponse GuiSessionManager::setState(const std::string& pluginPath,
-                                                       const std::vector<uint8_t>& stateData) {
-    std::future<rps::ipc::SetStateResponse> future;
+rps::host::SetStateResult GuiSessionManager::setState(const std::string& pluginPath,
+                                                       const std::string& stateData) {
+    std::future<rps::host::SetStateResult> future;
 
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         auto it = m_sessions.find(pluginPath);
         if (it == m_sessions.end()) {
-            return {false, "No active GUI session for: " + pluginPath};
+            rps::host::SetStateResult errResp;
+            errResp.set_success(false);
+            errResp.set_error("No active GUI session for: " + pluginPath);
+            return errResp;
         }
         auto* session = it->second.get();
 
@@ -493,11 +444,10 @@ rps::ipc::SetStateResponse GuiSessionManager::setState(const std::string& plugin
             future = session->pendingSetState->get_future();
         }
 
-        // Send SetStateRequest
-        rps::ipc::Message req;
-        req.type = rps::ipc::MessageType::SetStateRequest;
-        req.payload = rps::ipc::SetStateRequest{stateData};
-        session->connection->sendMessage(req);
+        // Send SetStateCommand
+        rps::host::HostCommand cmd;
+        cmd.mutable_set_state()->set_state_data(stateData);
+        session->connection->sendProto(cmd);
     }
 
     // Wait for response (unlocked — relay loop will fulfill the promise)
@@ -505,18 +455,24 @@ rps::ipc::SetStateResponse GuiSessionManager::setState(const std::string& plugin
         spdlog::info("SetState completed");
         return future.get();
     }
-    return {false, "Timeout waiting for state response"};
+    rps::host::SetStateResult timeoutResp;
+    timeoutResp.set_success(false);
+    timeoutResp.set_error("Timeout waiting for state response");
+    return timeoutResp;
 }
 
-rps::ipc::LoadPresetResponse GuiSessionManager::loadPreset(const std::string& pluginPath,
+rps::host::LoadPresetResult GuiSessionManager::loadPreset(const std::string& pluginPath,
                                                            const std::string& presetId) {
-    std::future<rps::ipc::LoadPresetResponse> future;
+    std::future<rps::host::LoadPresetResult> future;
 
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         auto it = m_sessions.find(pluginPath);
         if (it == m_sessions.end()) {
-            return {false, "No active GUI session for: " + pluginPath};
+            rps::host::LoadPresetResult errResp;
+            errResp.set_success(false);
+            errResp.set_error("No active GUI session for: " + pluginPath);
+            return errResp;
         }
         auto* session = it->second.get();
 
@@ -527,11 +483,10 @@ rps::ipc::LoadPresetResponse GuiSessionManager::loadPreset(const std::string& pl
             future = session->pendingLoadPreset->get_future();
         }
 
-        // Send LoadPresetRequest
-        rps::ipc::Message req;
-        req.type = rps::ipc::MessageType::LoadPresetRequest;
-        req.payload = rps::ipc::LoadPresetRequest{presetId};
-        session->connection->sendMessage(req);
+        // Send LoadPresetCommand
+        rps::host::HostCommand cmd;
+        cmd.mutable_load_preset()->set_preset_id(presetId);
+        session->connection->sendProto(cmd);
     }
 
     // Wait for response (unlocked — relay loop will fulfill the promise)
@@ -539,7 +494,10 @@ rps::ipc::LoadPresetResponse GuiSessionManager::loadPreset(const std::string& pl
         spdlog::info("LoadPreset completed");
         return future.get();
     }
-    return {false, "Timeout waiting for preset load response"};
+    rps::host::LoadPresetResult timeoutResp;
+    timeoutResp.set_success(false);
+    timeoutResp.set_error("Timeout waiting for preset load response");
+    return timeoutResp;
 }
 
 rps::audio::SharedAudioRing* GuiSessionManager::getAudioRing(const std::string& pluginPath) {

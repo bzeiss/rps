@@ -242,15 +242,15 @@ grpc::Status RpsServiceImpl::GetPluginState(grpc::ServerContext* /*context*/,
     spdlog::info("GetPluginState: path={}", pluginPath);
 
     auto result = m_guiManager.getState(pluginPath);
-    response->set_state_data(result.stateData.data(), result.stateData.size());
-    response->set_success(result.success);
-    if (!result.error.empty()) {
-        response->set_error(result.error);
+    response->set_state_data(result.state_data());
+    response->set_success(result.success());
+    if (!result.error().empty()) {
+        response->set_error(result.error());
     }
     // TODO: set format from session info
     response->set_format("clap");
 
-    spdlog::info("GetPluginState: success={} size={}", result.success, result.stateData.size());
+    spdlog::info("GetPluginState: success={} size={}", result.success(), result.state_data().size());
     return grpc::Status::OK;
 }
 
@@ -260,14 +260,13 @@ grpc::Status RpsServiceImpl::SetPluginState(grpc::ServerContext* /*context*/,
     auto pluginPath = request->plugin_path();
     spdlog::info("SetPluginState: path={} size={}", pluginPath, request->state_data().size());
 
-    std::vector<uint8_t> stateData(request->state_data().begin(), request->state_data().end());
-    auto result = m_guiManager.setState(pluginPath, stateData);
-    response->set_success(result.success);
-    if (!result.error.empty()) {
-        response->set_error(result.error);
+    auto result = m_guiManager.setState(pluginPath, request->state_data());
+    response->set_success(result.success());
+    if (!result.error().empty()) {
+        response->set_error(result.error());
     }
 
-    spdlog::info("SetPluginState: success={}", result.success);
+    spdlog::info("SetPluginState: success={}", result.success());
     return grpc::Status::OK;
 }
 
@@ -279,12 +278,12 @@ grpc::Status RpsServiceImpl::LoadPreset(grpc::ServerContext* /*context*/,
     spdlog::info("LoadPreset: path={} preset_id={}", pluginPath, presetId);
 
     auto result = m_guiManager.loadPreset(pluginPath, presetId);
-    response->set_success(result.success);
-    if (!result.error.empty()) {
-        response->set_error(result.error);
+    response->set_success(result.success());
+    if (!result.error().empty()) {
+        response->set_error(result.error());
     }
 
-    spdlog::info("LoadPreset: success={}", result.success);
+    spdlog::info("LoadPreset: success={}", result.success());
     return grpc::Status::OK;
 }
 

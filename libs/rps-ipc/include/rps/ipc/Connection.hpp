@@ -3,6 +3,7 @@
 #include <rps/ipc/Messages.hpp>
 #include <boost/interprocess/ipc/message_queue.hpp>
 #include <boost/json.hpp>
+#include <google/protobuf/message_lite.h>
 #include <string>
 #include <optional>
 #include <memory>
@@ -14,11 +15,17 @@ class Connection {
 public:
     virtual ~Connection() = default;
 
-    // Send a message
+    // Send a message (JSON-based, for scanner IPC)
     virtual bool sendMessage(const Message& msg) = 0;
 
-    // Receive a message (blocking, with timeout)
+    // Receive a message (JSON-based, for scanner IPC, blocking with timeout)
     virtual std::optional<Message> receiveMessage(unsigned int timeoutMs = 0) = 0;
+
+    // Send a protobuf message (binary, for pluginhost IPC)
+    virtual bool sendProto(const google::protobuf::MessageLite& msg) = 0;
+
+    // Receive a protobuf message (binary, for pluginhost IPC, blocking with timeout)
+    virtual bool receiveProto(google::protobuf::MessageLite& msg, unsigned int timeoutMs = 0) = 0;
 };
 
 // We use Boost.Interprocess message_queue for fast local IPC.
@@ -36,6 +43,9 @@ public:
     bool sendMessage(const Message& msg) override;
     std::optional<Message> receiveMessage(unsigned int timeoutMs = 0) override;
 
+    bool sendProto(const google::protobuf::MessageLite& msg) override;
+    bool receiveProto(google::protobuf::MessageLite& msg, unsigned int timeoutMs = 0) override;
+
 private:
     MessageQueueConnection(const std::string& name, bool isServer);
     
@@ -50,3 +60,4 @@ private:
 };
 
 } // namespace rps::ipc
+

@@ -48,22 +48,22 @@ public:
     void loadPlugin(const boost::filesystem::path& pluginPath) override;
     void runEventLoop(
         std::function<void(const std::string& reason)> closedCb,
-        std::function<void(std::vector<rps::ipc::ParameterValueUpdate>)> paramChangeCb = nullptr) override;
+        std::function<void(std::vector<rps::gui::ParameterValueUpdate>)> paramChangeCb = nullptr) override;
     void requestClose() override;
     void destroyGui() override;
     std::string getPluginName() const override { return m_pluginName; }
-    std::vector<rps::ipc::PluginParameterInfo> getParameters() override;
-    std::vector<rps::ipc::ParameterValueUpdate> pollParameterChanges() override;
-    rps::ipc::GetStateResponse saveState() override;
-    rps::ipc::SetStateResponse loadState(const std::vector<uint8_t>& stateData) override;
-    std::vector<rps::ipc::PresetInfo> getPresets() override;
-    rps::ipc::LoadPresetResponse loadPreset(const std::string& presetId) override;
+    rps::v1::ParameterList getParameters() override;
+    std::vector<rps::gui::ParameterValueUpdate> pollParameterChanges() override;
+    rps::host::GetStateResult saveState() override;
+    rps::host::SetStateResult loadState(const std::string& stateData) override;
+    rps::v1::PresetList getPresets() override;
+    rps::host::LoadPresetResult loadPreset(const std::string& presetId) override;
 
     /// Returns true if the async MetaInfo enrichment has new data available.
     bool hasEnrichedPresets() const override { return m_presetsEnriched.load(std::memory_order_relaxed); }
 
     /// Returns the enriched preset list and clears the flag.
-    std::vector<rps::ipc::PresetInfo> getEnrichedPresets() override;
+    rps::v1::PresetList getEnrichedPresets() override;
 
     // Audio processing overrides
     bool supportsAudioProcessing() const override { return true; }
@@ -110,7 +110,7 @@ private:
     std::vector<CachedParam> m_cachedParams;
 
     // Preset list (populated by getPresets)
-    std::vector<rps::ipc::PresetInfo> m_presets;
+    rps::v1::PresetList m_presets;
     std::mutex m_presetMutex;
     std::atomic<bool> m_presetsEnriched{false};
     std::thread m_presetEnrichThread;

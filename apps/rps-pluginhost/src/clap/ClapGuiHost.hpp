@@ -29,16 +29,16 @@ public:
     void loadPlugin(const boost::filesystem::path& pluginPath) override;
     void runEventLoop(
         std::function<void(const std::string& reason)> closedCb,
-        std::function<void(std::vector<rps::ipc::ParameterValueUpdate>)> paramChangeCb = nullptr) override;
+        std::function<void(std::vector<rps::gui::ParameterValueUpdate>)> paramChangeCb = nullptr) override;
     void requestClose() override;
     void destroyGui() override;
     std::string getPluginName() const override { return m_pluginName; }
-    std::vector<rps::ipc::PluginParameterInfo> getParameters() override;
-    std::vector<rps::ipc::ParameterValueUpdate> pollParameterChanges() override;
-    rps::ipc::GetStateResponse saveState() override;
-    rps::ipc::SetStateResponse loadState(const std::vector<uint8_t>& stateData) override;
-    std::vector<rps::ipc::PresetInfo> getPresets() override;
-    rps::ipc::LoadPresetResponse loadPreset(const std::string& presetId) override;
+    rps::v1::ParameterList getParameters() override;
+    std::vector<rps::gui::ParameterValueUpdate> pollParameterChanges() override;
+    rps::host::GetStateResult saveState() override;
+    rps::host::SetStateResult loadState(const std::string& stateData) override;
+    rps::v1::PresetList getPresets() override;
+    rps::host::LoadPresetResult loadPreset(const std::string& presetId) override;
 
     // Audio processing overrides
     bool supportsAudioProcessing() const override { return true; }
@@ -83,7 +83,14 @@ private:
 
     // Preset discovery
     const clap_plugin_preset_load* m_presetLoad = nullptr;
-    std::vector<rps::ipc::PresetInfo> m_presets;
+    rps::v1::PresetList m_presets;
+
+    // CLAP-specific data for preset loading (location + locationKind not in proto)
+    struct ClapPresetLoadData {
+        std::string location;
+        uint32_t locationKind = 0;
+    };
+    std::vector<ClapPresetLoadData> m_presetLoadData;  // parallel to m_presets.presets()
 
     void cleanup();
     void discoverPresets();  // Crawl CLAP preset discovery factory

@@ -1,0 +1,80 @@
+syntax = "proto3";
+package rps.host;
+
+import "rps.proto";
+
+// ===========================================================================
+// Internal IPC protocol between rps-server and rps-pluginhost.
+// These messages are NOT part of the public gRPC API.
+// ===========================================================================
+
+// Wrapper for all server → host commands
+message HostCommand {
+  oneof command {
+    ShowGuiCommand show_gui = 1;
+    CloseGuiCommand close_gui = 2;
+    CloseSessionCommand close_session = 3;
+    GetStateCommand get_state = 4;
+    SetStateCommand set_state = 5;
+    LoadPresetCommand load_preset = 6;
+  }
+}
+
+// Wrapper for all host → server events
+message HostEvent {
+  oneof event {
+    PluginLoadedEvent plugin_loaded = 1;
+    rps.v1.GuiOpened gui_opened = 2;
+    rps.v1.GuiClosed gui_closed = 3;
+    rps.v1.ParameterList parameter_list = 4;
+    rps.v1.ParameterUpdates parameter_updates = 5;
+    GetStateResult get_state_result = 6;
+    SetStateResult set_state_result = 7;
+    rps.v1.PresetList preset_list = 8;
+    LoadPresetResult load_preset_result = 9;
+    rps.v1.PresetLoaded preset_loaded = 10;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Server → host commands
+// ---------------------------------------------------------------------------
+
+message ShowGuiCommand {}
+message CloseGuiCommand {}
+message CloseSessionCommand {}
+message GetStateCommand {}
+
+message SetStateCommand {
+  bytes state_data = 1;
+}
+
+message LoadPresetCommand {
+  string preset_id = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Host → server events
+// ---------------------------------------------------------------------------
+
+message PluginLoadedEvent {
+  string plugin_name = 1;
+  string plugin_vendor = 2;
+  bool has_gui = 3;
+}
+
+message GetStateResult {
+  bytes state_data = 1;
+  bool success = 2;
+  string error = 3;
+}
+
+message SetStateResult {
+  bool success = 1;
+  string error = 2;
+}
+
+message LoadPresetResult {
+  bool success = 1;
+  string error = 2;
+}

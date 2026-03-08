@@ -1,15 +1,11 @@
-# --- Cross-platform gRPC / Protobuf resolution ---
-# Prefer CMake config packages (works with vcpkg on all platforms, including MinGW).
-# Fall back to pkg-config only when config packages are unavailable.
+# --- Cross-platform gRPC resolution ---
+# Protobuf message types come from rps-proto (via rps-ipc).
+# Here we only need gRPC for the service stubs.
 find_package(gRPC CONFIG QUIET)
 find_package(protobuf CONFIG QUIET)
 
 if(gRPC_FOUND AND protobuf_FOUND)
     set(RPS_GRPC_LIB gRPC::grpc++)
-    set(RPS_PROTO_LIB protobuf::libprotobuf)
-    if(TARGET protobuf::libprotobuf-lite)
-        list(APPEND RPS_PROTO_LIB protobuf::libprotobuf-lite)
-    endif()
 
     if(TARGET protobuf::protoc)
         set(PROTOC_EXECUTABLE protobuf::protoc)
@@ -25,9 +21,7 @@ if(gRPC_FOUND AND protobuf_FOUND)
 else()
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(GRPCPP REQUIRED IMPORTED_TARGET grpc++)
-    pkg_check_modules(PROTOBUF REQUIRED IMPORTED_TARGET protobuf)
     set(RPS_GRPC_LIB PkgConfig::GRPCPP)
-    set(RPS_PROTO_LIB PkgConfig::PROTOBUF)
 
     find_program(PROTOC_EXECUTABLE protoc REQUIRED)
     find_program(GRPC_CPP_PLUGIN grpc_cpp_plugin REQUIRED)
@@ -35,35 +29,30 @@ endif()
 
 find_package(spdlog REQUIRED)
 
-# Proto codegen
+# Generate only gRPC service stubs (protobuf messages come from rps-proto)
 set(PROTO_FILE "${CMAKE_SOURCE_DIR}/proto/rps.proto")
-set(PROTO_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
-file(MAKE_DIRECTORY ${PROTO_OUT_DIR})
+set(GRPC_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(MAKE_DIRECTORY ${GRPC_OUT_DIR})
 
-# Generate protobuf and gRPC C++ sources
-set(PROTO_SRCS "${PROTO_OUT_DIR}/rps.pb.cc")
-set(PROTO_HDRS "${PROTO_OUT_DIR}/rps.pb.h")
-set(GRPC_SRCS "${PROTO_OUT_DIR}/rps.grpc.pb.cc")
-set(GRPC_HDRS "${PROTO_OUT_DIR}/rps.grpc.pb.h")
+set(GRPC_SRCS "${GRPC_OUT_DIR}/rps.grpc.pb.cc")
+set(GRPC_HDRS "${GRPC_OUT_DIR}/rps.grpc.pb.h")
 
 add_custom_command(
-    OUTPUT ${PROTO_SRCS} ${PROTO_HDRS} ${GRPC_SRCS} ${GRPC_HDRS}
+    OUTPUT ${GRPC_SRCS} ${GRPC_HDRS}
     COMMAND ${PROTOC_EXECUTABLE}
-        --cpp_out=${PROTO_OUT_DIR}
-        --grpc_out=${PROTO_OUT_DIR}
+        --grpc_out=${GRPC_OUT_DIR}
         --plugin=protoc-gen-grpc=${GRPC_CPP_PLUGIN}
         -I "${CMAKE_SOURCE_DIR}/proto"
         "${PROTO_FILE}"
     DEPENDS "${PROTO_FILE}"
-    COMMENT "Generating gRPC/Protobuf C++ sources from rps.proto"
+    COMMENT "Generating gRPC C++ service stubs from rps.proto"
 )
 
-# Generated protobuf/gRPC sources use abseil macros that trigger Clang warnings
-# (_Nullable, _Nonnull extensions). Disable warnings on machine-generated code.
+# Suppress warnings on machine-generated code
 if(MSVC)
-    set_source_files_properties(${PROTO_SRCS} ${GRPC_SRCS} PROPERTIES COMPILE_FLAGS "/W0")
+    set_source_files_properties(${GRPC_SRCS} PROPERTIES COMPILE_FLAGS "/W0")
 else()
-    set_source_files_properties(${PROTO_SRCS} ${GRPC_SRCS} PROPERTIES COMPILE_FLAGS "-Wno-error -w")
+    set_source_files_properties(${GRPC_SRCS} PROPERTIES COMPILE_FLAGS "-Wno-error -w")
 endif()
 
 add_executable(rps-server
@@ -72,16 +61,14 @@ add_executable(rps-server
     src/GrpcScanObserver.cpp
     src/ProtobufCompat.cpp
     src/GuiSessionManager.cpp
-    ${PROTO_SRCS}
     ${GRPC_SRCS}
 )
 
 target_include_directories(rps-server
     PRIVATE
         include
-        ${PROTO_OUT_DIR}
+        ${GRPC_OUT_DIR}
 )
-
 
 target_link_libraries(rps-server
     PRIVATE
@@ -90,7 +77,6 @@ target_link_libraries(rps-server
         rps-audio
         rps_warnings
         ${RPS_GRPC_LIB}
-        ${RPS_PROTO_LIB}
         spdlog::spdlog
         SQLite::SQLite3
         Boost::program_options

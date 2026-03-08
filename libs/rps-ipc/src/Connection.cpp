@@ -132,4 +132,59 @@ std::optional<Message> MessageQueueConnection::receiveMessage(unsigned int timeo
     }
 }
 
+bool MessageQueueConnection::sendProto(const google::protobuf::MessageLite& msg) {
+    try {
+        std::string serialized;
+        if (!msg.SerializeToString(&serialized)) {
+            std::cerr << "IPC Proto Send Error: SerializeToString failed\n";
+            return false;
+        }
+
+        if (serialized.size() > MAX_MSG_SIZE) {
+            std::cerr << "IPC Proto Error: Message too large (" << serialized.size()
+                      << " bytes, max " << MAX_MSG_SIZE << ")\n";
+            return false;
+        }
+
+        m_txQueue->send(serialized.data(), serialized.size(), 0);
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "IPC Proto Send Error: " << e.what() << "\n";
+        return false;
+    }
+}
+
+bool MessageQueueConnection::receiveProto(google::protobuf::MessageLite& msg, unsigned int timeoutMs) {
+    try {
+        std::vector<char> buffer(MAX_MSG_SIZE);
+        size_t receivedSize = 0;
+        unsigned int priority = 0;
+
+        bool received = false;
+
+        if (timeoutMs == 0) {
+            m_rxQueue->receive(buffer.data(), buffer.size(), receivedSize, priority);
+            received = true;
+        } else {
+            boost::posix_time::ptime timeout = boost::posix_time::microsec_clock::universal_time() +
+                                               boost::posix_time::milliseconds(timeoutMs);
+            received = m_rxQueue->timed_receive(buffer.data(), buffer.size(), receivedSize, priority, timeout);
+        }
+
+        if (received && receivedSize > 0) {
+            if (!msg.ParseFromArray(buffer.data(), static_cast<int>(receivedSize))) {
+                std::cerr << "IPC Proto Receive Error: ParseFromArray failed ("
+                          << receivedSize << " bytes)\n";
+                return false;
+            }
+            return true;
+        }
+
+        return false;
+    } catch (const std::exception& e) {
+        std::cerr << "IPC Proto Receive Error (transport): " << e.what() << "\n";
+        return false;
+    }
+}
+
 } // namespace rps::ipc

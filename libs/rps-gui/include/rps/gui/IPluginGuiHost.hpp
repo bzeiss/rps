@@ -1,6 +1,7 @@
 #pragma once
 
-#include <rps/ipc/Messages.hpp>
+#include <host.pb.h>
+#include <rps.pb.h>
 
 #include <string>
 #include <cstdint>
@@ -40,6 +41,15 @@ struct AudioBusLayout {
 };
 
 // ---------------------------------------------------------------------------
+// Parameter value update (used for delta streaming callback)
+// ---------------------------------------------------------------------------
+struct ParameterValueUpdate {
+    std::string paramId;
+    double value = 0.0;
+    std::string displayText;
+};
+
+// ---------------------------------------------------------------------------
 // IPluginGuiHost interface
 // ---------------------------------------------------------------------------
 
@@ -76,44 +86,43 @@ public:
     /// @param paramChangeCb Called with delta parameter updates (~20Hz) during the loop.
     virtual void runEventLoop(
         std::function<void(const std::string& reason)> closedCb,
-        std::function<void(std::vector<rps::ipc::ParameterValueUpdate>)> paramChangeCb = nullptr) = 0;
+        std::function<void(std::vector<ParameterValueUpdate>)> paramChangeCb = nullptr) = 0;
 
     /// Request the GUI to close from another thread (e.g. IPC command).
     virtual void requestClose() = 0;
 
-    /// Tear down the GUI window and format-specific GUI resources.
-    /// The plugin stays loaded for headless operation (audio, state, presets).
-    /// Must be called after runEventLoop() exits and before a potential re-open.
-    virtual void destroyGui() = 0;
+    /// Tear down the GUI window and plugin GUI extensions, but keep the plugin loaded.
+    /// Called when returning from GUI mode to headless mode.
+    virtual void destroyGui() {}
 
     /// Get the loaded plugin's display name.
     virtual std::string getPluginName() const = 0;
 
-    /// Get the full list of parameters. Called once after the plugin GUI is opened.
-    virtual std::vector<rps::ipc::PluginParameterInfo> getParameters() = 0;
+    /// Get the full list of parameters as a protobuf ParameterList.
+    virtual rps::v1::ParameterList getParameters() = 0;
 
     /// Poll for parameter value changes since the last call.
     /// Returns only parameters whose values have changed.
-    virtual std::vector<rps::ipc::ParameterValueUpdate> pollParameterChanges() = 0;
+    virtual std::vector<ParameterValueUpdate> pollParameterChanges() = 0;
 
     /// Save the complete plugin state as an opaque binary blob.
-    virtual rps::ipc::GetStateResponse saveState() = 0;
+    virtual rps::host::GetStateResult saveState() = 0;
 
     /// Load plugin state from a previously saved binary blob.
-    virtual rps::ipc::SetStateResponse loadState(const std::vector<uint8_t>& stateData) = 0;
+    virtual rps::host::SetStateResult loadState(const std::string& stateData) = 0;
 
     /// Get available presets/programs for this plugin.
-    virtual std::vector<rps::ipc::PresetInfo> getPresets() = 0;
+    virtual rps::v1::PresetList getPresets() = 0;
 
     /// Load a preset by its id.
-    virtual rps::ipc::LoadPresetResponse loadPreset(const std::string& presetId) = 0;
+    virtual rps::host::LoadPresetResult loadPreset(const std::string& presetId) = 0;
 
     /// Returns true if async preset metadata enrichment has completed with new data.
     /// Default returns false (no async enrichment). Override in hosts that support it.
     virtual bool hasEnrichedPresets() const { return false; }
 
     /// Returns the enriched preset list and clears the flag.
-    virtual std::vector<rps::ipc::PresetInfo> getEnrichedPresets() { return {}; }
+    virtual rps::v1::PresetList getEnrichedPresets() { return {}; }
 
     /// Set toolbar button callbacks (bypass, delta, etc.).
     /// Default no-op. Override in hosts that use SdlWindow's toolbar.
@@ -156,4 +165,3 @@ public:
 };
 
 } // namespace rps::gui
-

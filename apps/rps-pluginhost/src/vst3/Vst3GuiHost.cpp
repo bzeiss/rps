@@ -842,20 +842,20 @@ rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::
     // 14. Populate sidebar with presets
     {
         auto presets = getPresets();
-        if (!presets.empty()) {
+        if (presets.presets_size() > 0) {
             m_window.setPresets(presets);
-            spdlog::info("  Sidebar: {} presets loaded", presets.size());
+            spdlog::info("  Sidebar: {} presets loaded", presets.presets_size());
         }
 
         // Wire preset selection callback
         m_window.setPresetSelectedCallback([this](const std::string& presetId) {
             spdlog::info("Sidebar: preset selected: {}", presetId);
             auto resp = loadPreset(presetId);
-            if (resp.success) {
+            if (resp.success()) {
                 spdlog::info("Sidebar: preset loaded successfully");
                 m_cachedParams.clear();  // Force full re-poll
             } else {
-                spdlog::warn("Sidebar: preset load failed: {}", resp.error);
+                spdlog::warn("Sidebar: preset load failed: {}", resp.error());
             }
         });
     }
@@ -882,7 +882,7 @@ rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::
 
 void Vst3GuiHost::runEventLoop(
     std::function<void(const std::string& reason)> closedCb,
-    std::function<void(std::vector<rps::ipc::ParameterValueUpdate>)> paramChangeCb) {
+    std::function<void(std::vector<rps::gui::ParameterValueUpdate>)> paramChangeCb) {
     spdlog::info("Vst3GuiHost::runEventLoop() starting");
 
     auto resizeHandler = [this](uint32_t newWidth, uint32_t newHeight) {
@@ -956,8 +956,8 @@ std::string vst3String128ToUtf8(const Steinberg::Vst::String128& str128) {
 }
 } // anonymous namespace
 
-std::vector<rps::ipc::PluginParameterInfo> Vst3GuiHost::getParameters() {
-    std::vector<rps::ipc::PluginParameterInfo> result;
+rps::v1::ParameterList Vst3GuiHost::getParameters() {
+    rps::v1::ParameterList result;
     if (!m_controller) {
         spdlog::info("getParameters: no IEditController available");
         return result;
@@ -965,7 +965,6 @@ std::vector<rps::ipc::PluginParameterInfo> Vst3GuiHost::getParameters() {
 
     int32 count = m_controller->getParameterCount();
     spdlog::info("getParameters: plugin has {} parameters", count);
-    result.reserve(count);
     m_cachedParams.clear();
     m_cachedParams.reserve(count);
 
@@ -976,55 +975,53 @@ std::vector<rps::ipc::PluginParameterInfo> Vst3GuiHost::getParameters() {
             continue;
         }
 
-        rps::ipc::PluginParameterInfo p;
-        p.id = std::to_string(info.id);
-        p.index = static_cast<uint32_t>(i);
-        p.name = vst3String128ToUtf8(info.title);
-        p.module = vst3String128ToUtf8(info.units);
+        auto* p = result.add_parameters();
+        p->set_id(std::to_string(info.id));
+        p->set_index(static_cast<uint32_t>(i));
+        p->set_name(vst3String128ToUtf8(info.title));
+        p->set_module(vst3String128ToUtf8(info.units));
 
         // VST3 values are normalized [0,1] — convert to plain scale
         double normValue = m_controller->getParamNormalized(info.id);
         double plainValue = m_controller->normalizedParamToPlain(info.id, normValue);
-        p.currentValue = plainValue;
+        p->set_current_value(plainValue);
 
         // Min/max: convert 0.0 and 1.0 from normalized to plain
-        p.minValue = m_controller->normalizedParamToPlain(info.id, 0.0);
-        p.maxValue = m_controller->normalizedParamToPlain(info.id, 1.0);
-        p.defaultValue = m_controller->normalizedParamToPlain(info.id, info.defaultNormalizedValue);
+        p->set_min_value(m_controller->normalizedParamToPlain(info.id, 0.0));
+        p->set_max_value(m_controller->normalizedParamToPlain(info.id, 1.0));
+        p->set_default_value(m_controller->normalizedParamToPlain(info.id, info.defaultNormalizedValue));
 
         // Get display text
         Steinberg::Vst::String128 displayStr{};
         if (m_controller->getParamStringByValue(info.id, normValue, displayStr) == kResultTrue) {
-            p.displayText = vst3String128ToUtf8(displayStr);
+            p->set_display_text(vst3String128ToUtf8(displayStr));
         }
 
-        // Map VST3 flags to universal flags
+        // Map VST3 flags to universal flags (STEPPED=1, HIDDEN=2, READONLY=4, BYPASS=8, ENUM=16)
         uint32_t flags = 0;
         if (info.flags & Steinberg::Vst::ParameterInfo::kIsReadOnly)
-            flags |= rps::ipc::kParamFlagReadOnly;
+            flags |= 4;
         if (info.flags & Steinberg::Vst::ParameterInfo::kIsHidden)
-            flags |= rps::ipc::kParamFlagHidden;
+            flags |= 2;
         if (info.flags & Steinberg::Vst::ParameterInfo::kIsBypass)
-            flags |= rps::ipc::kParamFlagBypass;
+            flags |= 8;
         if (info.flags & Steinberg::Vst::ParameterInfo::kIsList) {
-            flags |= rps::ipc::kParamFlagEnum;
-            flags |= rps::ipc::kParamFlagStepped;
+            flags |= 16;
+            flags |= 1;
         }
         if (info.stepCount > 0)
-            flags |= rps::ipc::kParamFlagStepped;
-        p.flags = flags;
-
-        result.push_back(p);
+            flags |= 1;
+        p->set_flags(flags);
 
         // Cache for polling
-        m_cachedParams.push_back({p.id, info.id, plainValue});
+        m_cachedParams.push_back({p->id(), info.id, plainValue});
     }
 
     return result;
 }
 
-std::vector<rps::ipc::ParameterValueUpdate> Vst3GuiHost::pollParameterChanges() {
-    std::vector<rps::ipc::ParameterValueUpdate> updates;
+std::vector<rps::gui::ParameterValueUpdate> Vst3GuiHost::pollParameterChanges() {
+    std::vector<rps::gui::ParameterValueUpdate> updates;
     if (!m_controller) {
         return updates;
     }
@@ -1036,7 +1033,7 @@ std::vector<rps::ipc::ParameterValueUpdate> Vst3GuiHost::pollParameterChanges() 
 
         // Compare with cached value (epsilon for floating-point noise)
         if (std::abs(plainValue - cached.lastValue) > 1e-9) {
-            rps::ipc::ParameterValueUpdate u;
+            rps::gui::ParameterValueUpdate u;
             u.paramId = cached.id;
             u.value = plainValue;
 
@@ -1054,12 +1051,12 @@ std::vector<rps::ipc::ParameterValueUpdate> Vst3GuiHost::pollParameterChanges() 
     return updates;
 }
 
-rps::ipc::GetStateResponse Vst3GuiHost::saveState() {
-    rps::ipc::GetStateResponse resp;
+rps::host::GetStateResult Vst3GuiHost::saveState() {
+    rps::host::GetStateResult resp;
 
     if (!m_component) {
-        resp.success = false;
-        resp.error = "No IComponent available";
+        resp.set_success(false);
+        resp.set_error("No IComponent available");
         return resp;
     }
 
@@ -1068,9 +1065,9 @@ rps::ipc::GetStateResponse Vst3GuiHost::saveState() {
     auto procResult = m_component->getState(procStream);
     if (procResult != kResultTrue) {
         procStream->release();
-        resp.success = false;
-        resp.error = "IComponent::getState() failed (result=" + std::to_string(procResult) + ")";
-        spdlog::error("saveState: {}", resp.error);
+        resp.set_success(false);
+        resp.set_error("IComponent::getState() failed (result=" + std::to_string(procResult) + ")");
+        spdlog::error("saveState: {}", resp.error());
         return resp;
     }
     int64 procSize = procStream->getSize();
@@ -1093,38 +1090,39 @@ rps::ipc::GetStateResponse Vst3GuiHost::saveState() {
 
     // 3. Pack into blob: [4-byte procSize LE] [procData] [ctrlData]
     uint32_t procSizeU32 = static_cast<uint32_t>(procSize);
-    resp.stateData.resize(4 + procSize + ctrlSize);
-    std::memcpy(resp.stateData.data(), &procSizeU32, 4);
+    std::string stateData(4 + static_cast<size_t>(procSize + ctrlSize), '\0');
+    std::memcpy(stateData.data(), &procSizeU32, 4);
 
     // Copy processor state
     procStream->seek(0, IBStream::kIBSeekSet, nullptr);
-    procStream->read(resp.stateData.data() + 4, static_cast<int32>(procSize), nullptr);
+    procStream->read(stateData.data() + 4, static_cast<int32>(procSize), nullptr);
     procStream->release();
 
     // Copy controller state
     if (ctrlStream && ctrlSize > 0) {
         ctrlStream->seek(0, IBStream::kIBSeekSet, nullptr);
-        ctrlStream->read(resp.stateData.data() + 4 + procSize, static_cast<int32>(ctrlSize), nullptr);
+        ctrlStream->read(stateData.data() + 4 + procSize, static_cast<int32>(ctrlSize), nullptr);
         ctrlStream->release();
     }
 
-    resp.success = true;
-    spdlog::info("saveState: total {} bytes", resp.stateData.size());
+    resp.set_state_data(std::move(stateData));
+    resp.set_success(true);
+    spdlog::info("saveState: total {} bytes", resp.state_data().size());
     return resp;
 }
 
-rps::ipc::SetStateResponse Vst3GuiHost::loadState(const std::vector<uint8_t>& stateData) {
-    rps::ipc::SetStateResponse resp;
+rps::host::SetStateResult Vst3GuiHost::loadState(const std::string& stateData) {
+    rps::host::SetStateResult resp;
 
     if (!m_component) {
-        resp.success = false;
-        resp.error = "No IComponent available";
+        resp.set_success(false);
+        resp.set_error("No IComponent available");
         return resp;
     }
 
     if (stateData.size() < 4) {
-        resp.success = false;
-        resp.error = "State data too small";
+        resp.set_success(false);
+        resp.set_error("State data too small");
         return resp;
     }
 
@@ -1133,8 +1131,8 @@ rps::ipc::SetStateResponse Vst3GuiHost::loadState(const std::vector<uint8_t>& st
     std::memcpy(&procSize, stateData.data(), 4);
 
     if (4 + procSize > stateData.size()) {
-        resp.success = false;
-        resp.error = "Invalid state data: processor size exceeds total";
+        resp.set_success(false);
+        resp.set_error("Invalid state data: processor size exceeds total");
         return resp;
     }
 
@@ -1149,9 +1147,9 @@ rps::ipc::SetStateResponse Vst3GuiHost::loadState(const std::vector<uint8_t>& st
         auto result = m_component->setState(stream);
         if (result != kResultTrue) {
             stream->release();
-            resp.success = false;
-            resp.error = "IComponent::setState() failed (result=" + std::to_string(result) + ")";
-            spdlog::error("loadState: {}", resp.error);
+            resp.set_success(false);
+            resp.set_error("IComponent::setState() failed (result=" + std::to_string(result) + ")");
+            spdlog::error("loadState: {}", resp.error());
             return resp;
         }
 
@@ -1175,13 +1173,13 @@ rps::ipc::SetStateResponse Vst3GuiHost::loadState(const std::vector<uint8_t>& st
     // Clear cached params so next poll re-queries everything
     m_cachedParams.clear();
 
-    resp.success = true;
+    resp.set_success(true);
     spdlog::info("loadState: state restored successfully");
     return resp;
 }
 
-std::vector<rps::ipc::PresetInfo> Vst3GuiHost::getPresets() {
-    m_presets.clear();
+rps::v1::PresetList Vst3GuiHost::getPresets() {
+    m_presets.clear_presets();
     uint32_t globalIndex = 0;
 
     // --- Source 1: IUnitInfo program lists ---
@@ -1202,46 +1200,45 @@ std::vector<rps::ipc::PresetInfo> Vst3GuiHost::getPresets() {
                     String128 programName{};
                     if (unitInfo->getProgramName(listInfo.id, pi, programName) != kResultTrue) continue;
 
-                    rps::ipc::PresetInfo preset;
-                    preset.id = std::to_string(listInfo.id) + ":" + std::to_string(pi);
-                    preset.name = vst3String128ToUtf8(programName);
-                    preset.index = globalIndex++;
-                    preset.flags = rps::ipc::kPresetFlagFactory;
+                    auto* preset = m_presets.add_presets();
+                    preset->set_id(std::to_string(listInfo.id) + ":" + std::to_string(pi));
+                    preset->set_name(vst3String128ToUtf8(programName));
+                    preset->set_index(globalIndex++);
+                    preset->set_flags(1);  // kPresetFlagFactory = 1
 
                     // Query category: try kPlugInCategory first, fall back to kInstrument, then kStyle
                     String128 attrStr{};
                     auto catResult = unitInfo->getProgramInfo(listInfo.id, pi,
                             Steinberg::Vst::PresetAttributes::kPlugInCategory, attrStr);
                     if (catResult == kResultTrue) {
-                        preset.category = vst3String128ToUtf8(attrStr);
+                        preset->set_category(vst3String128ToUtf8(attrStr));
                     }
                     spdlog::debug("    [{}] kPlugInCategory: result={}, val='{}'",
-                                  preset.name, catResult, vst3String128ToUtf8(attrStr));
+                                  preset->name(), catResult, vst3String128ToUtf8(attrStr));
 
-                    if (preset.category.empty()) {
+                    if (preset->category().empty()) {
                         std::memset(attrStr, 0, sizeof(attrStr));
                         auto instrResult = unitInfo->getProgramInfo(listInfo.id, pi,
                                 Steinberg::Vst::PresetAttributes::kInstrument, attrStr);
                         if (instrResult == kResultTrue) {
-                            preset.category = vst3String128ToUtf8(attrStr);
+                            preset->set_category(vst3String128ToUtf8(attrStr));
                         }
                         spdlog::debug("    [{}] kInstrument: result={}, val='{}'",
-                                      preset.name, instrResult, vst3String128ToUtf8(attrStr));
+                                      preset->name(), instrResult, vst3String128ToUtf8(attrStr));
                     }
-                    if (preset.category.empty()) {
+                    if (preset->category().empty()) {
                         std::memset(attrStr, 0, sizeof(attrStr));
                         auto styleResult = unitInfo->getProgramInfo(listInfo.id, pi,
                                 Steinberg::Vst::PresetAttributes::kStyle, attrStr);
                         if (styleResult == kResultTrue) {
-                            preset.category = vst3String128ToUtf8(attrStr);
+                            preset->set_category(vst3String128ToUtf8(attrStr));
                         }
                         spdlog::debug("    [{}] kStyle: result={}, val='{}'",
-                                      preset.name, styleResult, vst3String128ToUtf8(attrStr));
+                                      preset->name(), styleResult, vst3String128ToUtf8(attrStr));
                     }
 
                     spdlog::info("    preset[{}]: name='{}', category='{}', creator='{}'",
-                                 pi, preset.name, preset.category, preset.creator);
-                    m_presets.push_back(std::move(preset));
+                                 pi, preset->name(), preset->category(), preset->creator());
                 }
             }
         } else {
@@ -1306,23 +1303,22 @@ std::vector<rps::ipc::PresetInfo> Vst3GuiHost::getPresets() {
             auto ext = entry.path().extension().string();
             if (ext != ".vstpreset" && ext != ".VSTPRESET") continue;
 
-            rps::ipc::PresetInfo preset;
-            preset.id = "file:" + entry.path().string();
-            preset.name = entry.path().stem().string();
-            preset.index = globalIndex++;
+            auto* preset = m_presets.add_presets();
+            preset->set_id("file:" + entry.path().string());
+            preset->set_name(entry.path().stem().string());
+            preset->set_index(globalIndex++);
 
             // Derive category from relative subdirectory path
             auto relPath = std::filesystem::relative(entry.path().parent_path(), dir, ec);
             if (!ec && relPath != ".") {
-                preset.category = relPath.string();
+                preset->set_category(relPath.string());
             }
 
-            preset.flags = rps::ipc::kPresetFlagFactory;
-            m_presets.push_back(std::move(preset));
+            preset->set_flags(1);  // kPresetFlagFactory = 1
         }
     }
 
-    spdlog::info("getPresets: {} total preset(s) found", m_presets.size());
+    spdlog::info("getPresets: {} total preset(s) found", m_presets.presets_size());
 
     // Launch async enrichment for file-based presets (Phase 2)
     // This parses MetaInfo chunks to fill in category/author.
@@ -1335,7 +1331,7 @@ std::vector<rps::ipc::PresetInfo> Vst3GuiHost::getPresets() {
     return m_presets;
 }
 
-std::vector<rps::ipc::PresetInfo> Vst3GuiHost::getEnrichedPresets() {
+rps::v1::PresetList Vst3GuiHost::getEnrichedPresets() {
     m_presetsEnriched.store(false, std::memory_order_relaxed);
     std::lock_guard lock(m_presetMutex);
     return m_presets;
@@ -1347,10 +1343,11 @@ void Vst3GuiHost::enrichPresetsFromFiles() {
 
     std::lock_guard lock(m_presetMutex);
 
-    for (auto& preset : m_presets) {
+    for (int i = 0; i < m_presets.presets_size(); ++i) {
+        auto* preset = m_presets.mutable_presets(i);
         // Only process file-based presets
-        if (!preset.id.starts_with("file:")) continue;
-        auto filePath = preset.id.substr(5);
+        if (!preset->id().starts_with("file:")) continue;
+        auto filePath = preset->id().substr(5);
 
         try {
             std::ifstream file(filePath, std::ios::binary | std::ios::ate);
@@ -1382,7 +1379,7 @@ void Vst3GuiHost::enrichPresetsFromFiles() {
             // Scan entries for 'Info' chunk: each entry = id(4) + offset(8) + size(8)
             int64_t infoOffset = -1;
             int64_t infoSize = 0;
-            for (int32_t i = 0; i < entryCount; ++i) {
+            for (int32_t ei = 0; ei < entryCount; ++ei) {
                 char chunkId[4]{};
                 int64_t chunkOff = 0, chunkSz = 0;
                 file.read(chunkId, 4);
@@ -1420,21 +1417,21 @@ void Vst3GuiHost::enrichPresetsFromFiles() {
             };
 
             // Category: try PlugInCategory, then MusicalInstrument, then MusicalStyle
-            if (preset.category.empty()) {
+            if (preset->category().empty()) {
                 auto cat = extractAttr(xml, "PlugInCategory");
                 if (cat.empty()) cat = extractAttr(xml, "MusicalInstrument");
                 if (cat.empty()) cat = extractAttr(xml, "MusicalStyle");
                 if (!cat.empty()) {
-                    preset.category = cat;
+                    preset->set_category(cat);
                     updated = true;
                 }
             }
 
             // Author: no standard key, but some presets use "Author" or "PlugInName"
-            if (preset.creator.empty()) {
+            if (preset->creator().empty()) {
                 auto author = extractAttr(xml, "Author");
                 if (!author.empty()) {
-                    preset.creator = author;
+                    preset->set_creator(author);
                     updated = true;
                 }
             }
@@ -1452,12 +1449,12 @@ void Vst3GuiHost::enrichPresetsFromFiles() {
     }
 }
 
-rps::ipc::LoadPresetResponse Vst3GuiHost::loadPreset(const std::string& presetId) {
-    rps::ipc::LoadPresetResponse resp;
+rps::host::LoadPresetResult Vst3GuiHost::loadPreset(const std::string& presetId) {
+    rps::host::LoadPresetResult resp;
 
     if (!m_controller) {
-        resp.success = false;
-        resp.error = "No IEditController available";
+        resp.set_success(false);
+        resp.set_error("No IEditController available");
         return resp;
     }
 
@@ -1469,8 +1466,8 @@ rps::ipc::LoadPresetResponse Vst3GuiHost::loadPreset(const std::string& presetId
         // Read entire file into memory
         std::ifstream file(filePath, std::ios::binary | std::ios::ate);
         if (!file) {
-            resp.success = false;
-            resp.error = "Failed to open preset file: " + filePath;
+            resp.set_success(false);
+            resp.set_error("Failed to open preset file: " + filePath);
             return resp;
         }
         auto fileSize = file.tellg();
@@ -1483,15 +1480,15 @@ rps::ipc::LoadPresetResponse Vst3GuiHost::loadPreset(const std::string& presetId
         // Header: 'VST3' (4) + version (4) + classID (32 ASCII hex) + chunkListOffset (8)
         // Total header = 48 bytes
         if (fileData.size() < 48) {
-            resp.success = false;
-            resp.error = "Preset file too small";
+            resp.set_success(false);
+            resp.set_error("Preset file too small");
             return resp;
         }
 
         // Check magic
         if (memcmp(fileData.data(), "VST3", 4) != 0) {
-            resp.success = false;
-            resp.error = "Not a .vstpreset file (bad magic)";
+            resp.set_success(false);
+            resp.set_error("Not a .vstpreset file (bad magic)");
             return resp;
         }
 
@@ -1500,8 +1497,8 @@ rps::ipc::LoadPresetResponse Vst3GuiHost::loadPreset(const std::string& presetId
         memcpy(&chunkListOffset, fileData.data() + 40, 8);
 
         if (chunkListOffset < 48 || static_cast<size_t>(chunkListOffset) >= fileData.size()) {
-            resp.success = false;
-            resp.error = "Invalid chunk list offset";
+            resp.set_success(false);
+            resp.set_error("Invalid chunk list offset");
             return resp;
         }
 
@@ -1509,8 +1506,8 @@ rps::ipc::LoadPresetResponse Vst3GuiHost::loadPreset(const std::string& presetId
         auto* chunkList = fileData.data() + chunkListOffset;
         auto remaining = fileData.size() - static_cast<size_t>(chunkListOffset);
         if (remaining < 8 || memcmp(chunkList, "List", 4) != 0) {
-            resp.success = false;
-            resp.error = "Invalid chunk list header";
+            resp.set_success(false);
+            resp.set_error("Invalid chunk list header");
             return resp;
         }
 
@@ -1525,8 +1522,8 @@ rps::ipc::LoadPresetResponse Vst3GuiHost::loadPreset(const std::string& presetId
 
         // Each entry: id(4) + offset(8) + size(8) = 20 bytes
         if (remaining < 8 + static_cast<size_t>(entryCount) * 20) {
-            resp.success = false;
-            resp.error = "Chunk list truncated";
+            resp.set_success(false);
+            resp.set_error("Chunk list truncated");
             return resp;
         }
 
@@ -1575,7 +1572,7 @@ rps::ipc::LoadPresetResponse Vst3GuiHost::loadPreset(const std::string& presetId
         }
 
         m_cachedParams.clear();
-        resp.success = true;
+        resp.set_success(true);
         spdlog::info("loadPreset: .vstpreset loaded successfully");
         return resp;
     }
@@ -1585,8 +1582,8 @@ rps::ipc::LoadPresetResponse Vst3GuiHost::loadPreset(const std::string& presetId
     // Parse presetId: "listId:programIndex"
     auto colonPos = presetId.find(':');
     if (colonPos == std::string::npos) {
-        resp.success = false;
-        resp.error = "Invalid preset ID format: " + presetId;
+        resp.set_success(false);
+        resp.set_error("Invalid preset ID format: " + presetId);
         return resp;
     }
     auto listId = static_cast<ProgramListID>(std::stoi(presetId.substr(0, colonPos)));
@@ -1624,7 +1621,7 @@ rps::ipc::LoadPresetResponse Vst3GuiHost::loadPreset(const std::string& presetId
     // For single-preset plugins (only "Default"), loading it is a no-op success
     if (totalProgramCount <= 1 && programIndex == 0) {
         spdlog::info("loadPreset: single preset — already active");
-        resp.success = true;
+        resp.set_success(true);
         return resp;
     }
 
@@ -1691,9 +1688,9 @@ rps::ipc::LoadPresetResponse Vst3GuiHost::loadPreset(const std::string& presetId
                              vst3String128ToUtf8(info.title));
             }
         }
-        resp.success = false;
-        resp.error = "No program change parameter found for this plugin";
-        spdlog::warn("loadPreset: {}", resp.error);
+        resp.set_success(false);
+        resp.set_error("No program change parameter found for this plugin");
+        spdlog::warn("loadPreset: {}", resp.error());
         return resp;
     }
 
@@ -1828,8 +1825,8 @@ rps::ipc::LoadPresetResponse Vst3GuiHost::loadPreset(const std::string& presetId
     }
 
     if (!applied) {
-        resp.success = false;
-        resp.error = "No preset loading mechanism available for this plugin";
+        resp.set_success(false);
+        resp.set_error("No preset loading mechanism available for this plugin");
         return resp;
     }
 
@@ -1846,7 +1843,7 @@ rps::ipc::LoadPresetResponse Vst3GuiHost::loadPreset(const std::string& presetId
     // Clear cached params so next poll re-queries everything
     m_cachedParams.clear();
 
-    resp.success = true;
+    resp.set_success(true);
     spdlog::info("loadPreset: program {} loaded", programIndex);
     return resp;
 }

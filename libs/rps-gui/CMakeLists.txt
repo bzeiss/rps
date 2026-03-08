@@ -17,7 +17,6 @@ target_link_libraries(rps-gui
         imgui::imgui
         Boost::filesystem
         Boost::program_options
-        Boost::json
         spdlog::spdlog
     PRIVATE
         rps_warnings

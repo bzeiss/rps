@@ -721,7 +721,7 @@ rps::gui::IPluginGuiHost::OpenResult ClapGuiHost::open(const boost::filesystem::
 
     // 10. Create SDL3 window
     spdlog::info("  Step 10: Creating SDL3 window (resizable={})...", m_canResize);
-    bool hasPresets = !m_presets.empty();
+    bool hasPresets = m_presets.presets_size() > 0;
     m_window.create(m_pluginName, w, h, m_canResize, hasPresets);
     spdlog::info("  SDL3 window created");
 
@@ -786,7 +786,7 @@ rps::gui::IPluginGuiHost::OpenResult ClapGuiHost::open(const boost::filesystem::
     m_window.repositionChildHwnd(w, h);
 
     // 12c. Populate sidebar presets
-    if (!m_presets.empty()) {
+    if (m_presets.presets_size() > 0) {
         m_window.setPresets(m_presets);
         m_window.setPresetSelectedCallback([this](const std::string& presetId) {
             spdlog::info("Sidebar preset selected: {}", presetId);
@@ -799,7 +799,7 @@ rps::gui::IPluginGuiHost::OpenResult ClapGuiHost::open(const boost::filesystem::
 
 void ClapGuiHost::runEventLoop(
     std::function<void(const std::string& reason)> closedCb,
-    std::function<void(std::vector<rps::ipc::ParameterValueUpdate>)> paramChangeCb) {
+    std::function<void(std::vector<rps::gui::ParameterValueUpdate>)> paramChangeCb) {
     spdlog::info("ClapGuiHost::runEventLoop() starting");
 
     auto resizeHandler = [this](uint32_t newWidth, uint32_t newHeight) {
@@ -859,8 +859,8 @@ void ClapGuiHost::requestClose() {
     m_window.requestClose();
 }
 
-std::vector<rps::ipc::PluginParameterInfo> ClapGuiHost::getParameters() {
-    std::vector<rps::ipc::PluginParameterInfo> result;
+rps::v1::ParameterList ClapGuiHost::getParameters() {
+    rps::v1::ParameterList result;
     if (!m_params || !m_params->count || !m_params->get_info) {
         spdlog::info("getParameters: params extension not available");
         return result;
@@ -868,7 +868,6 @@ std::vector<rps::ipc::PluginParameterInfo> ClapGuiHost::getParameters() {
 
     uint32_t count = m_params->count(m_plugin);
     spdlog::info("getParameters: plugin has {} parameters", count);
-    result.reserve(count);
     m_cachedParams.clear();
     m_cachedParams.reserve(count);
 
@@ -879,50 +878,48 @@ std::vector<rps::ipc::PluginParameterInfo> ClapGuiHost::getParameters() {
             continue;
         }
 
-        rps::ipc::PluginParameterInfo p;
-        p.id = std::to_string(info.id);
-        p.index = i;
-        p.name = info.name;
-        p.module = info.module;
-        p.minValue = info.min_value;
-        p.maxValue = info.max_value;
-        p.defaultValue = info.default_value;
+        auto* p = result.add_parameters();
+        p->set_id(std::to_string(info.id));
+        p->set_index(i);
+        p->set_name(info.name);
+        p->set_module(info.module);
+        p->set_min_value(info.min_value);
+        p->set_max_value(info.max_value);
+        p->set_default_value(info.default_value);
 
         // Get current value
         double val = info.default_value;
         if (m_params->get_value) {
             m_params->get_value(m_plugin, info.id, &val);
         }
-        p.currentValue = val;
+        p->set_current_value(val);
 
         // Get display text
         if (m_params->value_to_text) {
             char buf[256] = {};
             if (m_params->value_to_text(m_plugin, info.id, val, buf, sizeof(buf))) {
-                p.displayText = buf;
+                p->set_display_text(buf);
             }
         }
 
-        // Map CLAP flags to universal flags
+        // Map CLAP flags to universal flags (same bitmask as proto: STEPPED=1, HIDDEN=2, READONLY=4, BYPASS=8, ENUM=16)
         uint32_t flags = 0;
-        if (info.flags & CLAP_PARAM_IS_STEPPED)  flags |= rps::ipc::kParamFlagStepped;
-        if (info.flags & CLAP_PARAM_IS_HIDDEN)   flags |= rps::ipc::kParamFlagHidden;
-        if (info.flags & CLAP_PARAM_IS_READONLY) flags |= rps::ipc::kParamFlagReadOnly;
-        if (info.flags & CLAP_PARAM_IS_BYPASS)   flags |= rps::ipc::kParamFlagBypass;
-        if (info.flags & CLAP_PARAM_IS_ENUM)     flags |= rps::ipc::kParamFlagEnum;
-        p.flags = flags;
-
-        result.push_back(p);
+        if (info.flags & CLAP_PARAM_IS_STEPPED)  flags |= 1;
+        if (info.flags & CLAP_PARAM_IS_HIDDEN)   flags |= 2;
+        if (info.flags & CLAP_PARAM_IS_READONLY) flags |= 4;
+        if (info.flags & CLAP_PARAM_IS_BYPASS)   flags |= 8;
+        if (info.flags & CLAP_PARAM_IS_ENUM)     flags |= 16;
+        p->set_flags(flags);
 
         // Cache for polling
-        m_cachedParams.push_back({p.id, val});
+        m_cachedParams.push_back({p->id(), val});
     }
 
     return result;
 }
 
-std::vector<rps::ipc::ParameterValueUpdate> ClapGuiHost::pollParameterChanges() {
-    std::vector<rps::ipc::ParameterValueUpdate> updates;
+std::vector<rps::gui::ParameterValueUpdate> ClapGuiHost::pollParameterChanges() {
+    std::vector<rps::gui::ParameterValueUpdate> updates;
     if (!m_params || !m_params->count || !m_params->get_info || !m_params->get_value) {
         return updates;
     }
@@ -950,7 +947,7 @@ std::vector<rps::ipc::ParameterValueUpdate> ClapGuiHost::pollParameterChanges() 
 
         // Compare with cached value (epsilon for floating-point noise)
         if (i < m_cachedParams.size() && std::abs(val - m_cachedParams[i].lastValue) > 1e-9) {
-            rps::ipc::ParameterValueUpdate u;
+            rps::gui::ParameterValueUpdate u;
             u.paramId = m_cachedParams[i].id;
             u.value = val;
 
@@ -970,54 +967,53 @@ std::vector<rps::ipc::ParameterValueUpdate> ClapGuiHost::pollParameterChanges() 
     return updates;
 }
 
-rps::ipc::GetStateResponse ClapGuiHost::saveState() {
-    rps::ipc::GetStateResponse resp;
+rps::host::GetStateResult ClapGuiHost::saveState() {
+    rps::host::GetStateResult resp;
 
     if (!m_state || !m_state->save) {
-        resp.success = false;
-        resp.error = "Plugin does not support state extension";
+        resp.set_success(false);
+        resp.set_error("Plugin does not support state extension");
         spdlog::warn("saveState: state extension not available");
         return resp;
     }
 
     // Memory-backed output stream
-    std::vector<uint8_t> buffer;
+    std::string buffer;  // protobuf bytes field is std::string
     clap_ostream_t ostream{};
     ostream.ctx = &buffer;
     ostream.write = [](const clap_ostream_t* stream, const void* data, uint64_t size) -> int64_t {
-        auto* buf = static_cast<std::vector<uint8_t>*>(stream->ctx);
-        auto* bytes = static_cast<const uint8_t*>(data);
-        buf->insert(buf->end(), bytes, bytes + size);
+        auto* buf = static_cast<std::string*>(stream->ctx);
+        buf->append(static_cast<const char*>(data), static_cast<size_t>(size));
         return static_cast<int64_t>(size);
     };
 
     spdlog::info("saveState: saving plugin state...");
     if (!m_state->save(m_plugin, &ostream)) {
-        resp.success = false;
-        resp.error = "Plugin save() returned false";
+        resp.set_success(false);
+        resp.set_error("Plugin save() returned false");
         spdlog::error("saveState: plugin save() failed");
         return resp;
     }
 
-    resp.stateData = std::move(buffer);
-    resp.success = true;
-    spdlog::info("saveState: saved {} bytes", resp.stateData.size());
+    resp.set_state_data(std::move(buffer));
+    resp.set_success(true);
+    spdlog::info("saveState: saved {} bytes", resp.state_data().size());
     return resp;
 }
 
-rps::ipc::SetStateResponse ClapGuiHost::loadState(const std::vector<uint8_t>& stateData) {
-    rps::ipc::SetStateResponse resp;
+rps::host::SetStateResult ClapGuiHost::loadState(const std::string& stateData) {
+    rps::host::SetStateResult resp;
 
     if (!m_state || !m_state->load) {
-        resp.success = false;
-        resp.error = "Plugin does not support state extension";
+        resp.set_success(false);
+        resp.set_error("Plugin does not support state extension");
         spdlog::warn("loadState: state extension not available");
         return resp;
     }
 
     // Memory-backed input stream
     struct ReadCtx {
-        const std::vector<uint8_t>* data;
+        const std::string* data;
         size_t pos = 0;
     };
     ReadCtx readCtx{&stateData, 0};
@@ -1036,8 +1032,8 @@ rps::ipc::SetStateResponse ClapGuiHost::loadState(const std::vector<uint8_t>& st
 
     spdlog::info("loadState: loading {} bytes...", stateData.size());
     if (!m_state->load(m_plugin, &istream)) {
-        resp.success = false;
-        resp.error = "Plugin load() returned false";
+        resp.set_success(false);
+        resp.set_error("Plugin load() returned false");
         spdlog::error("loadState: plugin load() failed");
         return resp;
     }
@@ -1045,43 +1041,51 @@ rps::ipc::SetStateResponse ClapGuiHost::loadState(const std::vector<uint8_t>& st
     // Clear cached params so next poll re-queries everything
     m_cachedParams.clear();
 
-    resp.success = true;
+    resp.set_success(true);
     spdlog::info("loadState: state restored successfully");
     return resp;
 }
 
-std::vector<rps::ipc::PresetInfo> ClapGuiHost::getPresets() {
+rps::v1::PresetList ClapGuiHost::getPresets() {
     return m_presets;
 }
 
-rps::ipc::LoadPresetResponse ClapGuiHost::loadPreset(const std::string& presetId) {
-    rps::ipc::LoadPresetResponse resp;
+rps::host::LoadPresetResult ClapGuiHost::loadPreset(const std::string& presetId) {
+    rps::host::LoadPresetResult resp;
 
     if (!m_presetLoad || !m_presetLoad->from_location) {
-        resp.success = false;
-        resp.error = "Plugin does not support preset-load extension";
+        resp.set_success(false);
+        resp.set_error("Plugin does not support preset-load extension");
         return resp;
     }
 
-    // Find the preset by id
-    auto it = std::find_if(m_presets.begin(), m_presets.end(),
-        [&presetId](const rps::ipc::PresetInfo& p) { return p.id == presetId; });
-    if (it == m_presets.end()) {
-        resp.success = false;
-        resp.error = "Preset not found: " + presetId;
+    // Find the preset by id in the proto list
+    int presetIdx = -1;
+    for (int i = 0; i < m_presets.presets_size(); ++i) {
+        if (m_presets.presets(i).id() == presetId) {
+            presetIdx = i;
+            break;
+        }
+    }
+    if (presetIdx < 0) {
+        resp.set_success(false);
+        resp.set_error("Preset not found: " + presetId);
         return resp;
     }
+
+    const auto& preset = m_presets.presets(presetIdx);
+    const auto& loadData = m_presetLoadData[static_cast<size_t>(presetIdx)];
 
     spdlog::info("loadPreset: loading '{}' from '{}' (key='{}')",
-                 it->name, it->location, it->id);
+                 preset.name(), loadData.location, preset.id());
 
     bool ok = m_presetLoad->from_location(
-        m_plugin, it->locationKind, it->location.c_str(),
-        it->id.empty() ? nullptr : it->id.c_str());
+        m_plugin, loadData.locationKind, loadData.location.c_str(),
+        preset.id().empty() ? nullptr : preset.id().c_str());
 
     if (!ok) {
-        resp.success = false;
-        resp.error = "Plugin from_location() returned false";
+        resp.set_success(false);
+        resp.set_error("Plugin from_location() returned false");
         spdlog::error("loadPreset: from_location() failed");
         return resp;
     }
@@ -1089,8 +1093,8 @@ rps::ipc::LoadPresetResponse ClapGuiHost::loadPreset(const std::string& presetId
     // Clear param cache so we re-read everything
     m_cachedParams.clear();
 
-    resp.success = true;
-    spdlog::info("loadPreset: '{}' loaded successfully", it->name);
+    resp.set_success(true);
+    spdlog::info("loadPreset: '{}' loaded successfully", preset.name());
     return resp;
 }
 
@@ -1179,13 +1183,14 @@ void ClapGuiHost::discoverPresets() {
             if (loc.kind == CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN) {
                 // Plugin-internal presets: location is null
                 struct MetadataCtx {
-                    std::vector<rps::ipc::PresetInfo>* presets;
+                    rps::v1::PresetList* presets;
+                    std::vector<ClapGuiHost::ClapPresetLoadData>* loadData;
                     uint32_t* index;
                     uint32_t locationKind;
                     std::string location;
                     uint32_t flags;
                 };
-                MetadataCtx mctx{&m_presets, &presetIndex,
+                MetadataCtx mctx{&m_presets, &m_presetLoadData, &presetIndex,
                                  loc.kind, "", loc.flags};
 
                 clap_preset_discovery_metadata_receiver_t receiver{};
@@ -1196,34 +1201,36 @@ void ClapGuiHost::discoverPresets() {
                 receiver.begin_preset = [](const clap_preset_discovery_metadata_receiver_t* r,
                                            const char* name, const char* load_key) -> bool {
                     auto* mc = static_cast<MetadataCtx*>(r->receiver_data);
-                    rps::ipc::PresetInfo info;
-                    info.id = load_key ? load_key : "";
-                    info.name = name ? name : "Unnamed";
-                    info.location = mc->location;
-                    info.locationKind = mc->locationKind;
-                    info.index = (*mc->index)++;
-                    info.flags = mc->flags;
-                    mc->presets->push_back(std::move(info));
+                    auto* info = mc->presets->add_presets();
+                    info->set_id(load_key ? load_key : "");
+                    info->set_name(name ? name : "Unnamed");
+                    info->set_index((*mc->index)++);
+                    info->set_flags(mc->flags);
+                    mc->loadData->push_back({mc->location, mc->locationKind});
                     return true;
                 };
                 receiver.add_plugin_id = [](const clap_preset_discovery_metadata_receiver_t*, const clap_universal_plugin_id_t*) {};
                 receiver.set_soundpack_id = [](const clap_preset_discovery_metadata_receiver_t*, const char*) {};
                 receiver.set_flags = [](const clap_preset_discovery_metadata_receiver_t* r, uint32_t flags) {
                     auto* mc = static_cast<MetadataCtx*>(r->receiver_data);
-                    if (!mc->presets->empty()) mc->presets->back().flags = flags;
+                    if (mc->presets->presets_size() > 0)
+                        mc->presets->mutable_presets(mc->presets->presets_size() - 1)->set_flags(flags);
                 };
                 receiver.add_creator = [](const clap_preset_discovery_metadata_receiver_t* r, const char* creator) {
                     auto* mc = static_cast<MetadataCtx*>(r->receiver_data);
-                    if (!mc->presets->empty() && creator) mc->presets->back().creator = creator;
+                    if (mc->presets->presets_size() > 0 && creator)
+                        mc->presets->mutable_presets(mc->presets->presets_size() - 1)->set_creator(creator);
                 };
                 receiver.set_description = [](const clap_preset_discovery_metadata_receiver_t*, const char*) {};
                 receiver.set_timestamps = [](const clap_preset_discovery_metadata_receiver_t*, clap_timestamp, clap_timestamp) {};
                 receiver.add_feature = [](const clap_preset_discovery_metadata_receiver_t* r, const char* feature) {
                     auto* mc = static_cast<MetadataCtx*>(r->receiver_data);
-                    if (!mc->presets->empty() && feature) {
-                        auto& cat = mc->presets->back().category;
+                    if (mc->presets->presets_size() > 0 && feature) {
+                        auto* preset = mc->presets->mutable_presets(mc->presets->presets_size() - 1);
+                        std::string cat = preset->category();
                         if (!cat.empty()) cat += "/";
                         cat += feature;
+                        preset->set_category(cat);
                     }
                 };
                 receiver.add_extra_info = [](const clap_preset_discovery_metadata_receiver_t*, const char*, const char*) {};
@@ -1252,13 +1259,14 @@ void ClapGuiHost::discoverPresets() {
                     if (!extensionMatch) return;
 
                     struct MetadataCtx {
-                        std::vector<rps::ipc::PresetInfo>* presets;
+                        rps::v1::PresetList* presets;
+                        std::vector<ClapGuiHost::ClapPresetLoadData>* loadData;
                         uint32_t* index;
                         uint32_t locationKind;
                         std::string location;
                         uint32_t flags;
                     };
-                    MetadataCtx mctx{&m_presets, &presetIndex,
+                    MetadataCtx mctx{&m_presets, &m_presetLoadData, &presetIndex,
                                      loc.kind, filePath.string(), loc.flags};
 
                     clap_preset_discovery_metadata_receiver_t receiver{};
@@ -1269,34 +1277,36 @@ void ClapGuiHost::discoverPresets() {
                     receiver.begin_preset = [](const clap_preset_discovery_metadata_receiver_t* r,
                                                const char* name, const char* load_key) -> bool {
                         auto* mc = static_cast<MetadataCtx*>(r->receiver_data);
-                        rps::ipc::PresetInfo info;
-                        info.id = load_key ? load_key : mc->location;
-                        info.name = name ? name : std::filesystem::path(mc->location).stem().string();
-                        info.location = mc->location;
-                        info.locationKind = mc->locationKind;
-                        info.index = (*mc->index)++;
-                        info.flags = mc->flags;
-                        mc->presets->push_back(std::move(info));
+                        auto* info = mc->presets->add_presets();
+                        info->set_id(load_key ? load_key : mc->location);
+                        info->set_name(name ? name : std::filesystem::path(mc->location).stem().string());
+                        info->set_index((*mc->index)++);
+                        info->set_flags(mc->flags);
+                        mc->loadData->push_back({mc->location, mc->locationKind});
                         return true;
                     };
                     receiver.add_plugin_id = [](const clap_preset_discovery_metadata_receiver_t*, const clap_universal_plugin_id_t*) {};
                     receiver.set_soundpack_id = [](const clap_preset_discovery_metadata_receiver_t*, const char*) {};
                     receiver.set_flags = [](const clap_preset_discovery_metadata_receiver_t* r, uint32_t flags) {
                         auto* mc = static_cast<MetadataCtx*>(r->receiver_data);
-                        if (!mc->presets->empty()) mc->presets->back().flags = flags;
+                        if (mc->presets->presets_size() > 0)
+                            mc->presets->mutable_presets(mc->presets->presets_size() - 1)->set_flags(flags);
                     };
                     receiver.add_creator = [](const clap_preset_discovery_metadata_receiver_t* r, const char* creator) {
                         auto* mc = static_cast<MetadataCtx*>(r->receiver_data);
-                        if (!mc->presets->empty() && creator) mc->presets->back().creator = creator;
+                        if (mc->presets->presets_size() > 0 && creator)
+                            mc->presets->mutable_presets(mc->presets->presets_size() - 1)->set_creator(creator);
                     };
                     receiver.set_description = [](const clap_preset_discovery_metadata_receiver_t*, const char*) {};
                     receiver.set_timestamps = [](const clap_preset_discovery_metadata_receiver_t*, clap_timestamp, clap_timestamp) {};
                     receiver.add_feature = [](const clap_preset_discovery_metadata_receiver_t* r, const char* feature) {
                         auto* mc = static_cast<MetadataCtx*>(r->receiver_data);
-                        if (!mc->presets->empty() && feature) {
-                            auto& cat = mc->presets->back().category;
+                        if (mc->presets->presets_size() > 0 && feature) {
+                            auto* preset = mc->presets->mutable_presets(mc->presets->presets_size() - 1);
+                            std::string cat = preset->category();
                             if (!cat.empty()) cat += "/";
                             cat += feature;
+                            preset->set_category(cat);
                         }
                     };
                     receiver.add_extra_info = [](const clap_preset_discovery_metadata_receiver_t*, const char*, const char*) {};
@@ -1322,7 +1332,7 @@ void ClapGuiHost::discoverPresets() {
         ctx.filetypes.clear();
     }
 
-    spdlog::info("  Preset discovery complete: {} preset(s) found", m_presets.size());
+    spdlog::info("  Preset discovery complete: {} preset(s) found", m_presets.presets_size());
 }
 
 } // namespace rps::scanner

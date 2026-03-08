@@ -1,6 +1,6 @@
 #pragma once
 
-#include <rps/ipc/Messages.hpp>
+#include <rps.pb.h>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -102,7 +102,7 @@ public:
     }
 
     /// Set available presets for the sidebar list.
-    void setPresets(const std::vector<rps::ipc::PresetInfo>& presets);
+    void setPresets(const rps::v1::PresetList& presets);
 
     /// Set callback for when a preset is selected from the sidebar.
     void setPresetSelectedCallback(PresetSelectedCallback cb);
@@ -128,7 +128,7 @@ private:
     bool m_inProgrammaticResize = false; // Skip left-edge detection during sidebar toggle
     int m_prevWinX = 0;    // Track window X position for left-edge drag detection
     int m_prevWinW = 0;    // Track window width for left-edge drag detection
-    std::vector<rps::ipc::PresetInfo> m_presets;
+    rps::v1::PresetList m_presets;
     int m_selectedPresetIndex = -1;
     char m_presetFilter[256] = {};
     PresetSelectedCallback m_presetSelectedCb;
