@@ -4,6 +4,7 @@
 #include <rps/coordinator/GraphExecutor.hpp>
 #include <rps/coordinator/GraphSlicer.hpp>
 #include <rps/coordinator/ProcessSlice.hpp>
+#include <rps/audio/SharedAudioRing.hpp>
 
 #include <memory>
 #include <mutex>
@@ -52,6 +53,9 @@ public:
     // Non-copyable
     Coordinator(const Coordinator&) = delete;
     Coordinator& operator=(const Coordinator&) = delete;
+
+    /// Set the path to the rps-pluginhost binary (required for multi-slice mode).
+    void setHostBinaryPath(const std::string& path) { m_hostBinaryPath = path; }
 
     // -- Graph construction --
 
@@ -128,6 +132,7 @@ private:
         std::unique_ptr<GraphExecutor> executor;  // In-process executor (Performance mode)
         SliceResult                 sliceResult;
         std::vector<ProcessSlice>   slices;       // Child processes (multi-slice mode)
+        std::vector<std::unique_ptr<rps::audio::SharedAudioRing>> bridges;  // SHM bridges
     };
 
     ManagedGraph& findGraph(const std::string& graphId);
@@ -136,6 +141,7 @@ private:
     mutable std::mutex m_mutex;
     std::unordered_map<std::string, ManagedGraph> m_graphs;
     uint32_t m_nextGraphId = 0;
+    std::string m_hostBinaryPath;
 };
 
 } // namespace rps::coordinator

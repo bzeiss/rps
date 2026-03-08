@@ -25,7 +25,16 @@ RpsServiceImpl::RpsServiceImpl(const std::string& dbPath, const std::string& sca
     : m_guiManager(boost::filesystem::path(scannerBin).parent_path().string())
     , m_dbPath(dbPath)
     , m_scannerBin(scannerBin)
-    , m_startTime(std::chrono::steady_clock::now()) {}
+    , m_startTime(std::chrono::steady_clock::now()) {
+    // Set the pluginhost binary path for multi-slice graph mode
+    auto hostBin = boost::filesystem::path(scannerBin).parent_path() /
+#ifdef _WIN32
+        "rps-pluginhost.exe";
+#else
+        "rps-pluginhost";
+#endif
+    m_coordinator.setHostBinaryPath(hostBin.string());
+}
 
 void RpsServiceImpl::setServer(grpc::Server* server) {
     std::lock_guard<std::mutex> lock(m_serverMutex);

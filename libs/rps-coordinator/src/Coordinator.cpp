@@ -43,6 +43,7 @@ Coordinator::~Coordinator() {
                 slice.terminate();
             }
             mg.slices.clear();
+            mg.bridges.clear();
             mg.state = GraphState::Inactive;
         }
     }
@@ -74,6 +75,7 @@ void Coordinator::destroyGraph(const std::string& graphId) {
             slice.terminate();
         }
         it->second.slices.clear();
+        it->second.bridges.clear();
     }
 
     m_graphs.erase(it);
@@ -87,9 +89,11 @@ void Coordinator::destroyGraph(const std::string& graphId) {
 std::string Coordinator::addNode(const std::string& graphId, GraphNode node) {
     std::lock_guard lock(m_mutex);
     auto& mg = findGraph(graphId);
+
     if (mg.state == GraphState::Active) {
         throw std::runtime_error("Cannot add nodes to an active graph");
     }
+
     std::string nodeId = node.id;
     mg.graph.addNode(std::move(node));
     return nodeId;
@@ -98,9 +102,11 @@ std::string Coordinator::addNode(const std::string& graphId, GraphNode node) {
 void Coordinator::removeNode(const std::string& graphId, const std::string& nodeId) {
     std::lock_guard lock(m_mutex);
     auto& mg = findGraph(graphId);
+
     if (mg.state == GraphState::Active) {
         throw std::runtime_error("Cannot remove nodes from an active graph");
     }
+
     mg.graph.removeNode(nodeId);
 }
 
@@ -113,18 +119,22 @@ std::string Coordinator::connectNodes(const std::string& graphId,
                                        const std::string& destNodeId, uint32_t destPort) {
     std::lock_guard lock(m_mutex);
     auto& mg = findGraph(graphId);
+
     if (mg.state == GraphState::Active) {
         throw std::runtime_error("Cannot connect nodes in an active graph");
     }
+
     return mg.graph.addEdge(sourceNodeId, sourcePort, destNodeId, destPort);
 }
 
 void Coordinator::disconnectNodes(const std::string& graphId, const std::string& edgeId) {
     std::lock_guard lock(m_mutex);
     auto& mg = findGraph(graphId);
+
     if (mg.state == GraphState::Active) {
         throw std::runtime_error("Cannot disconnect nodes in an active graph");
     }
+
     mg.graph.removeEdge(edgeId);
 }
 
@@ -169,20 +179,82 @@ void Coordinator::activateGraph(const std::string& graphId,
         mg.executor = std::make_unique<GraphExecutor>();
         mg.executor->prepare(mg.graph, std::move(pluginCallback));
     } else {
-        // Multi-slice mode (Phase 7B: actually spawn processes)
+        // Multi-slice mode: spawn rps-pluginhost processes
         spdlog::info("Coordinator: graph '{}' sliced into {} subgraphs with {} bridges",
                      graphId, mg.sliceResult.slices.size(), mg.sliceResult.bridges.size());
 
-        // For now, log the slicing result. Actual process spawning is Phase 7B.
+        if (m_hostBinaryPath.empty()) {
+            throw std::runtime_error(
+                "Cannot activate multi-slice graph: host binary path not set. "
+                "Call setHostBinaryPath() first.");
+        }
+
+        // Create SharedAudioRing bridges for inter-slice communication
+        const auto& config = mg.graph.config();
+        for (const auto& bridge : mg.sliceResult.bridges) {
+            // Determine channel count from the Send node in the source slice
+            uint32_t channelCount = 2; // default to stereo
+            const auto& sourceSlice = mg.sliceResult.slices[bridge.sourceSlice];
+            auto* sendNode = sourceSlice.findNode(bridge.sendNodeId);
+            if (sendNode && sendNode->sendConfig) {
+                channelCount = sendNode->sendConfig->layout.effectiveChannelCount();
+                if (channelCount == 0) channelCount = 2;
+            }
+
+            try {
+                auto ring = rps::audio::SharedAudioRing::create(
+                    bridge.shmName, config.sampleRate, config.blockSize, channelCount);
+                mg.bridges.push_back(std::move(ring));
+                spdlog::info("  Bridge: slice {} -> slice {} via '{}' ({}ch)",
+                             bridge.sourceSlice, bridge.destSlice,
+                             bridge.shmName, channelCount);
+            } catch (const std::exception& e) {
+                spdlog::error("  Failed to create bridge '{}': {}",
+                              bridge.shmName, e.what());
+                // Clean up already-created bridges and abort
+                mg.bridges.clear();
+                throw std::runtime_error(std::format(
+                    "Failed to create shared memory bridge '{}': {}",
+                    bridge.shmName, e.what()));
+            }
+        }
+
+        // Spawn a ProcessSlice for each subgraph
         for (size_t i = 0; i < mg.sliceResult.slices.size(); ++i) {
             const auto& slice = mg.sliceResult.slices[i];
             spdlog::info("  Slice {}: {} nodes, {} edges",
                          i, slice.nodeCount(), slice.edges().size());
+
+            // Serialize the subgraph to JSON
+            auto sliceJson = GraphSerializer::toJson(slice);
+
+            // Collect SHM names referenced by this slice's Send/Receive nodes
+            std::vector<std::string> sliceShmNames;
+            for (const auto& bridge : mg.sliceResult.bridges) {
+                if (bridge.sourceSlice == i || bridge.destSlice == i) {
+                    sliceShmNames.push_back(bridge.shmName);
+                }
+            }
+
+            ProcessSlice ps;
+            ps.setSliceId(std::format("{}_{}", graphId, i));
+            if (!ps.launch(m_hostBinaryPath, sliceJson, sliceShmNames)) {
+                spdlog::error("  Failed to launch slice {}", i);
+                // Terminate already-spawned slices and abort
+                for (auto& s : mg.slices) {
+                    s.terminate();
+                }
+                mg.slices.clear();
+                mg.bridges.clear();
+                throw std::runtime_error(std::format(
+                    "Failed to launch process for slice {}", i));
+            }
+
+            mg.slices.push_back(std::move(ps));
         }
-        for (const auto& bridge : mg.sliceResult.bridges) {
-            spdlog::info("  Bridge: slice {} → slice {} via '{}'",
-                         bridge.sourceSlice, bridge.destSlice, bridge.shmName);
-        }
+
+        spdlog::info("Coordinator: {} slices spawned for graph '{}'",
+                     mg.slices.size(), graphId);
     }
 
     mg.state = GraphState::Active;
@@ -203,6 +275,7 @@ void Coordinator::deactivateGraph(const std::string& graphId) {
         slice.terminate();
     }
     mg.slices.clear();
+    mg.bridges.clear();  // Destroy shared memory rings after slices are stopped
     mg.sliceResult = {};
 
     mg.state = GraphState::Inactive;

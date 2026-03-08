@@ -24,6 +24,7 @@ target_link_libraries(rps-coordinator
         spdlog::spdlog
         Boost::program_options
         Boost::filesystem
+        Boost::uuid
 )
 
 # ---------------------------------------------------------------------------

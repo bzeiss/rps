@@ -229,6 +229,46 @@ def load_state(ctx, plugin_path, input_file):
         sys.exit(1)
 
 
+@cli.command("chain")
+@click.option("--format", "format_filter", default="", help="Filter plugins by format for interactive select")
+@click.option("--sample-rate", "-sr", default=48000, type=int, help="Audio sample rate (default: 48000)")
+@click.option("--channels", "-ch", default=2, type=int, help="Audio channel count (default: 2)")
+@click.option("--block-size", "-bs", default=128, type=int, help="Audio block size (default: 128)")
+@click.pass_context
+def chain(ctx, format_filter, sample_rate, channels, block_size):
+    """Interactive chain manager — create and manage multi-plugin graphs."""
+    from rps_client.chain import run_chain
+
+    server_addr = ctx.obj["server"]
+    managed = server_addr is None
+
+    if managed:
+        server_bin = ctx.obj["server_bin"] or _find_server_bin()
+        if not server_bin:
+            click.echo("Error: Cannot find rps-server binary. Use --server-bin or --server.", err=True)
+            sys.exit(1)
+        mgr_context = ServerManager(server_bin=server_bin, port=ctx.obj["port"], db=ctx.obj["db"])
+    else:
+        from contextlib import nullcontext
+        mgr_context = nullcontext()
+
+    try:
+        with mgr_context as mgr:
+            if managed:
+                server_addr = mgr.uds_address
+            with RpsClient(server_addr) as client:
+                run_chain(
+                    client, format_filter=format_filter,
+                    sample_rate=sample_rate, block_size=block_size,
+                    num_channels=channels,
+                )
+    except KeyboardInterrupt:
+        click.echo("\nInterrupted.")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
 def _find_server_bin() -> str | None:
     """Try to locate rps-server binary next to this script or in CWD."""
     # Check common binary names

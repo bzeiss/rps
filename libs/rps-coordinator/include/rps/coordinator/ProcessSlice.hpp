@@ -5,10 +5,6 @@
 #include <string>
 #include <vector>
 
-namespace rps::audio {
-class SharedAudioRing;
-}
-
 namespace rps::coordinator {
 
 // ---------------------------------------------------------------------------
@@ -16,8 +12,7 @@ namespace rps::coordinator {
 // ---------------------------------------------------------------------------
 
 /// Represents a child process hosting a subgraph slice.
-/// Phase 7A: interface + stub. Phase 7B: full implementation with
-/// boost::process, health monitoring, and restart-on-crash.
+/// Phase 7B: full implementation with boost::process, graceful shutdown.
 class ProcessSlice {
 public:
     /// Slice state
@@ -28,14 +23,14 @@ public:
         Crashed,     ///< Process exited unexpectedly
     };
 
-    ProcessSlice() = default;
+    ProcessSlice();
     ~ProcessSlice();
 
     // Non-copyable, movable
     ProcessSlice(const ProcessSlice&) = delete;
     ProcessSlice& operator=(const ProcessSlice&) = delete;
-    ProcessSlice(ProcessSlice&&) noexcept;
-    ProcessSlice& operator=(ProcessSlice&&) noexcept;
+    ProcessSlice(ProcessSlice&& other) noexcept;
+    ProcessSlice& operator=(ProcessSlice&& other) noexcept;
 
     /// Launch the child process with the given subgraph JSON.
     /// @param hostBinaryPath  Path to rps-pluginhost binary.
@@ -67,14 +62,16 @@ public:
     void setSliceId(const std::string& id) { m_sliceId = id; }
 
 private:
+    void cleanup();
+
+    struct Impl;  // PIMPL — hides boost::process::v1::child
+    std::unique_ptr<Impl> m_impl;
+
     std::string m_sliceId;
     State m_state = State::NotStarted;
     int m_exitCode = 0;
-
-    // Phase 7B will add:
-    // std::unique_ptr<boost::process::v1::child> m_child;
-    // IPC pipe handles
-    // SharedAudioRing references
+    std::string m_graphFilePath;
+    std::vector<std::string> m_shmNames;
 };
 
 } // namespace rps::coordinator
