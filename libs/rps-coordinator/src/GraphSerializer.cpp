@@ -53,6 +53,10 @@ json::object nodeToJson(const GraphNode& node) {
         obj["linkedNodeId"] = *node.linkedNodeId;
     }
 
+    if (!node.sliceHint.empty()) {
+        obj["sliceHint"] = node.sliceHint;
+    }
+
     json::object config;
     switch (node.type) {
         case NodeType::Input:
@@ -158,6 +162,7 @@ GraphNode nodeFromJson(const json::object& obj) {
             auto node = createInputNode(id, c);
             if (obj.contains("latencySamples")) node.latencySamples = static_cast<uint32_t>(obj.at("latencySamples").as_int64());
             if (obj.contains("linkedNodeId")) node.linkedNodeId = json::value_to<std::string>(obj.at("linkedNodeId"));
+            if (obj.contains("sliceHint")) node.sliceHint = json::value_to<std::string>(obj.at("sliceHint"));
             return node;
         }
         case NodeType::Output: {
@@ -167,6 +172,7 @@ GraphNode nodeFromJson(const json::object& obj) {
             auto node = createOutputNode(id, c);
             if (obj.contains("latencySamples")) node.latencySamples = static_cast<uint32_t>(obj.at("latencySamples").as_int64());
             if (obj.contains("linkedNodeId")) node.linkedNodeId = json::value_to<std::string>(obj.at("linkedNodeId"));
+            if (obj.contains("sliceHint")) node.sliceHint = json::value_to<std::string>(obj.at("sliceHint"));
             return node;
         }
         case NodeType::Plugin: {
@@ -178,6 +184,7 @@ GraphNode nodeFromJson(const json::object& obj) {
             auto node = createPluginNode(id, c, ioLayout);
             if (obj.contains("latencySamples")) node.latencySamples = static_cast<uint32_t>(obj.at("latencySamples").as_int64());
             if (obj.contains("linkedNodeId")) node.linkedNodeId = json::value_to<std::string>(obj.at("linkedNodeId"));
+            if (obj.contains("sliceHint")) node.sliceHint = json::value_to<std::string>(obj.at("sliceHint"));
             return node;
         }
         case NodeType::Mixer: {
@@ -192,6 +199,7 @@ GraphNode nodeFromJson(const json::object& obj) {
             auto node = createMixerNode(id, c);
             if (obj.contains("latencySamples")) node.latencySamples = static_cast<uint32_t>(obj.at("latencySamples").as_int64());
             if (obj.contains("linkedNodeId")) node.linkedNodeId = json::value_to<std::string>(obj.at("linkedNodeId"));
+            if (obj.contains("sliceHint")) node.sliceHint = json::value_to<std::string>(obj.at("sliceHint"));
             return node;
         }
         case NodeType::ChannelRouter: {
@@ -206,6 +214,7 @@ GraphNode nodeFromJson(const json::object& obj) {
             auto node = createChannelRouterNode(id, c);
             if (obj.contains("latencySamples")) node.latencySamples = static_cast<uint32_t>(obj.at("latencySamples").as_int64());
             if (obj.contains("linkedNodeId")) node.linkedNodeId = json::value_to<std::string>(obj.at("linkedNodeId"));
+            if (obj.contains("sliceHint")) node.sliceHint = json::value_to<std::string>(obj.at("sliceHint"));
             return node;
         }
         case NodeType::Downmix: {
@@ -215,6 +224,7 @@ GraphNode nodeFromJson(const json::object& obj) {
             auto node = createDownmixNode(id, c);
             if (obj.contains("latencySamples")) node.latencySamples = static_cast<uint32_t>(obj.at("latencySamples").as_int64());
             if (obj.contains("linkedNodeId")) node.linkedNodeId = json::value_to<std::string>(obj.at("linkedNodeId"));
+            if (obj.contains("sliceHint")) node.sliceHint = json::value_to<std::string>(obj.at("sliceHint"));
             return node;
         }
         case NodeType::Send: {
@@ -224,6 +234,7 @@ GraphNode nodeFromJson(const json::object& obj) {
             auto node = createSendNode(id, c);
             if (obj.contains("latencySamples")) node.latencySamples = static_cast<uint32_t>(obj.at("latencySamples").as_int64());
             if (obj.contains("linkedNodeId")) node.linkedNodeId = json::value_to<std::string>(obj.at("linkedNodeId"));
+            if (obj.contains("sliceHint")) node.sliceHint = json::value_to<std::string>(obj.at("sliceHint"));
             return node;
         }
         case NodeType::Receive: {
@@ -233,6 +244,7 @@ GraphNode nodeFromJson(const json::object& obj) {
             auto node = createReceiveNode(id, c);
             if (obj.contains("latencySamples")) node.latencySamples = static_cast<uint32_t>(obj.at("latencySamples").as_int64());
             if (obj.contains("linkedNodeId")) node.linkedNodeId = json::value_to<std::string>(obj.at("linkedNodeId"));
+            if (obj.contains("sliceHint")) node.sliceHint = json::value_to<std::string>(obj.at("sliceHint"));
             return node;
         }
         case NodeType::SidechainInput: {
@@ -242,6 +254,7 @@ GraphNode nodeFromJson(const json::object& obj) {
             auto node = createSidechainInputNode(id, c);
             if (obj.contains("latencySamples")) node.latencySamples = static_cast<uint32_t>(obj.at("latencySamples").as_int64());
             if (obj.contains("linkedNodeId")) node.linkedNodeId = json::value_to<std::string>(obj.at("linkedNodeId"));
+            if (obj.contains("sliceHint")) node.sliceHint = json::value_to<std::string>(obj.at("sliceHint"));
             return node;
         }
         case NodeType::Gain: {
@@ -253,6 +266,7 @@ GraphNode nodeFromJson(const json::object& obj) {
             auto node = createGainNode(id, c);
             if (obj.contains("latencySamples")) node.latencySamples = static_cast<uint32_t>(obj.at("latencySamples").as_int64());
             if (obj.contains("linkedNodeId")) node.linkedNodeId = json::value_to<std::string>(obj.at("linkedNodeId"));
+            if (obj.contains("sliceHint")) node.sliceHint = json::value_to<std::string>(obj.at("sliceHint"));
             return node;
         }
     }

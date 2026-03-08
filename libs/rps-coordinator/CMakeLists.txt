@@ -7,6 +7,9 @@ add_library(rps-coordinator STATIC
     src/AudioBuffer.cpp
     src/GraphExecutor.cpp
     src/GraphWorkerMain.cpp
+    src/GraphSlicer.cpp
+    src/Coordinator.cpp
+    src/ProcessSlice.cpp
 )
 target_include_directories(rps-coordinator PUBLIC include)
 find_package(spdlog REQUIRED)
@@ -24,7 +27,7 @@ target_link_libraries(rps-coordinator
 )
 
 # ---------------------------------------------------------------------------
-# Unit tests (Phase 1 + Phase 2)
+# Unit tests
 # ---------------------------------------------------------------------------
 option(RPS_BUILD_COORDINATOR_TESTS "Build rps-coordinator unit tests" ON)
 if(RPS_BUILD_COORDINATOR_TESTS)
@@ -36,6 +39,8 @@ if(RPS_BUILD_COORDINATOR_TESTS)
         tests/AudioBufferTest.cpp
         tests/GraphExecutorTest.cpp
         tests/CpuTopologyTest.cpp
+        tests/GraphSlicerTest.cpp
+        tests/CoordinatorTest.cpp
         tests/TestMain.cpp
     )
     target_link_libraries(rps-coordinator-tests

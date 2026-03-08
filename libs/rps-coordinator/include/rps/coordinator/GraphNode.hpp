@@ -150,6 +150,10 @@ struct GraphNode {
 
     // Latency reported by this node in samples (set after plugin is loaded)
     uint32_t latencySamples = 0;
+
+    // Slicing hint — nodes with the same sliceHint are grouped into the same
+    // process slice by the Default slicing strategy. Empty = "main" slice.
+    std::string sliceHint;
 };
 
 /// Create a fully configured GraphNode with correct port descriptors.
