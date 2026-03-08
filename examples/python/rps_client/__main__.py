@@ -60,7 +60,7 @@ def scan(ctx, formats, mode, jobs, retries, timeout, limit, filter_str, single_p
     try:
         with mgr_context as mgr:
             if managed:
-                server_addr = mgr.address
+                server_addr = mgr.uds_address
 
             with RpsClient(server_addr) as client:
                 event_stream = client.start_scan(
@@ -161,7 +161,7 @@ def open_gui(ctx, format_filter, enable_audio, sample_rate, channels, block_size
     try:
         with mgr_context as mgr:
             if managed:
-                server_addr = mgr.address
+                server_addr = mgr.uds_address
 
             with RpsClient(server_addr) as client:
                 run_open_gui(

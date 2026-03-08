@@ -371,6 +371,8 @@ Defined in `proto/rps.proto`:
 
 `StreamAudio` is a bidirectional streaming RPC for network-transparent audio processing. The client sends `AudioInputBlock` messages (with raw float32 audio data), and the server returns processed `AudioOutputBlock` messages. Requires an active GUI session with audio enabled. Adds gRPC network latency compared to the local shared memory path.
 
+The server listens on **both TCP and Unix Domain Sockets** simultaneously for zero-configuration local IPC. When the Python client spawns the server locally (managed mode), it connects via UDS (`unix://{TEMP}/rps-server-{port}.sock`) for lower-overhead IPC. Remote connections (`--server host:port`) use TCP as before. UDS is supported cross-platform (Linux, macOS, Windows 10+).
+
 Only one scan at a time is allowed. `StartScan` returns `ALREADY_EXISTS` if a scan is in progress.
 
 ### Starting the Server

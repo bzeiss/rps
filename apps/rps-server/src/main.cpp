@@ -138,17 +138,41 @@ int main(int argc, char* argv[]) {
     spdlog::info("Database: {}", dbPath);
     spdlog::info("Scanner: {}", scannerPath.string());
 
+    // --- Compute UDS path for local IPC ---
+    std::string udsPath;
+    {
+        auto tempDir = boost::filesystem::temp_directory_path();
+        udsPath = (tempDir / ("rps-server-" + std::to_string(port) + ".sock")).string();
+        // Remove stale socket file from a previous crash
+        boost::system::error_code ec;
+        boost::filesystem::remove(udsPath, ec);
+    }
+
     // --- Build and start gRPC server ---
     rps::server::RpsServiceImpl service(dbPath, scannerPath.string());
 
+    // Try TCP + UDS dual-listen first, fall back to TCP-only if UDS fails
     grpc::ServerBuilder builder;
     builder.AddListeningPort(serverAddress, grpc::InsecureServerCredentials());
+    // gRPC URI: "unix:" prefix (no "//") for cross-platform compatibility
+    // with Windows drive letters (e.g. unix:C:\Users\...\rps-server.sock)
+    std::string udsAddress = "unix:" + udsPath;
+    builder.AddListeningPort(udsAddress, grpc::InsecureServerCredentials());
     builder.RegisterService(&service);
 
     auto server = builder.BuildAndStart();
     if (!server) {
-        spdlog::error("Failed to start gRPC server on {}", serverAddress);
-        return 1;
+        // UDS may have failed — retry with TCP only
+        spdlog::warn("Dual-listen (TCP+UDS) failed, retrying TCP-only...");
+        udsPath.clear();
+        grpc::ServerBuilder fallbackBuilder;
+        fallbackBuilder.AddListeningPort(serverAddress, grpc::InsecureServerCredentials());
+        fallbackBuilder.RegisterService(&service);
+        server = fallbackBuilder.BuildAndStart();
+        if (!server) {
+            spdlog::error("Failed to start gRPC server on {}", serverAddress);
+            return 1;
+        }
     }
 
     service.setServer(server.get());
@@ -159,8 +183,18 @@ int main(int argc, char* argv[]) {
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
 
-    spdlog::info("RPS Server listening on {}", serverAddress);
+    if (!udsPath.empty()) {
+        spdlog::info("RPS Server listening on {} and UDS: {}", serverAddress, udsPath);
+    } else {
+        spdlog::info("RPS Server listening on {} (UDS unavailable)", serverAddress);
+    }
     server->Wait();
+
+    // Clean up UDS socket file
+    {
+        boost::system::error_code ec;
+        boost::filesystem::remove(udsPath, ec);
+    }
 
     spdlog::info("RPS Server stopped.");
     return 0;

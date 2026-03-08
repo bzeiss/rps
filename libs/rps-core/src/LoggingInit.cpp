@@ -63,6 +63,7 @@ void initLogging(const std::string& prefix, const std::string& logFileName,
             // Also flush periodically for debug/trace messages
             spdlog::flush_every(std::chrono::seconds(3));
 
+            spdlog::info("=====================================================================");
             spdlog::info("Logging initialized: file={}, level={}", logFileName, logLevel);
         } else {
             // Logging disabled: set level to off so all spdlog calls are no-ops

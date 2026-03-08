@@ -5,6 +5,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from typing import TYPE_CHECKING
 from pathlib import Path
@@ -13,6 +14,11 @@ import grpc
 
 if TYPE_CHECKING:
     from rps_client.windows_job import WindowsJobObject
+
+
+def _uds_path(port: int) -> str:
+    """Compute UDS socket path matching rps-server's convention."""
+    return os.path.join(tempfile.gettempdir(), f"rps-server-{port}.sock")
 
 
 class ServerManager:
@@ -102,6 +108,17 @@ class ServerManager:
             except (ConnectionRefusedError, OSError, socket.timeout):
                 time.sleep(0.2)
 
+        # Also verify the UDS socket file was created
+        uds = _uds_path(self.port)
+        if not os.path.exists(uds):
+            # Server started on TCP but UDS may not be ready yet —
+            # give it a brief extra wait
+            extra_deadline = time.monotonic() + 2.0
+            while time.monotonic() < extra_deadline:
+                if os.path.exists(uds):
+                    break
+                time.sleep(0.1)
+
         self.stop(in_hurry=True)
         raise TimeoutError(
             f"rps-server did not start within {timeout}s on port {self.port}"
@@ -135,7 +152,7 @@ class ServerManager:
             try:
                 from rps_client.proto import rps_pb2, rps_pb2_grpc
 
-                channel = grpc.insecure_channel(f"localhost:{self.port}")
+                channel = grpc.insecure_channel(self.uds_address)
                 stub = rps_pb2_grpc.RpsServiceStub(channel)
                 stub.Shutdown(rps_pb2.ShutdownRequest(), timeout=2)
                 channel.close()
@@ -169,6 +186,11 @@ class ServerManager:
     @property
     def address(self) -> str:
         return f"localhost:{self.port}"
+
+    @property
+    def uds_address(self) -> str:
+        """gRPC URI for the Unix domain socket."""
+        return f"unix:{_uds_path(self.port)}"
 
     @property
     def is_running(self) -> bool:

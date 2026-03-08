@@ -293,6 +293,7 @@ Client (Python/C++/etc.)  ──gRPC──▶  RpsServiceImpl  ──▶  ScanEn
 - **Logging**: `spdlog` with stderr + file sinks, controlled via `RPS_SERVER_LOGGING` / `RPS_SERVER_LOGLEVEL` environment variables (see §3.12).
 - **Shutdown**: `Shutdown` RPC triggers `grpc::Server::Shutdown()` asynchronously (after returning the response). Signal handlers (SIGINT/SIGTERM) also trigger graceful shutdown.
 - **Lifecycle**: Designed to be spawned and killed by a parent application. The Python example client demonstrates this pattern.
+- **Dual Transport (TCP + UDS)**: The server listens on both TCP (`0.0.0.0:{port}`) and Unix Domain Sockets (`{temp_dir}/rps-server-{port}.sock`) simultaneously. Local clients (managed mode) connect via UDS for lower-overhead IPC, bypassing the TCP/IP stack entirely. Remote clients connect via TCP as before. UDS is supported cross-platform (Linux, macOS, Windows 10+). Stale socket files are automatically removed on startup.
 
 ---
 
