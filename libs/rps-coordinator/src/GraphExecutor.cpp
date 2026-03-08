@@ -140,7 +140,10 @@ void GraphExecutor::processOutputNode(
     if (it != outputBuffers.end()) {
         it->second.copyFrom(*input);
     } else {
-        // Create a copy of the input as the output
+        // Fallback: auto-create if caller didn't pre-allocate.
+        // In the production audio path (GraphWorkerMain), outputs are always
+        // pre-allocated so this branch is never taken. It exists for unit tests
+        // and backwards compatibility.
         AudioBuffer copy(input->numChannels(), input->blockSize());
         copy.copyFrom(*input);
         outputBuffers.emplace(node.id, std::move(copy));

@@ -316,9 +316,34 @@ int GraphWorkerMain::run(int argc, char* argv[], HostFactory factory) {
                graph.config().sampleRate);
     }
 
+    // Pre-allocate per-node interleaved scratch buffers for plugin callbacks.
+    // These are allocated once here and reused every audio block — zero allocations
+    // in the hot path. (Phase 4: Real-Time Audio Path Hardening)
+    struct PluginScratch {
+        std::vector<float> interleavedIn;
+        std::vector<float> interleavedOut;
+    };
+    std::unordered_map<std::string, PluginScratch> pluginScratch;
+    for (const auto& [nodeId, host] : pluginHosts) {
+        const auto* node = graph.findNode(nodeId);
+        if (!node) continue;
+        uint32_t inCh = 2, outCh = 2;
+        if (!node->inputPorts.empty())
+            inCh = node->inputPorts[0].layout.effectiveChannelCount();
+        if (!node->outputPorts.empty())
+            outCh = node->outputPorts[0].layout.effectiveChannelCount();
+        if (inCh == 0) inCh = 2;
+        if (outCh == 0) outCh = 2;
+        uint32_t bs = graph.config().blockSize;
+        pluginScratch[nodeId] = {
+            std::vector<float>(inCh * bs),
+            std::vector<float>(outCh * bs)
+        };
+    }
+
     // Set up the graph executor with plugin callbacks
     GraphExecutor executor;
-    executor.prepare(graph, [&pluginHosts](
+    executor.prepare(graph, [&pluginHosts, &pluginScratch](
         const std::string& nodeId,
         const AudioBuffer& input,
         AudioBuffer& output) -> bool {
@@ -331,17 +356,19 @@ int GraphWorkerMain::run(int argc, char* argv[], HostFactory factory) {
         uint32_t outCh = output.numChannels();
         uint32_t bs = input.blockSize();
 
-        // Convert from deinterleaved to interleaved for the plugin
-        std::vector<float> interleavedIn(inCh * bs);
-        std::vector<float> interleavedOut(outCh * bs, 0.0f);
-        input.interleaveTo(interleavedIn.data());
+        // Use pre-allocated scratch buffers (no allocation in hot path)
+        auto scratchIt = pluginScratch.find(nodeId);
+        if (scratchIt == pluginScratch.end()) return false;
+        auto& scratch = scratchIt->second;
+        input.interleaveTo(scratch.interleavedIn.data());
+        std::fill(scratch.interleavedOut.begin(), scratch.interleavedOut.end(), 0.0f);
 
         // Process through the plugin (with SEH protection)
         bool processOk = true;
 #ifdef _WIN32
         [&]() {
             __try {
-                host->processAudioBlock(interleavedIn.data(), interleavedOut.data(),
+                host->processAudioBlock(scratch.interleavedIn.data(), scratch.interleavedOut.data(),
                                         inCh, outCh, bs);
             } __except(captureExceptionFilter(GetExceptionInformation())) {
                 spdlog::error("Plugin '{}' CRASH during process: {}", nodeId, formatSehException());
@@ -349,13 +376,13 @@ int GraphWorkerMain::run(int argc, char* argv[], HostFactory factory) {
             }
         }();
 #else
-        host->processAudioBlock(interleavedIn.data(), interleavedOut.data(),
+        host->processAudioBlock(scratch.interleavedIn.data(), scratch.interleavedOut.data(),
                                 inCh, outCh, bs);
 #endif
         if (!processOk) return false; // Fallback to passthrough
 
         // Convert back to deinterleaved
-        output.deinterleaveFrom(interleavedOut.data(), outCh, bs);
+        output.deinterleaveFrom(scratch.interleavedOut.data(), outCh, bs);
         return true;
     });
 
@@ -428,30 +455,37 @@ int GraphWorkerMain::run(int argc, char* argv[], HostFactory factory) {
         report(spdlog::level::info, "Audio I/O: input='{}', output='{}'", inputNodeId, outputNodeId);
         report(spdlog::level::info, "Processing... (Ctrl+C to stop)");
 
+        // Pre-allocate I/O buffers and maps ONCE (Phase 4: zero allocations in hot path)
+        AudioBuffer inputBuf(inChannels, blockSize);
+        std::unordered_map<std::string, AudioBuffer> inputs;
+        inputs.emplace(inputNodeId, AudioBuffer(inChannels, blockSize));
+        std::unordered_map<std::string, AudioBuffer> outputs;
+        // Determine output channel count from the graph
+        uint32_t outChannels = inChannels; // fallback
+        {
+            const auto* outNode = graph.findNode(outputNodeId);
+            if (outNode && !outNode->inputPorts.empty()) {
+                uint32_t ec = outNode->inputPorts[0].layout.effectiveChannelCount();
+                if (ec > 0) outChannels = ec;
+            }
+        }
+        outputs.emplace(outputNodeId, AudioBuffer(outChannels, blockSize));
+
         while (!g_shutdown.load(std::memory_order_relaxed)) {
             if (!audioRing->waitForInput(std::chrono::milliseconds(10))) continue;
             if (!audioRing->readInputBlock(inputInterleaved.data())) continue;
 
-            // Deinterleave input
-            AudioBuffer inputBuf(inChannels, blockSize);
-            inputBuf.deinterleaveFrom(inputInterleaved.data(), inChannels, blockSize);
+            // Deinterleave input into pre-allocated buffer
+            inputs[inputNodeId].deinterleaveFrom(inputInterleaved.data(), inChannels, blockSize);
 
-            // Prepare I/O maps
-            std::unordered_map<std::string, AudioBuffer> inputs;
-            inputs.emplace(inputNodeId, std::move(inputBuf));
-
-            std::unordered_map<std::string, AudioBuffer> outputs;
+            // Clear output buffer for reuse
+            outputs[outputNodeId].clear();
 
             // Process the graph
             executor.processBlock(inputs, outputs);
 
             // Interleave output
-            auto outIt = outputs.find(outputNodeId);
-            if (outIt != outputs.end()) {
-                outIt->second.interleaveTo(outputInterleaved.data());
-            } else {
-                std::fill(outputInterleaved.begin(), outputInterleaved.end(), 0.0f);
-            }
+            outputs[outputNodeId].interleaveTo(outputInterleaved.data());
 
             // Write output
             while (!g_shutdown.load(std::memory_order_relaxed)) {
