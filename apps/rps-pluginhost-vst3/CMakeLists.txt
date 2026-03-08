@@ -92,19 +92,3 @@ else()
     target_link_libraries(rps-pluginhost-vst3 PRIVATE dl)
 endif()
 
-# Copy on rebuild (POST_BUILD) and also ensure copies exist on every build (custom target)
-add_custom_command(TARGET rps-pluginhost-vst3 POST_BUILD
-    COMMAND ${CMAKE_COMMAND}
-        -DSRC=$<TARGET_FILE:rps-pluginhost-vst3>
-        -DDST=${CMAKE_SOURCE_DIR}/examples/python/$<TARGET_FILE_NAME:rps-pluginhost-vst3>
-        -P ${CMAKE_SOURCE_DIR}/cmake/try_copy.cmake
-    COMMENT "Copying rps-pluginhost-vst3 to example directories"
-)
-add_custom_target(copy-pluginhost-vst3 ALL
-    COMMAND ${CMAKE_COMMAND}
-        -DSRC=$<TARGET_FILE:rps-pluginhost-vst3>
-        -DDST=${CMAKE_SOURCE_DIR}/examples/python/$<TARGET_FILE_NAME:rps-pluginhost-vst3>
-        -P ${CMAKE_SOURCE_DIR}/cmake/try_copy.cmake
-    DEPENDS rps-pluginhost-vst3
-    COMMENT "Ensuring rps-pluginhost-vst3 is present in example directories"
-)

@@ -60,3 +60,5 @@ examples/python/*.wav
 examples/python/*.state
 examples/python/rps-pluginhost.exe
 examples/python/test.state
+libs/rps-gui/src/GuiWorkerMain.cpp
+examples/python/rps-pluginhost.log

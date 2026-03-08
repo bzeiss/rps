@@ -200,18 +200,20 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
     try {
         auto consoleSink = std::make_shared<spdlog::sinks::stderr_color_sink_mt>();
         auto fileSink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(
-            "rps-pluginhost-" + format + ".log", true);
+            "rps-pluginhost.log", true);
         auto logger = std::make_shared<spdlog::logger>(
             "pluginhost", spdlog::sinks_init_list{consoleSink, fileSink});
         logger->set_level(spdlog::level::debug);
         logger->flush_on(spdlog::level::debug);  // Flush every message for crash diagnostics
+        // Include format in every log line for easy identification
+        logger->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] [" + format + "] %v");
         spdlog::set_default_logger(logger);
     } catch (...) {
         // Fall back to default logger
         spdlog::set_level(spdlog::level::debug);
     }
 
-    spdlog::info("=== rps-pluginhost-{} starting ===", format);
+    spdlog::info("=== rps-pluginhost [{}] starting ===", format);
     spdlog::info("  ipc-id: {}", ipcId);
     spdlog::info("  plugin-path: {}", pluginPath);
 
