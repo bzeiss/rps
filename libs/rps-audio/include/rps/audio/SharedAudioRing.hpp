@@ -7,6 +7,15 @@
 #include <optional>
 #include <string>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <Windows.h>
+#else
+#include <semaphore.h>
+#endif
+
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable: 4100)
@@ -148,8 +157,27 @@ private:
     float* m_inputRing = nullptr;   // ringBlocks × blockSize × numChannels floats
     float* m_outputRing = nullptr;  // ringBlocks × blockSize × numChannels floats
 
+    // OS event handles for cross-process signaling.
+    // Named events allow the producer and consumer in separate processes to
+    // wake each other with ~1-5μs latency instead of 1-15ms spin-poll-sleep.
+#ifdef _WIN32
+    HANDLE m_inputEvent = nullptr;   // Auto-reset: signaled when input data written
+    HANDLE m_outputEvent = nullptr;  // Auto-reset: signaled when output data written
+#else
+    sem_t* m_inputSem = SEM_FAILED;  // Named POSIX semaphore for input
+    sem_t* m_outputSem = SEM_FAILED; // Named POSIX semaphore for output
+#endif
+    std::string m_inputEventName;
+    std::string m_outputEventName;
+    bool m_isCreator = false;  // true if this instance created the events (for cleanup)
+
     /// Initialize cached pointers after mapping.
     void initPointers();
+
+    /// Create or open named OS events for cross-process signaling.
+    void createEvents(const std::string& baseName);
+    void openEvents(const std::string& baseName);
+    void closeEvents();
 
     /// Get pointer to a specific block in a ring.
     float* blockPtr(float* ringBase, uint64_t blockIndex) const;

@@ -81,6 +81,10 @@ if sys.platform == "win32":
     _kernel32 = ctypes.windll.kernel32
 
     FILE_MAP_ALL_ACCESS = 0x000F001F
+    EVENT_MODIFY_STATE = 0x0002
+    SYNCHRONIZE = 0x00100000
+    WAIT_OBJECT_0 = 0
+    INFINITE = 0xFFFFFFFF
 
     _kernel32.OpenFileMappingW.restype = ctypes.c_void_p
     _kernel32.OpenFileMappingW.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_wchar_p]
@@ -95,6 +99,15 @@ if sys.platform == "win32":
 
     _kernel32.CloseHandle.restype = ctypes.c_int
     _kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+
+    _kernel32.OpenEventW.restype = ctypes.c_void_p
+    _kernel32.OpenEventW.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_wchar_p]
+
+    _kernel32.SetEvent.restype = ctypes.c_int
+    _kernel32.SetEvent.argtypes = [ctypes.c_void_p]
+
+    _kernel32.WaitForSingleObject.restype = ctypes.c_uint32
+    _kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
 
 
 class AudioRing:
@@ -115,6 +128,24 @@ class AudioRing:
             self._open_windows(shm_name)
         else:
             self._open_posix(shm_name)
+
+        # Open named OS events for cross-process signaling.
+        # These must match the names created by SharedAudioRing::createEvents() in C++.
+        self._input_event = None
+        self._output_event = None
+        if sys.platform == "win32":
+            input_name = f"rps-audio-{shm_name}-input"
+            output_name = f"rps-audio-{shm_name}-output"
+            self._input_event = _kernel32.OpenEventW(
+                EVENT_MODIFY_STATE | SYNCHRONIZE, False, input_name
+            )
+            self._output_event = _kernel32.OpenEventW(
+                EVENT_MODIFY_STATE | SYNCHRONIZE, False, output_name
+            )
+            if not self._input_event or not self._output_event:
+                # Events not available yet (race) or not supported — fall back to polling
+                self._input_event = None
+                self._output_event = None
 
         # Parse header
         raw = bytes(self._buf[0:HEADER_SIZE])
@@ -181,8 +212,14 @@ class AudioRing:
         os.close(fd)
 
     def close(self) -> None:
-        """Unmap the shared memory."""
+        """Unmap the shared memory and close event handles."""
         if sys.platform == "win32":
+            if self._input_event:
+                _kernel32.CloseHandle(self._input_event)
+                self._input_event = None
+            if self._output_event:
+                _kernel32.CloseHandle(self._output_event)
+                self._output_event = None
             if self._win_view:
                 _kernel32.UnmapViewOfFile(self._win_view)
                 self._win_view = None
@@ -216,6 +253,11 @@ class AudioRing:
             ctypes.memmove(ctypes.addressof(self._buf) + offset, data, self.block_bytes)
 
         _write_u64(self._buf, OFF_INPUT_WRITE_POS, wp + 1)
+
+        # Signal the consumer that input data is available
+        if self._input_event:
+            _kernel32.SetEvent(self._input_event)
+
         return True
 
     def read_output_block(self) -> Optional[bytes]:
@@ -243,11 +285,25 @@ class AudioRing:
     def wait_for_output(self, timeout_ms: int = 1000) -> bool:
         """Wait until output data is available or timeout."""
         assert self._buf is not None
+
+        # Fast path: data already available (no syscall)
+        if _read_u64(self._buf, OFF_OUTPUT_WRITE_POS) > _read_u64(self._buf, OFF_OUTPUT_READ_POS):
+            return True
+
+        # OS event wait — ~1-5μs wake-up latency instead of 1-15ms polling
+        if self._output_event:
+            result = _kernel32.WaitForSingleObject(self._output_event, timeout_ms)
+            if result == WAIT_OBJECT_0:
+                return (
+                    _read_u64(self._buf, OFF_OUTPUT_WRITE_POS)
+                    > _read_u64(self._buf, OFF_OUTPUT_READ_POS)
+                )
+            return False
+
+        # Fallback: polling (POSIX or if events unavailable)
         deadline = time.monotonic() + timeout_ms / 1000.0
         while time.monotonic() < deadline:
-            rp = _read_u64(self._buf, OFF_OUTPUT_READ_POS)
-            wp = _read_u64(self._buf, OFF_OUTPUT_WRITE_POS)
-            if wp > rp:
+            if _read_u64(self._buf, OFF_OUTPUT_WRITE_POS) > _read_u64(self._buf, OFF_OUTPUT_READ_POS):
                 return True
             time.sleep(0.0001)
         return False

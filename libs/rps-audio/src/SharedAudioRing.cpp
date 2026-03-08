@@ -6,6 +6,11 @@
 #include <stdexcept>
 #include <thread>
 
+#ifndef _WIN32
+#include <fcntl.h>
+#include <time.h>
+#endif
+
 namespace bip = boost::interprocess;
 
 namespace rps::audio {
@@ -27,7 +32,9 @@ static size_t computeSegmentSize(uint32_t blockSize, uint32_t numChannels, uint3
 // SharedAudioRing implementation
 // ---------------------------------------------------------------------------
 
-SharedAudioRing::~SharedAudioRing() = default;
+SharedAudioRing::~SharedAudioRing() {
+    closeEvents();
+}
 
 std::unique_ptr<SharedAudioRing> SharedAudioRing::create(
     const std::string& name,
@@ -84,6 +91,10 @@ std::unique_ptr<SharedAudioRing> SharedAudioRing::create(
 
     ring->initPointers();
 
+    // Create named OS events for cross-process signaling
+    ring->m_isCreator = true;
+    ring->createEvents(name);
+
     spdlog::info("SharedAudioRing created: header={}B, per-ring={}B",
                  sizeof(AudioSegmentHeader),
                  static_cast<size_t>(ringBlocks) * blockSize * numChannels * sizeof(float));
@@ -119,6 +130,10 @@ std::unique_ptr<SharedAudioRing> SharedAudioRing::open(const std::string& name) 
 
     ring->initPointers();
 
+    // Open named OS events created by the server
+    ring->m_isCreator = false;
+    ring->openEvents(name);
+
     spdlog::info("SharedAudioRing opened: sr={}, bs={}, ch={}, rings={}",
                  ring->m_header->sampleRate, ring->m_header->blockSize,
                  ring->m_header->numChannels, ring->m_header->ringBlocks);
@@ -127,10 +142,15 @@ std::unique_ptr<SharedAudioRing> SharedAudioRing::open(const std::string& name) 
 }
 
 void SharedAudioRing::remove(const std::string& name) {
-#ifndef _WIN32
-    bip::shared_memory_object::remove(name.c_str());
+#ifdef _WIN32
+    (void)name; // Windows kernel manages event/shm lifetime
 #else
-    (void)name; // Windows kernel manages lifetime
+    bip::shared_memory_object::remove(name.c_str());
+    // Also clean up named semaphores
+    std::string inputName = "/rps-audio-" + name + "-input";
+    std::string outputName = "/rps-audio-" + name + "-output";
+    sem_unlink(inputName.c_str());
+    sem_unlink(outputName.c_str());
 #endif
 }
 
@@ -183,6 +203,14 @@ bool SharedAudioRing::writeInputBlock(const float* interleavedData) {
     std::memcpy(dst, interleavedData, blockSizeBytes());
 
     m_header->inputWritePos.store(wp + 1, std::memory_order_release);
+
+    // Signal the consumer that input data is available
+#ifdef _WIN32
+    if (m_inputEvent) SetEvent(m_inputEvent);
+#else
+    if (m_inputSem != SEM_FAILED) sem_post(m_inputSem);
+#endif
+
     return true;
 }
 
@@ -218,6 +246,14 @@ bool SharedAudioRing::writeOutputBlock(const float* interleavedData) {
     std::memcpy(dst, interleavedData, blockSizeBytes());
 
     m_header->outputWritePos.store(wp + 1, std::memory_order_release);
+
+    // Signal the consumer that output data is available
+#ifdef _WIN32
+    if (m_outputEvent) SetEvent(m_outputEvent);
+#else
+    if (m_outputSem != SEM_FAILED) sem_post(m_outputSem);
+#endif
+
     return true;
 }
 
@@ -237,55 +273,204 @@ bool SharedAudioRing::readOutputBlock(float* interleavedData) {
 }
 
 // ---------------------------------------------------------------------------
-// Blocking waits — spin-then-yield strategy
-// Phase 1: Python is the clock, so spin-wait is acceptable.
-// Future DAW: audio device callback replaces this (no waiting needed).
+// Blocking waits — OS event signaling for ~1-5μs wake-up latency.
+// Replaces the previous spin-poll-sleep strategy which suffered from
+// Windows timer resolution (sleep_for(10μs) → actual 1-15ms sleep).
 // ---------------------------------------------------------------------------
 
 bool SharedAudioRing::waitForInput(std::chrono::milliseconds timeout) {
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
-    int spins = 0;
-
-    while (true) {
-        const uint64_t rp = m_header->inputReadPos.load(std::memory_order_relaxed);
-        const uint64_t wp = m_header->inputWritePos.load(std::memory_order_acquire);
-        if (wp > rp) return true;
-
-        if (std::chrono::steady_clock::now() >= deadline) return false;
-
-        // Spin for a bit, then yield, then sleep briefly
-        if (spins < 100) {
-            ++spins;
-            // Busy spin
-        } else if (spins < 200) {
-            ++spins;
-            std::this_thread::yield();
-        } else {
-            std::this_thread::sleep_for(std::chrono::microseconds(10));
-        }
+    // Fast path: data already available (no syscall)
+    if (m_header->inputWritePos.load(std::memory_order_acquire)
+        > m_header->inputReadPos.load(std::memory_order_relaxed)) {
+        return true;
     }
+
+    // Slow path: wait on OS event
+#ifdef _WIN32
+    if (m_inputEvent) {
+        DWORD result = WaitForSingleObject(m_inputEvent, static_cast<DWORD>(timeout.count()));
+        if (result == WAIT_OBJECT_0) {
+            // Re-check atomic — auto-reset events can fire spuriously if
+            // multiple signals collapse into one
+            return m_header->inputWritePos.load(std::memory_order_acquire)
+                   > m_header->inputReadPos.load(std::memory_order_relaxed);
+        }
+        return false;
+    }
+#else
+    if (m_inputSem != SEM_FAILED) {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_nsec += (timeout.count() % 1000) * 1'000'000;
+        ts.tv_sec += timeout.count() / 1000 + ts.tv_nsec / 1'000'000'000;
+        ts.tv_nsec %= 1'000'000'000;
+        if (sem_timedwait(m_inputSem, &ts) == 0) {
+            return m_header->inputWritePos.load(std::memory_order_acquire)
+                   > m_header->inputReadPos.load(std::memory_order_relaxed);
+        }
+        return false;
+    }
+#endif
+
+    // Fallback if events weren't available: spin-yield
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (m_header->inputWritePos.load(std::memory_order_acquire)
+            > m_header->inputReadPos.load(std::memory_order_relaxed)) {
+            return true;
+        }
+        std::this_thread::yield();
+    }
+    return false;
 }
 
 bool SharedAudioRing::waitForOutput(std::chrono::milliseconds timeout) {
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
-    int spins = 0;
-
-    while (true) {
-        const uint64_t rp = m_header->outputReadPos.load(std::memory_order_relaxed);
-        const uint64_t wp = m_header->outputWritePos.load(std::memory_order_acquire);
-        if (wp > rp) return true;
-
-        if (std::chrono::steady_clock::now() >= deadline) return false;
-
-        if (spins < 100) {
-            ++spins;
-        } else if (spins < 200) {
-            ++spins;
-            std::this_thread::yield();
-        } else {
-            std::this_thread::sleep_for(std::chrono::microseconds(10));
-        }
+    // Fast path: data already available (no syscall)
+    if (m_header->outputWritePos.load(std::memory_order_acquire)
+        > m_header->outputReadPos.load(std::memory_order_relaxed)) {
+        return true;
     }
+
+    // Slow path: wait on OS event
+#ifdef _WIN32
+    if (m_outputEvent) {
+        DWORD result = WaitForSingleObject(m_outputEvent, static_cast<DWORD>(timeout.count()));
+        if (result == WAIT_OBJECT_0) {
+            return m_header->outputWritePos.load(std::memory_order_acquire)
+                   > m_header->outputReadPos.load(std::memory_order_relaxed);
+        }
+        return false;
+    }
+#else
+    if (m_outputSem != SEM_FAILED) {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_nsec += (timeout.count() % 1000) * 1'000'000;
+        ts.tv_sec += timeout.count() / 1000 + ts.tv_nsec / 1'000'000'000;
+        ts.tv_nsec %= 1'000'000'000;
+        if (sem_timedwait(m_outputSem, &ts) == 0) {
+            return m_header->outputWritePos.load(std::memory_order_acquire)
+                   > m_header->outputReadPos.load(std::memory_order_relaxed);
+        }
+        return false;
+    }
+#endif
+
+    // Fallback
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (m_header->outputWritePos.load(std::memory_order_acquire)
+            > m_header->outputReadPos.load(std::memory_order_relaxed)) {
+            return true;
+        }
+        std::this_thread::yield();
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// OS event lifecycle — named events for cross-process signaling
+// ---------------------------------------------------------------------------
+
+void SharedAudioRing::createEvents(const std::string& baseName) {
+#ifdef _WIN32
+    // Use wide strings for Windows named events.
+    // Auto-reset events: WaitForSingleObject automatically resets to non-signaled.
+    m_inputEventName = "rps-audio-" + baseName + "-input";
+    m_outputEventName = "rps-audio-" + baseName + "-output";
+
+    std::wstring wInput(m_inputEventName.begin(), m_inputEventName.end());
+    std::wstring wOutput(m_outputEventName.begin(), m_outputEventName.end());
+
+    m_inputEvent = CreateEventW(nullptr, FALSE /*auto-reset*/, FALSE /*initial*/, wInput.c_str());
+    m_outputEvent = CreateEventW(nullptr, FALSE, FALSE, wOutput.c_str());
+
+    if (!m_inputEvent || !m_outputEvent) {
+        spdlog::warn("Failed to create audio events (error {}), falling back to polling",
+                     GetLastError());
+        closeEvents();
+    } else {
+        spdlog::info("Created audio events: '{}', '{}'", m_inputEventName, m_outputEventName);
+    }
+#else
+    m_inputEventName = "/rps-audio-" + baseName + "-input";
+    m_outputEventName = "/rps-audio-" + baseName + "-output";
+
+    // Remove stale semaphores from previous runs
+    sem_unlink(m_inputEventName.c_str());
+    sem_unlink(m_outputEventName.c_str());
+
+    m_inputSem = sem_open(m_inputEventName.c_str(), O_CREAT | O_EXCL, 0644, 0);
+    m_outputSem = sem_open(m_outputEventName.c_str(), O_CREAT | O_EXCL, 0644, 0);
+
+    if (m_inputSem == SEM_FAILED || m_outputSem == SEM_FAILED) {
+        spdlog::warn("Failed to create audio semaphores, falling back to polling");
+        closeEvents();
+    } else {
+        spdlog::info("Created audio semaphores: '{}', '{}'", m_inputEventName, m_outputEventName);
+    }
+#endif
+}
+
+void SharedAudioRing::openEvents(const std::string& baseName) {
+#ifdef _WIN32
+    m_inputEventName = "rps-audio-" + baseName + "-input";
+    m_outputEventName = "rps-audio-" + baseName + "-output";
+
+    std::wstring wInput(m_inputEventName.begin(), m_inputEventName.end());
+    std::wstring wOutput(m_outputEventName.begin(), m_outputEventName.end());
+
+    m_inputEvent = OpenEventW(EVENT_MODIFY_STATE | SYNCHRONIZE, FALSE, wInput.c_str());
+    m_outputEvent = OpenEventW(EVENT_MODIFY_STATE | SYNCHRONIZE, FALSE, wOutput.c_str());
+
+    if (!m_inputEvent || !m_outputEvent) {
+        spdlog::warn("Failed to open audio events (error {}), falling back to polling",
+                     GetLastError());
+        closeEvents();
+    } else {
+        spdlog::info("Opened audio events: '{}', '{}'", m_inputEventName, m_outputEventName);
+    }
+#else
+    m_inputEventName = "/rps-audio-" + baseName + "-input";
+    m_outputEventName = "/rps-audio-" + baseName + "-output";
+
+    m_inputSem = sem_open(m_inputEventName.c_str(), 0);
+    m_outputSem = sem_open(m_outputEventName.c_str(), 0);
+
+    if (m_inputSem == SEM_FAILED || m_outputSem == SEM_FAILED) {
+        spdlog::warn("Failed to open audio semaphores, falling back to polling");
+        closeEvents();
+    } else {
+        spdlog::info("Opened audio semaphores: '{}', '{}'", m_inputEventName, m_outputEventName);
+    }
+#endif
+}
+
+void SharedAudioRing::closeEvents() {
+#ifdef _WIN32
+    if (m_inputEvent) {
+        CloseHandle(m_inputEvent);
+        m_inputEvent = nullptr;
+    }
+    if (m_outputEvent) {
+        CloseHandle(m_outputEvent);
+        m_outputEvent = nullptr;
+    }
+#else
+    if (m_inputSem != SEM_FAILED) {
+        sem_close(m_inputSem);
+        m_inputSem = SEM_FAILED;
+    }
+    if (m_outputSem != SEM_FAILED) {
+        sem_close(m_outputSem);
+        m_outputSem = SEM_FAILED;
+    }
+    // Only unlink if we created them (server side)
+    if (m_isCreator) {
+        if (!m_inputEventName.empty()) sem_unlink(m_inputEventName.c_str());
+        if (!m_outputEventName.empty()) sem_unlink(m_outputEventName.c_str());
+    }
+#endif
 }
 
 } // namespace rps::audio
