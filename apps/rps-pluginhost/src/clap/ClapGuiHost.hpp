@@ -26,10 +26,13 @@ public:
     ~ClapGuiHost() override;
 
     OpenResult open(const boost::filesystem::path& pluginPath) override;
+    void loadPlugin(const boost::filesystem::path& pluginPath) override;
     void runEventLoop(
         std::function<void(const std::string& reason)> closedCb,
         std::function<void(std::vector<rps::ipc::ParameterValueUpdate>)> paramChangeCb = nullptr) override;
     void requestClose() override;
+    void destroyGui() override;
+    std::string getPluginName() const override { return m_pluginName; }
     std::vector<rps::ipc::PluginParameterInfo> getParameters() override;
     std::vector<rps::ipc::ParameterValueUpdate> pollParameterChanges() override;
     rps::ipc::GetStateResponse saveState() override;
@@ -84,10 +87,6 @@ private:
 
     void cleanup();
     void discoverPresets();  // Crawl CLAP preset discovery factory
-
-    /// Internal: loads the CLAP DLL, creates plugin instance, queries extensions.
-    /// Does NOT create any GUI. Called by open().
-    void loadPlugin(const boost::filesystem::path& pluginPath);
 
     // Audio processing state
     const clap_plugin_audio_ports* m_audioPorts = nullptr;

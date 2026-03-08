@@ -73,6 +73,10 @@ public:
     /// Post a quit event from another thread, causing pollEvents() to return false.
     void requestClose();
 
+    /// Destroy the SDL window and renderer, releasing all GPU resources.
+    /// Safe to call multiple times. After this, create() can be called again.
+    void destroy();
+
     /// Get the current window size (excluding sidebar and toolbar).
     void getSize(uint32_t& width, uint32_t& height) const;
 

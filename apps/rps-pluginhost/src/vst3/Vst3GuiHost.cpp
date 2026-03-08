@@ -474,6 +474,16 @@ void Vst3GuiHost::teardownAudioProcessing() {
     m_outputPtrs.clear();
 }
 
+void Vst3GuiHost::destroyGui() {
+    spdlog::info("Vst3GuiHost::destroyGui()");
+    if (m_view) {
+        m_view->setFrame(nullptr);
+        m_view->removed();
+        m_view = nullptr;
+    }
+    m_window.destroy();
+}
+
 void Vst3GuiHost::cleanup() {
     spdlog::debug("Vst3GuiHost::cleanup()");
 
@@ -659,8 +669,10 @@ void Vst3GuiHost::loadPlugin(const boost::filesystem::path& pluginPath) {
 rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::path& pluginPath) {
     spdlog::info("Vst3GuiHost::open({})", pluginPath.string());
 
-    // Load the plugin (module, component, controller)
-    loadPlugin(pluginPath);
+    // Load the plugin if not already loaded (headless-first flow calls loadPlugin first)
+    if (!m_component) {
+        loadPlugin(pluginPath);
+    }
 
     // Connect component and controller via IConnectionPoint.
     // Direct connection is needed during initialization — JUCE plugins

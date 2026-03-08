@@ -45,10 +45,13 @@ public:
     ~Vst3GuiHost() override;
 
     OpenResult open(const boost::filesystem::path& pluginPath) override;
+    void loadPlugin(const boost::filesystem::path& pluginPath) override;
     void runEventLoop(
         std::function<void(const std::string& reason)> closedCb,
         std::function<void(std::vector<rps::ipc::ParameterValueUpdate>)> paramChangeCb = nullptr) override;
     void requestClose() override;
+    void destroyGui() override;
+    std::string getPluginName() const override { return m_pluginName; }
     std::vector<rps::ipc::PluginParameterInfo> getParameters() override;
     std::vector<rps::ipc::ParameterValueUpdate> pollParameterChanges() override;
     rps::ipc::GetStateResponse saveState() override;
@@ -135,10 +138,6 @@ private:
     std::vector<std::vector<float*>> m_extraOutputBusPtrs;
 
     void cleanup();
-
-    /// Internal: loads the VST3 module, creates component/controller, syncs state.
-    /// Does NOT create any GUI. Called by open().
-    void loadPlugin(const boost::filesystem::path& pluginPath);
 };
 
 } // namespace rps::scanner

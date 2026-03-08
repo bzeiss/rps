@@ -173,6 +173,41 @@ CloseGuiRequest tag_invoke(boost::json::value_to_tag<CloseGuiRequest>, const boo
     return {};
 }
 
+// --- Headless-first lifecycle messages ---
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const PluginLoadedEvent& evt) {
+    jv = {
+        {"pluginName", evt.pluginName},
+        {"pluginVendor", evt.pluginVendor},
+        {"hasGui", evt.hasGui}
+    };
+}
+
+PluginLoadedEvent tag_invoke(boost::json::value_to_tag<PluginLoadedEvent>, const boost::json::value& jv) {
+    auto const& obj = jv.as_object();
+    PluginLoadedEvent evt;
+    evt.pluginName = boost::json::value_to<std::string>(obj.at("pluginName"));
+    if (obj.contains("pluginVendor")) evt.pluginVendor = boost::json::value_to<std::string>(obj.at("pluginVendor"));
+    evt.hasGui = obj.contains("hasGui") && obj.at("hasGui").as_bool();
+    return evt;
+}
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const ShowGuiRequest&) {
+    jv = boost::json::object{};
+}
+
+ShowGuiRequest tag_invoke(boost::json::value_to_tag<ShowGuiRequest>, const boost::json::value&) {
+    return {};
+}
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const CloseSessionRequest&) {
+    jv = boost::json::object{};
+}
+
+CloseSessionRequest tag_invoke(boost::json::value_to_tag<CloseSessionRequest>, const boost::json::value&) {
+    return {};
+}
+
 // --- Parameter streaming messages ---
 
 void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const PluginParameterInfo& p) {
@@ -529,6 +564,15 @@ Message tag_invoke(boost::json::value_to_tag<Message>, const boost::json::value&
             break;
         case MessageType::PresetLoadedEvent:
             msg.payload = boost::json::value_to<PresetLoadedEvent>(payload_val);
+            break;
+        case MessageType::PluginLoadedEvent:
+            msg.payload = boost::json::value_to<PluginLoadedEvent>(payload_val);
+            break;
+        case MessageType::ShowGuiRequest:
+            msg.payload = boost::json::value_to<ShowGuiRequest>(payload_val);
+            break;
+        case MessageType::CloseSessionRequest:
+            msg.payload = boost::json::value_to<CloseSessionRequest>(payload_val);
             break;
         default:
             throw std::runtime_error("Unknown MessageType");

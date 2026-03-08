@@ -37,6 +37,10 @@ bool sdlEventWatcher(void* userdata, SDL_Event* event) {
 SdlWindow::SdlWindow() = default;
 
 SdlWindow::~SdlWindow() {
+    destroy();
+}
+
+void SdlWindow::destroy() {
     shutdownImGui();
     if (m_renderer) {
         SDL_DestroyRenderer(m_renderer);
@@ -47,10 +51,14 @@ SdlWindow::~SdlWindow() {
         SDL_DestroyWindow(m_window);
         m_window = nullptr;
     }
+    // Flush any stale quit/close events so they don't affect the next window
+    SDL_FlushEvents(SDL_EVENT_FIRST, SDL_EVENT_LAST);
 }
 
 void SdlWindow::create(const std::string& title, uint32_t width, uint32_t height,
                         bool resizable, bool enableSidebar) {
+    // Flush any stale events from a previous window
+    SDL_FlushEvents(SDL_EVENT_FIRST, SDL_EVENT_LAST);
     m_sidebarEnabled = enableSidebar;
 
     // If sidebar is enabled, make the window wider/taller to accommodate sidebar + toolbar

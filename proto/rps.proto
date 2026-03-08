@@ -23,8 +23,14 @@ service RpsService {
   // Returns a stream of GUI lifecycle events until the GUI is closed.
   rpc OpenPluginGui(OpenPluginGuiRequest) returns (stream PluginEvent);
 
-  // Close a currently open plugin GUI.
+  // Close a currently open plugin GUI (window closes, session stays alive).
   rpc ClosePluginGui(ClosePluginGuiRequest) returns (ClosePluginGuiResponse);
+
+  // Show the GUI window for a headless plugin session.
+  rpc ShowPluginGui(ShowPluginGuiRequest) returns (ShowPluginGuiResponse);
+
+  // Close the entire plugin session (terminates the host process).
+  rpc ClosePluginSession(ClosePluginSessionRequest) returns (ClosePluginSessionResponse);
 
   // Get the complete state of a running plugin GUI as an opaque binary blob.
   rpc GetPluginState(GetPluginStateRequest) returns (GetPluginStateResponse);
@@ -284,6 +290,22 @@ message ClosePluginGuiRequest {
 }
 
 message ClosePluginGuiResponse {
+  bool was_open = 1;
+}
+
+message ShowPluginGuiRequest {
+  string plugin_path = 1;
+}
+
+message ShowPluginGuiResponse {
+  bool success = 1;
+}
+
+message ClosePluginSessionRequest {
+  string plugin_path = 1;
+}
+
+message ClosePluginSessionResponse {
   bool was_open = 1;
 }
 

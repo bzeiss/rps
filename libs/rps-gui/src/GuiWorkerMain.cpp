@@ -226,39 +226,30 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
     }
     spdlog::info("IPC connected");
 
-    // Initialize SDL3 subsystems
+    // Initialize SDL3 — only audio subsystem if needed; VIDEO deferred to ShowGui
     const std::string audioDeviceBackend = vm.count("audio-device")
         ? vm["audio-device"].as<std::string>() : "";
 
-    uint32_t sdlInitFlags = SDL_INIT_VIDEO;
     if (audioDeviceBackend == "sdl3") {
-        sdlInitFlags |= SDL_INIT_AUDIO;
+        spdlog::info("Initializing SDL3 audio subsystem...");
+        if (!SDL_Init(SDL_INIT_AUDIO)) {
+            spdlog::error("SDL_Init(AUDIO) failed: {}", SDL_GetError());
+        } else {
+            spdlog::info("SDL3 audio initialized");
+        }
     }
-
-    spdlog::info("Initializing SDL3...");
-    if (!SDL_Init(sdlInitFlags)) {
-        spdlog::error("SDL_Init failed: {}", SDL_GetError());
-
-        // Send error back via IPC
-        rps::ipc::Message errMsg;
-        errMsg.type = rps::ipc::MessageType::GuiClosedEvent;
-        errMsg.payload = rps::ipc::GuiClosedEvent{"crash"};
-        connection->sendMessage(errMsg);
-        return 1;
-    }
-    spdlog::info("SDL3 initialized");
 
     try {
-        // Open the plugin GUI
-        spdlog::info("Opening plugin GUI...");
-        auto result = host->open(boost::filesystem::path(pluginPath));
-        spdlog::info("Plugin GUI opened: '{}' ({}x{})", result.name, result.width, result.height);
+        // Load the plugin headlessly (no GUI, no window)
+        spdlog::info("Loading plugin (headless)...");
+        host->loadPlugin(boost::filesystem::path(pluginPath));
+        spdlog::info("Plugin loaded: '{}'", host->getPluginName());
 
-        // Send GuiOpenedEvent
-        rps::ipc::Message openedMsg;
-        openedMsg.type = rps::ipc::MessageType::GuiOpenedEvent;
-        openedMsg.payload = rps::ipc::GuiOpenedEvent{result.name, result.width, result.height};
-        connection->sendMessage(openedMsg);
+        // Send PluginLoadedEvent
+        rps::ipc::Message loadedMsg;
+        loadedMsg.type = rps::ipc::MessageType::PluginLoadedEvent;
+        loadedMsg.payload = rps::ipc::PluginLoadedEvent{host->getPluginName(), "", true};
+        connection->sendMessage(loadedMsg);
 
         // Query and send full parameter list
         auto params = host->getParameters();
@@ -613,123 +604,224 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
             }
         }
 
-        // Run the GUI event loop — this blocks until the window is closed
-        // We also need to poll IPC for CloseGuiRequest
-        std::atomic<bool> ipcClosed{false};
+        // =================================================================
+        // Headless IPC command loop — process stays alive here.
+        // GUI is opened on demand via ShowGuiRequest.
+        // =================================================================
+        spdlog::info("Entering headless IPC command loop...");
+        bool sessionRunning = true;
 
-        // IPC listener thread: watches for CloseGuiRequest and state commands
-        std::thread ipcThread([&]() {
-            while (!ipcClosed.load(std::memory_order_relaxed)) {
-                auto msg = connection->receiveMessage(200);
+        while (sessionRunning) {
+            auto msg = connection->receiveMessage(200);
 
-                // Check for async preset enrichment completion
-                if (host->hasEnrichedPresets()) {
-                    auto enriched = host->getEnrichedPresets();
-                    spdlog::info("Sending enriched PresetListEvent ({} presets)", enriched.size());
-                    rps::ipc::Message presetMsg;
-                    presetMsg.type = rps::ipc::MessageType::PresetListEvent;
-                    presetMsg.payload = rps::ipc::PresetListEvent{std::move(enriched)};
-                    connection->sendMessage(presetMsg);
-                }
-
-                if (!msg) continue;
-
-                if (msg->type == rps::ipc::MessageType::CloseGuiRequest) {
-                    spdlog::info("Received CloseGuiRequest via IPC");
-                    host->requestClose();
-                    break;
-                }
-
-                if (msg->type == rps::ipc::MessageType::GetStateRequest) {
-                    spdlog::info("Received GetStateRequest via IPC");
-                    auto resp = host->saveState();
-                    rps::ipc::Message respMsg;
-                    respMsg.type = rps::ipc::MessageType::GetStateResponse;
-                    respMsg.payload = std::move(resp);
-                    connection->sendMessage(respMsg);
-                    continue;
-                }
-
-                if (msg->type == rps::ipc::MessageType::SetStateRequest) {
-                    spdlog::info("Received SetStateRequest via IPC");
-                    auto& req = std::get<rps::ipc::SetStateRequest>(msg->payload);
-                    auto resp = host->loadState(req.stateData);
-                    rps::ipc::Message respMsg;
-                    respMsg.type = rps::ipc::MessageType::SetStateResponse;
-                    respMsg.payload = std::move(resp);
-                    connection->sendMessage(respMsg);
-
-                    // After successful state load, re-send parameter list
-                    if (resp.success) {
-                        auto params = host->getParameters();
-                        spdlog::info("Re-sending ParameterListEvent ({} params) after state restore", params.size());
-                        rps::ipc::Message paramMsg;
-                        paramMsg.type = rps::ipc::MessageType::ParameterListEvent;
-                        paramMsg.payload = rps::ipc::ParameterListEvent{std::move(params)};
-                        connection->sendMessage(paramMsg);
-                    }
-                    continue;
-                }
-
-                if (msg->type == rps::ipc::MessageType::LoadPresetRequest) {
-                    spdlog::info("Received LoadPresetRequest via IPC");
-                    auto& req = std::get<rps::ipc::LoadPresetRequest>(msg->payload);
-                    auto resp = host->loadPreset(req.presetId);
-                    rps::ipc::Message respMsg;
-                    respMsg.type = rps::ipc::MessageType::LoadPresetResponse;
-                    respMsg.payload = std::move(resp);
-                    connection->sendMessage(respMsg);
-
-                    // After successful preset load, re-send parameter list
-                    if (resp.success) {
-                        auto params = host->getParameters();
-                        spdlog::info("Re-sending ParameterListEvent ({} params) after preset load", params.size());
-                        rps::ipc::Message paramMsg;
-                        paramMsg.type = rps::ipc::MessageType::ParameterListEvent;
-                        paramMsg.payload = rps::ipc::ParameterListEvent{std::move(params)};
-                        connection->sendMessage(paramMsg);
-                    }
-                    continue;
-                }
+            // Check for async preset enrichment completion
+            if (host->hasEnrichedPresets()) {
+                auto enriched = host->getEnrichedPresets();
+                spdlog::info("Sending enriched PresetListEvent ({} presets)", enriched.size());
+                rps::ipc::Message presetMsg;
+                presetMsg.type = rps::ipc::MessageType::PresetListEvent;
+                presetMsg.payload = rps::ipc::PresetListEvent{std::move(enriched)};
+                connection->sendMessage(presetMsg);
             }
-        });
 
-        spdlog::info("Entering GUI event loop (with parameter polling)...");
-        std::string closeReason;
+            if (!msg) continue;
 
-        // Wire toolbar bypass/delta callbacks to the audio thread atomics
-        host->setToolbarCallbacks(rps::gui::ToolbarCallbacks{
-            .onBypassChanged = [](bool active) {
-                g_bypassActive.store(active, std::memory_order_relaxed);
-                spdlog::info("Toolbar: bypass {}", active ? "ON" : "OFF");
-            },
-            .onDeltaChanged = [](bool active) {
-                g_deltaActive.store(active, std::memory_order_relaxed);
-                spdlog::info("Toolbar: delta {}", active ? "ON" : "OFF");
+            // --- ShowGuiRequest: open window, run event loop, return here ---
+            if (msg->type == rps::ipc::MessageType::ShowGuiRequest) {
+                spdlog::info("Received ShowGuiRequest — opening GUI window");
+
+                // Initialize SDL VIDEO if not already done
+                if (!SDL_WasInit(SDL_INIT_VIDEO)) {
+                    if (!SDL_Init(SDL_INIT_VIDEO)) {
+                        spdlog::error("SDL_Init(VIDEO) failed: {}", SDL_GetError());
+                        rps::ipc::Message errMsg;
+                        errMsg.type = rps::ipc::MessageType::GuiClosedEvent;
+                        errMsg.payload = rps::ipc::GuiClosedEvent{"sdl_init_failed"};
+                        connection->sendMessage(errMsg);
+                        continue;
+                    }
+                }
+
+                try {
+                    auto result = host->open(boost::filesystem::path(pluginPath));
+                    spdlog::info("GUI opened: '{}' ({}x{})", result.name, result.width, result.height);
+
+                    // Send GuiOpenedEvent
+                    rps::ipc::Message openedMsg;
+                    openedMsg.type = rps::ipc::MessageType::GuiOpenedEvent;
+                    openedMsg.payload = rps::ipc::GuiOpenedEvent{result.name, result.width, result.height};
+                    connection->sendMessage(openedMsg);
+
+                    // IPC listener thread for commands while GUI is open
+                    std::atomic<bool> guiIpcDone{false};
+                    std::thread guiIpcThread([&]() {
+                        while (!guiIpcDone.load(std::memory_order_relaxed)) {
+                            auto guiMsg = connection->receiveMessage(200);
+                            if (!guiMsg) continue;
+
+                            if (guiMsg->type == rps::ipc::MessageType::CloseGuiRequest) {
+                                spdlog::info("Received CloseGuiRequest via IPC");
+                                host->requestClose();
+                                break;
+                            }
+                            if (guiMsg->type == rps::ipc::MessageType::CloseSessionRequest) {
+                                spdlog::info("Received CloseSessionRequest via IPC (during GUI)");
+                                host->requestClose();
+                                sessionRunning = false;
+                                break;
+                            }
+                            if (guiMsg->type == rps::ipc::MessageType::GetStateRequest) {
+                                auto resp = host->saveState();
+                                rps::ipc::Message respMsg;
+                                respMsg.type = rps::ipc::MessageType::GetStateResponse;
+                                respMsg.payload = std::move(resp);
+                                connection->sendMessage(respMsg);
+                            }
+                            if (guiMsg->type == rps::ipc::MessageType::SetStateRequest) {
+                                auto& req = std::get<rps::ipc::SetStateRequest>(guiMsg->payload);
+                                auto resp = host->loadState(req.stateData);
+                                rps::ipc::Message respMsg;
+                                respMsg.type = rps::ipc::MessageType::SetStateResponse;
+                                respMsg.payload = std::move(resp);
+                                connection->sendMessage(respMsg);
+                                if (resp.success) {
+                                    auto params = host->getParameters();
+                                    rps::ipc::Message paramMsg;
+                                    paramMsg.type = rps::ipc::MessageType::ParameterListEvent;
+                                    paramMsg.payload = rps::ipc::ParameterListEvent{std::move(params)};
+                                    connection->sendMessage(paramMsg);
+                                }
+                            }
+                            if (guiMsg->type == rps::ipc::MessageType::LoadPresetRequest) {
+                                auto& req = std::get<rps::ipc::LoadPresetRequest>(guiMsg->payload);
+                                auto resp = host->loadPreset(req.presetId);
+                                rps::ipc::Message respMsg;
+                                respMsg.type = rps::ipc::MessageType::LoadPresetResponse;
+                                respMsg.payload = std::move(resp);
+                                connection->sendMessage(respMsg);
+                                if (resp.success) {
+                                    auto params = host->getParameters();
+                                    rps::ipc::Message paramMsg;
+                                    paramMsg.type = rps::ipc::MessageType::ParameterListEvent;
+                                    paramMsg.payload = rps::ipc::ParameterListEvent{std::move(params)};
+                                    connection->sendMessage(paramMsg);
+                                }
+                            }
+                        }
+                    });
+
+                    // Wire toolbar callbacks
+                    host->setToolbarCallbacks(rps::gui::ToolbarCallbacks{
+                        .onBypassChanged = [](bool active) {
+                            g_bypassActive.store(active, std::memory_order_relaxed);
+                            spdlog::info("Toolbar: bypass {}", active ? "ON" : "OFF");
+                        },
+                        .onDeltaChanged = [](bool active) {
+                            g_deltaActive.store(active, std::memory_order_relaxed);
+                            spdlog::info("Toolbar: delta {}", active ? "ON" : "OFF");
+                        }
+                    });
+
+                    // Parameter change callback
+                    auto paramChangeCb = [&connection](std::vector<rps::ipc::ParameterValueUpdate> changes) {
+                        rps::ipc::Message pmsg;
+                        pmsg.type = rps::ipc::MessageType::ParameterValuesEvent;
+                        pmsg.payload = rps::ipc::ParameterValuesEvent{std::move(changes)};
+                        connection->sendMessage(pmsg);
+                    };
+
+                    std::string closeReason;
+                    host->runEventLoop(
+                        [&](const std::string& reason) { closeReason = reason; },
+                        paramChangeCb
+                    );
+
+                    spdlog::info("GUI event loop exited (reason: {})", closeReason.empty() ? "user" : closeReason);
+
+                    guiIpcDone.store(true, std::memory_order_relaxed);
+                    if (guiIpcThread.joinable()) guiIpcThread.join();
+
+                    // Tear down GUI resources (window + plugin GUI extension)
+                    // but keep the plugin loaded for headless operation
+                    host->destroyGui();
+
+                    // Send GuiClosedEvent — but process stays alive
+                    rps::ipc::Message closedMsg;
+                    closedMsg.type = rps::ipc::MessageType::GuiClosedEvent;
+                    closedMsg.payload = rps::ipc::GuiClosedEvent{closeReason.empty() ? "user" : closeReason};
+                    connection->sendMessage(closedMsg);
+
+                    spdlog::info("GUI closed, returning to headless command loop");
+
+                } catch (const std::exception& e) {
+                    spdlog::error("GUI open error: {}", e.what());
+                    rps::ipc::Message errMsg;
+                    errMsg.type = rps::ipc::MessageType::GuiClosedEvent;
+                    errMsg.payload = rps::ipc::GuiClosedEvent{"crash"};
+                    connection->sendMessage(errMsg);
+                }
+                continue;
             }
-        });
 
-        // Parameter change callback: sends delta updates over IPC
-        auto paramChangeCb = [&connection](std::vector<rps::ipc::ParameterValueUpdate> changes) {
-            rps::ipc::Message msg;
-            msg.type = rps::ipc::MessageType::ParameterValuesEvent;
-            msg.payload = rps::ipc::ParameterValuesEvent{std::move(changes)};
-            connection->sendMessage(msg);
-        };
+            // --- CloseSessionRequest: terminate the process ---
+            if (msg->type == rps::ipc::MessageType::CloseSessionRequest ||
+                msg->type == rps::ipc::MessageType::CloseGuiRequest) {
+                spdlog::info("Received session close request via IPC");
+                sessionRunning = false;
+                break;
+            }
 
-        host->runEventLoop(
-            [&](const std::string& reason) {
-                closeReason = reason;
-            },
-            paramChangeCb
-        );
+            // --- State/preset commands (headless, no GUI needed) ---
+            if (msg->type == rps::ipc::MessageType::GetStateRequest) {
+                spdlog::info("Received GetStateRequest via IPC (headless)");
+                auto resp = host->saveState();
+                rps::ipc::Message respMsg;
+                respMsg.type = rps::ipc::MessageType::GetStateResponse;
+                respMsg.payload = std::move(resp);
+                connection->sendMessage(respMsg);
+                continue;
+            }
 
-        spdlog::info("GUI event loop exited (reason: {})", closeReason.empty() ? "user" : closeReason);
+            if (msg->type == rps::ipc::MessageType::SetStateRequest) {
+                spdlog::info("Received SetStateRequest via IPC (headless)");
+                auto& req = std::get<rps::ipc::SetStateRequest>(msg->payload);
+                auto resp = host->loadState(req.stateData);
+                rps::ipc::Message respMsg;
+                respMsg.type = rps::ipc::MessageType::SetStateResponse;
+                respMsg.payload = std::move(resp);
+                connection->sendMessage(respMsg);
+                if (resp.success) {
+                    auto params = host->getParameters();
+                    rps::ipc::Message paramMsg;
+                    paramMsg.type = rps::ipc::MessageType::ParameterListEvent;
+                    paramMsg.payload = rps::ipc::ParameterListEvent{std::move(params)};
+                    connection->sendMessage(paramMsg);
+                }
+                continue;
+            }
 
-        // Shut down audio — device or thread
+            if (msg->type == rps::ipc::MessageType::LoadPresetRequest) {
+                spdlog::info("Received LoadPresetRequest via IPC (headless)");
+                auto& req = std::get<rps::ipc::LoadPresetRequest>(msg->payload);
+                auto resp = host->loadPreset(req.presetId);
+                rps::ipc::Message respMsg;
+                respMsg.type = rps::ipc::MessageType::LoadPresetResponse;
+                respMsg.payload = std::move(resp);
+                connection->sendMessage(respMsg);
+                if (resp.success) {
+                    auto params = host->getParameters();
+                    rps::ipc::Message paramMsg;
+                    paramMsg.type = rps::ipc::MessageType::ParameterListEvent;
+                    paramMsg.payload = rps::ipc::ParameterListEvent{std::move(params)};
+                    connection->sendMessage(paramMsg);
+                }
+                continue;
+            }
+        }
+
+        // Shut down audio
         audioShutdown.store(true, std::memory_order_relaxed);
         if (audioDevice) {
-            // Log debug counters before stopping
             spdlog::info("Audio device stats: callbacks={}, consumed={}, underruns={}",
                          deviceCtx.callbackCount.load(std::memory_order_relaxed),
                          deviceCtx.blocksConsumed.load(std::memory_order_relaxed),
@@ -745,15 +837,10 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
             host->teardownAudioProcessing();
         }
 
-        ipcClosed.store(true, std::memory_order_relaxed);
-        if (ipcThread.joinable()) {
-            ipcThread.join();
-        }
-
-        // Send GuiClosedEvent
+        // Send final session closed event
         rps::ipc::Message closedMsg;
         closedMsg.type = rps::ipc::MessageType::GuiClosedEvent;
-        closedMsg.payload = rps::ipc::GuiClosedEvent{closeReason.empty() ? "user" : closeReason};
+        closedMsg.payload = rps::ipc::GuiClosedEvent{"session_ended"};
         connection->sendMessage(closedMsg);
 
     } catch (const std::exception& e) {

@@ -217,15 +217,17 @@ void GuiSessionManager::openGui(const std::string& pluginPath, const std::string
         }
 
         switch (msg->type) {
-            case rps::ipc::MessageType::GuiOpenedEvent: {
-                auto& evt = std::get<rps::ipc::GuiOpenedEvent>(msg->payload);
+            case rps::ipc::MessageType::PluginLoadedEvent: {
+                auto& evt = std::get<rps::ipc::PluginLoadedEvent>(msg->payload);
+                spdlog::info("Plugin loaded (headless): '{}'", evt.pluginName);
+
+                // Forward as PluginLoaded event to gRPC
                 rps::v1::PluginEvent event;
                 auto* opened = event.mutable_gui_opened();
                 opened->set_plugin_name(evt.pluginName);
-                opened->set_width(evt.width);
-                opened->set_height(evt.height);
+                opened->set_width(0);  // No GUI yet
+                opened->set_height(0);
                 writer->Write(event);
-                spdlog::info("Plugin GUI opened: {} ({}x{})", evt.pluginName, evt.width, evt.height);
 
                 // Send AudioReady if audio shared memory was created
                 if (!currentSession->shmName.empty() && currentSession->audioRing) {
@@ -243,6 +245,17 @@ void GuiSessionManager::openGui(const std::string& pluginPath, const std::string
                 }
                 break;
             }
+            case rps::ipc::MessageType::GuiOpenedEvent: {
+                auto& evt = std::get<rps::ipc::GuiOpenedEvent>(msg->payload);
+                rps::v1::PluginEvent event;
+                auto* opened = event.mutable_gui_opened();
+                opened->set_plugin_name(evt.pluginName);
+                opened->set_width(evt.width);
+                opened->set_height(evt.height);
+                writer->Write(event);
+                spdlog::info("Plugin GUI opened: {} ({}x{})", evt.pluginName, evt.width, evt.height);
+                break;
+            }
             case rps::ipc::MessageType::GuiClosedEvent: {
                 auto& evt = std::get<rps::ipc::GuiClosedEvent>(msg->payload);
                 rps::v1::PluginEvent event;
@@ -250,7 +263,11 @@ void GuiSessionManager::openGui(const std::string& pluginPath, const std::string
                 closed->set_reason(evt.reason);
                 writer->Write(event);
                 spdlog::info("Plugin GUI closed: {} (reason: {})", pluginPath, evt.reason);
-                done = true;
+                // session_ended means the host process is shutting down
+                if (evt.reason == "session_ended" || evt.reason == "crash") {
+                    done = true;
+                }
+                // Otherwise the process stays alive headless — GUI was just closed
                 break;
             }
             case rps::ipc::MessageType::ParameterListEvent: {
@@ -360,7 +377,7 @@ bool GuiSessionManager::closeGui(const std::string& pluginPath) {
         return false;
     }
 
-    // Send CloseGuiRequest via IPC
+    // Send CloseGuiRequest via IPC — closes the window but keeps the process alive
     rps::ipc::Message msg;
     msg.type = rps::ipc::MessageType::CloseGuiRequest;
     msg.payload = rps::ipc::CloseGuiRequest{};
@@ -369,13 +386,45 @@ bool GuiSessionManager::closeGui(const std::string& pluginPath) {
     return true;
 }
 
+bool GuiSessionManager::showGui(const std::string& pluginPath) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto it = m_sessions.find(pluginPath);
+    if (it == m_sessions.end()) {
+        return false;
+    }
+
+    // Send ShowGuiRequest via IPC — opens the GUI window
+    rps::ipc::Message msg;
+    msg.type = rps::ipc::MessageType::ShowGuiRequest;
+    msg.payload = rps::ipc::ShowGuiRequest{};
+    it->second->connection->sendMessage(msg);
+
+    return true;
+}
+
+bool GuiSessionManager::closeSession(const std::string& pluginPath) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto it = m_sessions.find(pluginPath);
+    if (it == m_sessions.end()) {
+        return false;
+    }
+
+    // Send CloseSessionRequest via IPC — terminates the host process
+    rps::ipc::Message msg;
+    msg.type = rps::ipc::MessageType::CloseSessionRequest;
+    msg.payload = rps::ipc::CloseSessionRequest{};
+    it->second->connection->sendMessage(msg);
+
+    return true;
+}
+
 void GuiSessionManager::closeAll() {
     std::lock_guard<std::mutex> lock(m_mutex);
     for (auto& [path, session] : m_sessions) {
-        // Send CloseGuiRequest
+        // Send CloseSessionRequest (terminates the host process)
         rps::ipc::Message msg;
-        msg.type = rps::ipc::MessageType::CloseGuiRequest;
-        msg.payload = rps::ipc::CloseGuiRequest{};
+        msg.type = rps::ipc::MessageType::CloseSessionRequest;
+        msg.payload = rps::ipc::CloseSessionRequest{};
         try {
             session->connection->sendMessage(msg);
         } catch (...) {}

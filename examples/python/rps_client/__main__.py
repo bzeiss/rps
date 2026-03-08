@@ -129,7 +129,7 @@ def shutdown(ctx):
         sys.exit(1)
 
 
-@cli.command("open-gui")
+@cli.command("pluginhost")
 @click.option("--format", "format_filter", default="", help="Filter plugins by format (e.g. 'clap')")
 @click.option("--audio", "enable_audio", is_flag=True, help="Enable audio processing (shared memory ring buffer)")
 @click.option("--sample-rate", "-sr", default=48000, type=int, help="Audio sample rate (default: 48000)")
@@ -138,8 +138,8 @@ def shutdown(ctx):
 @click.option("--audio-device", "-ad", default="", help="Audio device backend for real-time playback (e.g. 'sdl3')")
 @click.pass_context
 def open_gui(ctx, format_filter, enable_audio, sample_rate, channels, block_size, audio_device):
-    """Browse plugins and open a native GUI for parameter editing."""
-    from rps_client.open_gui import run_open_gui
+    """Load a plugin headlessly, with optional GUI and audio."""
+    from rps_client.pluginhost import run_open_gui
 
     server_addr = ctx.obj["server"]
     managed = server_addr is None

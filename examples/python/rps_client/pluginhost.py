@@ -1,7 +1,6 @@
-"""Open a plugin's native GUI via gRPC and display lifecycle events with parameter dump."""
+"""Plugin host session management — headless-first with on-demand GUI."""
 
 import sys
-import struct
 import threading
 import time
 
@@ -377,217 +376,154 @@ def _handle_send_audio(ring: AudioRing, filepath: str, con: Console) -> None:
     )
 
 
-def _handle_play_audio(ring: AudioRing, filepath: str, con: Console) -> None:
-    """Play a WAV file through the plugin in real-time via the audio device.
+class AudioPlayback:
+    """Manages background audio playback through the shared memory ring buffer."""
 
-    Paces block submission at the device's consumption rate.
-    No output WAV is written — audio plays through the device.
-    """
-    import os
-    import time
+    def __init__(self):
+        self._thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
 
-    if not os.path.isfile(filepath):
-        con.print(f"[red]✗ File not found:[/red] {filepath}")
-        return
+    @property
+    def is_playing(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
 
-    # Read input WAV
-    try:
-        samples, wav_sr, wav_ch = read_wav(filepath)
-    except Exception as e:
-        con.print(f"[red]✗ Cannot read WAV:[/red] {e}")
-        return
+    def stop(self, con: Console | None = None) -> None:
+        """Stop any active playback."""
+        if not self.is_playing:
+            if con:
+                con.print("[dim]No audio playing.[/dim]")
+            return
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=3)
+        if con:
+            con.print("[green]■ Audio stopped.[/green]")
 
-    n_samples = len(samples)
-    duration_s = n_samples / (wav_sr * wav_ch)
-    con.print(
-        f"  [dim]Playing {n_samples // wav_ch} frames, {wav_ch}ch, "
-        f"{wav_sr}Hz ({duration_s:.1f}s)[/dim]"
-    )
+    def start_play_audio(
+        self, ring: AudioRing, filepath: str, con: Console,
+    ) -> None:
+        """Play a WAV file once through the audio device (non-blocking)."""
+        self._start(ring, filepath, con, looped=False)
 
-    if wav_sr != ring.sample_rate:
-        con.print(
-            f"  [yellow]⚠ Sample rate mismatch:[/yellow] "
-            f"WAV={wav_sr}Hz, ring={ring.sample_rate}Hz — proceeding anyway"
-        )
+    def start_play_audio_looped(
+        self, ring: AudioRing, filepath: str, con: Console,
+    ) -> None:
+        """Play a WAV file in a loop through the audio device (non-blocking)."""
+        self._start(ring, filepath, con, looped=True)
 
-    # Pad samples to full blocks
-    block_floats = ring.block_size * ring.num_channels
-    total_blocks = (n_samples + block_floats - 1) // block_floats
-    pad_len = total_blocks * block_floats - n_samples
-    if pad_len > 0:
-        samples.extend([0.0] * pad_len)
+    def _start(
+        self, ring: AudioRing, filepath: str, con: Console, *, looped: bool,
+    ) -> None:
+        import os
 
-    # Pre-convert to raw bytes
-    samples_bytes = samples.tobytes()
-    block_byte_size = block_floats * 4  # float32 = 4 bytes
+        # Stop any existing playback first
+        if self.is_playing:
+            con.print("[dim]Stopping previous playback...[/dim]")
+            self.stop()
 
-    # Calculate timing for paced submission
-    block_duration_s = ring.block_size / ring.sample_rate
+        if not os.path.isfile(filepath):
+            con.print(f"[red]✗ File not found:[/red] {filepath}")
+            return
 
-    # Push blocks at real-time rate
-    blocks_sent = 0
-    ring_full_count = 0
-    start_time = time.monotonic()
-
-    con.print(f"  ▶ Playing {total_blocks} blocks (bs={ring.block_size}, sr={ring.sample_rate})...")
-
-    while blocks_sent < total_blocks:
-        # Try to push the next block
-        start = blocks_sent * block_byte_size
-        end = start + block_byte_size
-        if ring.write_input_block(samples_bytes[start:end]):
-            blocks_sent += 1
-        else:
-            # Ring full — wait a fraction of a block duration for device to consume
-            ring_full_count += 1
-            time.sleep(block_duration_s * 0.25)
-            continue
-
-        # Drain output ring so device callback doesn't stall on writeOutputBlock
-        while ring.read_output_block() is not None:
-            pass
-
-        # Pace: don't get too far ahead of real-time
-        # Allow up to ~4 blocks (ring depth worth) of look-ahead
-        target_time = start_time + (blocks_sent - 4) * block_duration_s
-        now = time.monotonic()
-        if now < target_time:
-            time.sleep(target_time - now)
-
-    elapsed = time.monotonic() - start_time
-
-    # Wait for the device to play through the remaining buffered blocks
-    remaining_s = 4 * block_duration_s + 0.1  # buffer depth + margin
-    con.print(f"  [dim]Waiting for playback to finish ({remaining_s:.1f}s)...[/dim]")
-    drain_end = time.monotonic() + remaining_s
-    while time.monotonic() < drain_end:
-        while ring.read_output_block() is not None:
-            pass
-        time.sleep(block_duration_s * 0.5)
-
-    con.print(
-        f"  [green]✓ Played {total_blocks} blocks "
-        f"({duration_s:.1f}s) through audio device[/green]"
-    )
-    con.print(
-        f"  [dim]Debug: elapsed={elapsed:.2f}s, expected={duration_s:.1f}s, "
-        f"ring_full_waits={ring_full_count}, "
-        f"block_duration={block_duration_s*1000:.1f}ms[/dim]"
-    )
-
-
-def _handle_play_audio_looped(ring: AudioRing, filepath: str, con: Console) -> None:
-    """Play a WAV file in a loop through the audio device until Enter is pressed."""
-    import os
-    import sys
-    import time
-    import threading
-
-    if not os.path.isfile(filepath):
-        con.print(f"[red]✗ File not found:[/red] {filepath}")
-        return
-
-    # Read input WAV
-    try:
-        samples, wav_sr, wav_ch = read_wav(filepath)
-    except Exception as e:
-        con.print(f"[red]✗ Cannot read WAV:[/red] {e}")
-        return
-
-    n_samples = len(samples)
-    duration_s = n_samples / (wav_sr * wav_ch)
-    con.print(
-        f"  [dim]Looping {n_samples // wav_ch} frames, {wav_ch}ch, "
-        f"{wav_sr}Hz ({duration_s:.1f}s)[/dim]"
-    )
-
-    if wav_sr != ring.sample_rate:
-        con.print(
-            f"  [yellow]⚠ Sample rate mismatch:[/yellow] "
-            f"WAV={wav_sr}Hz, ring={ring.sample_rate}Hz — proceeding anyway"
-        )
-
-    # Pad samples to full blocks
-    block_floats = ring.block_size * ring.num_channels
-    total_blocks = (n_samples + block_floats - 1) // block_floats
-    pad_len = total_blocks * block_floats - n_samples
-    if pad_len > 0:
-        samples.extend([0.0] * pad_len)
-
-    # Pre-convert to raw bytes
-    samples_bytes = samples.tobytes()
-    block_byte_size = block_floats * 4  # float32 = 4 bytes
-    block_duration_s = ring.block_size / ring.sample_rate
-
-    # Stop signal — set when user presses Enter
-    stop_event = threading.Event()
-
-    def _wait_for_key():
-        """Wait for Enter key press on a background thread."""
+        # Read input WAV
         try:
-            if sys.platform == "win32":
-                import msvcrt
-                while not stop_event.is_set():
-                    if msvcrt.kbhit():
-                        key = msvcrt.getwch()
-                        if key in ("\r", "\n", "\x1b"):  # Enter or Escape
-                            stop_event.set()
-                            return
-                    time.sleep(0.05)
-            else:
-                import select
-                while not stop_event.is_set():
-                    rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
-                    if rlist:
-                        stop_event.set()
-                        return
+            samples, wav_sr, wav_ch = read_wav(filepath)
+        except Exception as e:
+            con.print(f"[red]✗ Cannot read WAV:[/red] {e}")
+            return
+
+        n_samples = len(samples)
+        duration_s = n_samples / (wav_sr * wav_ch)
+
+        if wav_sr != ring.sample_rate:
+            con.print(
+                f"  [yellow]⚠ Sample rate mismatch:[/yellow] "
+                f"WAV={wav_sr}Hz, ring={ring.sample_rate}Hz — proceeding anyway"
+            )
+
+        # Pad samples to full blocks
+        block_floats = ring.block_size * ring.num_channels
+        total_blocks = (n_samples + block_floats - 1) // block_floats
+        pad_len = total_blocks * block_floats - n_samples
+        if pad_len > 0:
+            samples.extend([0.0] * pad_len)
+
+        samples_bytes = samples.tobytes()
+        block_byte_size = block_floats * 4  # float32 = 4 bytes
+        block_duration_s = ring.block_size / ring.sample_rate
+
+        mode = "Looping" if looped else "Playing"
+        con.print(
+            f"  [bold green]▶ {mode}[/bold green] {n_samples // wav_ch} frames "
+            f"({duration_s:.1f}s) — type [bold]stop-audio[/bold] to stop"
+        )
+
+        self._stop_event.clear()
+        self._thread = threading.Thread(
+            target=self._playback_worker,
+            args=(ring, samples_bytes, block_byte_size, total_blocks,
+                  block_duration_s, looped, con, duration_s),
+            daemon=True,
+        )
+        self._thread.start()
+
+    def _playback_worker(
+        self, ring: AudioRing, samples_bytes: bytes,
+        block_byte_size: int, total_blocks: int,
+        block_duration_s: float, looped: bool,
+        con: Console, duration_s: float,
+    ) -> None:
+        loop_count = 0
+        start_time = time.monotonic()
+
+        try:
+            while not self._stop_event.is_set():
+                loop_count += 1
+                blocks_sent = 0
+                loop_start = time.monotonic()
+
+                while blocks_sent < total_blocks and not self._stop_event.is_set():
+                    offset = blocks_sent * block_byte_size
+                    if ring.write_input_block(samples_bytes[offset:offset + block_byte_size]):
+                        blocks_sent += 1
+                    else:
+                        time.sleep(block_duration_s * 0.25)
+                        continue
+
+                    # Drain output ring
+                    while ring.read_output_block() is not None:
+                        pass
+
+                    # Pace: don't get too far ahead of real-time
+                    target_time = loop_start + (blocks_sent - 4) * block_duration_s
+                    now = time.monotonic()
+                    if now < target_time:
+                        time.sleep(target_time - now)
+
+                if not looped:
+                    # Single play: wait for drain then exit
+                    remaining_s = 4 * block_duration_s + 0.1
+                    drain_end = time.monotonic() + remaining_s
+                    while time.monotonic() < drain_end and not self._stop_event.is_set():
+                        while ring.read_output_block() is not None:
+                            pass
+                        time.sleep(block_duration_s * 0.5)
+                    break
+
         except Exception:
-            stop_event.set()
+            pass
 
-    key_thread = threading.Thread(target=_wait_for_key, daemon=True)
-    key_thread.start()
-
-    con.print(
-        f"  [bold green]▶ Looping[/bold green] {total_blocks} blocks "
-        f"({duration_s:.1f}s per loop) — press [bold]Enter[/bold] or [bold]Esc[/bold] to stop"
-    )
-
-    loop_count = 0
-    start_time = time.monotonic()
-
-    try:
-        while not stop_event.is_set():
-            loop_count += 1
-            blocks_sent = 0
-            loop_start = time.monotonic()
-
-            while blocks_sent < total_blocks and not stop_event.is_set():
-                offset = blocks_sent * block_byte_size
-                if ring.write_input_block(samples_bytes[offset:offset + block_byte_size]):
-                    blocks_sent += 1
-                else:
-                    time.sleep(block_duration_s * 0.25)
-                    continue
-
-                # Drain output ring
-                while ring.read_output_block() is not None:
-                    pass
-
-                # Pace: don't get too far ahead of real-time
-                target_time = loop_start + (blocks_sent - 4) * block_duration_s
-                now = time.monotonic()
-                if now < target_time:
-                    time.sleep(target_time - now)
-
-    except KeyboardInterrupt:
-        pass
-
-    stop_event.set()
-    elapsed = time.monotonic() - start_time
-    con.print(
-        f"  [green]■ Stopped[/green] after {loop_count} loop(s), "
-        f"{elapsed:.1f}s total"
-    )
+        elapsed = time.monotonic() - start_time
+        if looped:
+            con.print(
+                f"  [green]■ Stopped[/green] after {loop_count} loop(s), "
+                f"{elapsed:.1f}s total"
+            )
+        else:
+            con.print(
+                f"  [green]✓ Played[/green] {duration_s:.1f}s "
+                f"through audio device"
+            )
 
 
 def _handle_send_audio_grpc(
@@ -693,13 +629,31 @@ def _open_gui_session(
     num_channels: int,
     block_size: int,
     audio_device: str,
-) -> None:
-    """Open a plugin GUI and manage its lifecycle. Returns when GUI closes."""
+) -> bool:
+    """Open a headless plugin session and manage its lifecycle.
+
+    The plugin loads headlessly first. User can open/close GUI on demand.
+    Returns True if user wants to continue (back), False to quit entirely.
+    """
     store = ParameterStore()
     preset_store = PresetStore()
     plugin_name = ""
-    gui_closed = threading.Event()
+    session_done = threading.Event()  # Fires when session truly ends
+    gui_open = threading.Event()  # Tracks whether GUI window is currently open
+    plugin_ready = threading.Event()  # Fires after initial load messages are printed
     audio_ring: AudioRing | None = None
+    audio_playback = AudioPlayback()
+
+    def _commands_hint() -> str:
+        """Build a compact one-line summary of available commands."""
+        cmds = ["open-gui", "close-gui", "params", "presets", "load-preset",
+                "save-state", "load-state"]
+        if enable_audio:
+            cmds.extend(["send-audio", "send-audio-grpc"])
+            if audio_device:
+                cmds.extend(["play-audio", "play-audio-looped", "stop-audio"])
+        cmds.extend(["back", "quit", "help"])
+        return ", ".join(cmds)
 
     def _stream_consumer():
         """Background thread: consumes gRPC event stream."""
@@ -716,29 +670,31 @@ def _open_gui_session(
             else:
                 event_stream = client.open_plugin_gui(plugin_path, fmt)
             for event in event_stream:
-                if gui_closed.is_set():
+                if session_done.is_set():
                     break
                 if event.HasField("gui_opened"):
                     g = event.gui_opened
                     plugin_name = g.plugin_name
-                    console.print(
-                        f"[green]✓ GUI Opened:[/green] {g.plugin_name} "
-                        f"({g.width}×{g.height})"
-                    )
-                    cmds = (
-                        "[dim]Commands: save-state <file>, load-state <file>, "
-                        "presets, load-preset <#|name>, params"
-                    )
-                    if enable_audio:
-                        cmds += ", send-audio <file.wav>"
-                        if audio_device:
-                            cmds += ", play-audio <file.wav>, play-audio-looped <file.wav>"
-                    cmds += ", close-gui, help[/dim]\n"
-                    console.print(cmds)
+                    if g.width == 0 and g.height == 0:
+                        # Headless load — plugin loaded but no GUI yet
+                        console.print(
+                            f"[green]✓ Plugin loaded (headless):[/green] {g.plugin_name}"
+                        )
+                    else:
+                        # GUI actually opened
+                        gui_open.set()
+                        console.print(
+                            f"[green]✓ GUI Opened:[/green] {g.plugin_name} "
+                            f"({g.width}×{g.height})"
+                        )
+                    plugin_ready.set()
                 elif event.HasField("parameter_list"):
                     store.load_list(event.parameter_list)
-                    store.print_table(plugin_name)
-                    console.print()
+                    count = len(store.params)
+                    console.print(
+                        f"  [green]✓[/green] {count} parameter(s) available "
+                        f"(type [bold]params[/bold] to list)"
+                    )
                 elif event.HasField("parameter_updates"):
                     changed = store.apply_updates(event.parameter_updates)
                     for p in changed:
@@ -747,11 +703,20 @@ def _open_gui_session(
                             f"  [cyan]⟳[/cyan] {p['name']}: [bold]{val_str}[/bold]"
                         )
                 elif event.HasField("gui_closed"):
-                    console.print(
-                        f"\n[yellow]✗ GUI Closed:[/yellow] {event.gui_closed.reason}"
-                    )
-                    gui_closed.set()
-                    break
+                    reason = event.gui_closed.reason
+                    gui_open.clear()
+                    if reason in ("session_ended", "crash"):
+                        console.print(
+                            f"\n[yellow]✗ Session ended:[/yellow] {reason}"
+                        )
+                        session_done.set()
+                        break
+                    else:
+                        # GUI window closed but session stays alive
+                        console.print(
+                            f"\n[dim]GUI window closed ({reason}). "
+                            f"Type 'open-gui' to reopen, 'quit' to end session.[/dim]"
+                        )
                 elif event.HasField("gui_error"):
                     e = event.gui_error
                     console.print(f"[red]✗ Error:[/red] {e.error}")
@@ -781,9 +746,9 @@ def _open_gui_session(
                     except Exception as e:
                         console.print(f"  [red]✗ Audio ring error:[/red] {e}")
         except Exception as e:
-            if not gui_closed.is_set():
+            if not session_done.is_set():
                 console.print(f"[red]Stream error: {e}[/red]")
-                gui_closed.set()
+                session_done.set()
 
     # Start stream consumer thread
     stream_thread = threading.Thread(target=_stream_consumer, daemon=True)
@@ -791,8 +756,16 @@ def _open_gui_session(
 
     # Wait for GUI to close (block the caller)
     try:
-        while not gui_closed.is_set():
-            line = _read_line_nonblocking(gui_closed)
+        # Wait for plugin to finish loading before showing prompt
+        plugin_ready.wait(timeout=30)
+        # Brief pause to let remaining stream events (params, presets, audio) print
+        time.sleep(0.5)
+        # Print available commands once before the prompt loop
+        console.print(f"\n[dim]Commands: {_commands_hint()}[/dim]\n")
+        while not session_done.is_set():
+            sys.stdout.write("> ")
+            sys.stdout.flush()
+            line = _read_line_nonblocking(session_done)
             if line is None:
                 break
             if not line:
@@ -801,14 +774,47 @@ def _open_gui_session(
             parts = line.split(maxsplit=1)
             cmd = parts[0].lower()
 
-            if cmd in ("close-gui", "close"):
-                console.print("[yellow]Closing GUI...[/yellow]")
+            if cmd in ("quit", "exit", "q"):
+                console.print("[yellow]Exiting...[/yellow]")
+                audio_playback.stop()
                 try:
-                    client.close_plugin_gui(plugin_path)
+                    client.close_plugin_session(plugin_path)
                 except Exception:
                     pass
-                gui_closed.set()
-                break
+                session_done.set()
+                stream_thread.join(timeout=3)
+                return False
+
+            elif cmd in ("back", "b"):
+                console.print("[yellow]Returning to plugin selection...[/yellow]")
+                audio_playback.stop()
+                try:
+                    client.close_plugin_session(plugin_path)
+                except Exception:
+                    pass
+                session_done.set()
+                stream_thread.join(timeout=3)
+                return True
+
+            elif cmd == "open-gui":
+                if gui_open.is_set():
+                    console.print("[dim]GUI is already open.[/dim]")
+                else:
+                    console.print("[bold]Opening GUI...[/bold]")
+                    try:
+                        client.show_plugin_gui(plugin_path)
+                    except Exception as e:
+                        console.print(f"[red]✗ show-gui error:[/red] {e}")
+
+            elif cmd in ("close-gui", "close"):
+                if not gui_open.is_set():
+                    console.print("[dim]GUI is not open.[/dim]")
+                else:
+                    console.print("[yellow]Closing GUI window...[/yellow]")
+                    try:
+                        client.close_plugin_gui(plugin_path)
+                    except Exception:
+                        pass
 
             elif cmd == "save-state" and len(parts) == 2:
                 filepath = parts[1]
@@ -909,7 +915,7 @@ def _open_gui_session(
                         "Use [bold]open-gui --audio --audio-device sdl3[/bold] for real-time playback."
                     )
                 else:
-                    _handle_play_audio(audio_ring, parts[1], console)
+                    audio_playback.start_play_audio(audio_ring, parts[1], console)
 
             elif cmd == "play-audio-looped" and len(parts) == 2:
                 if not enable_audio or not audio_ring:
@@ -923,10 +929,15 @@ def _open_gui_session(
                         "Use [bold]open-gui --audio --audio-device sdl3[/bold] for real-time playback."
                     )
                 else:
-                    _handle_play_audio_looped(audio_ring, parts[1], console)
+                    audio_playback.start_play_audio_looped(audio_ring, parts[1], console)
+
+            elif cmd == "stop-audio":
+                audio_playback.stop(console)
 
             elif cmd == "help":
-                console.print("[bold]GUI session commands:[/bold]")
+                console.print("[bold]Session commands:[/bold]")
+                console.print("  open-gui              — Open the plugin's native GUI window")
+                console.print("  close-gui             — Close the GUI window (session stays alive)")
                 console.print("  save-state <file>     — Save plugin state to file")
                 console.print("  load-state <file>     — Restore plugin state from file")
                 console.print("  presets               — List available presets")
@@ -936,24 +947,33 @@ def _open_gui_session(
                     console.print("  send-audio <file.wav> — Process via shared memory (write output file)")
                     console.print("  send-audio-grpc <file.wav> — Process via gRPC stream (networked)")
                     if audio_device:
-                        console.print("  play-audio <file.wav>  — Real-time playback through audio device")
-                        console.print("  play-audio-looped <file.wav> — Looped playback (Enter/Esc to stop)")
-                console.print("  close-gui             — Close the GUI window")
+                        console.print("  play-audio <file.wav>  — Real-time playback (background)")
+                        console.print("  play-audio-looped <file.wav> — Looped playback (background)")
+                        console.print("  stop-audio            — Stop active playback")
+                console.print("  back                  — End session and return to plugin selection")
+                console.print("  quit                  — End session and exit")
 
             else:
                 console.print(
                     f"[dim]Unknown command: '{cmd}'. Type 'help' for commands.[/dim]"
                 )
+                continue
+
+            # After every successful command, show available commands
+            if not session_done.is_set():
+                console.print(f"\n[dim]Commands: {_commands_hint()}[/dim]\n")
 
     except KeyboardInterrupt:
-        console.print("\n[yellow]Closing GUI...[/yellow]")
+        console.print("\n[yellow]Exiting...[/yellow]")
+        audio_playback.stop()
         try:
-            client.close_plugin_gui(plugin_path)
+            client.close_plugin_session(plugin_path)
         except Exception:
             pass
-        gui_closed.set()
+        session_done.set()
 
     stream_thread.join(timeout=3)
+    return False
 
 
 def run_open_gui(
@@ -974,9 +994,8 @@ def run_open_gui(
         plugin_path, fmt = selection
         console.print(f"\n[bold]Selected:[/bold] {plugin_path} ({fmt})")
 
-        # Auto-open the GUI immediately
-        console.print(f"[bold]Opening GUI:[/bold] {plugin_path} ({fmt})")
-        _open_gui_session(
+        # Start a headless session — user can open-gui, send-audio, etc.
+        should_continue = _open_gui_session(
             client, plugin_path, fmt,
             enable_audio=enable_audio,
             sample_rate=sample_rate,
@@ -985,61 +1004,7 @@ def run_open_gui(
             audio_device=audio_device,
         )
 
-        # After GUI closes, stay in session for re-opening
-        session_stop = threading.Event()
-
-        def _print_session_help():
-            console.print("[bold]Session commands:[/bold]")
-            console.print("  open-gui              — Reopen the plugin's native GUI window")
-            console.print("  back                  — Return to plugin selection")
-            console.print("  quit                  — Exit")
-
-        console.print(
-            "[dim]GUI closed. Type 'open-gui' to reopen, "
-            "'back' for plugin list, 'quit' to exit.[/dim]\n"
-        )
-
-        try:
-            while not session_stop.is_set():
-                line = _read_line_nonblocking(session_stop)
-                if line is None:
-                    break
-                if not line:
-                    continue
-
-                parts = line.split(maxsplit=1)
-                cmd = parts[0].lower()
-
-                if cmd in ("quit", "exit", "q"):
-                    return  # Exit completely
-
-                elif cmd in ("back", "b"):
-                    break  # Return to plugin selection
-
-                elif cmd == "open-gui":
-                    console.print(f"\n[bold]Reopening GUI:[/bold] {plugin_path} ({fmt})")
-                    _open_gui_session(
-                        client, plugin_path, fmt,
-                        enable_audio=enable_audio,
-                        sample_rate=sample_rate,
-                        num_channels=num_channels,
-                        block_size=block_size,
-                        audio_device=audio_device,
-                    )
-                    console.print(
-                        "[dim]GUI closed. Type 'open-gui' to reopen, "
-                        "'back' for plugin list, 'quit' to exit.[/dim]\n"
-                    )
-
-                elif cmd == "help":
-                    _print_session_help()
-
-                else:
-                    console.print(
-                        f"[dim]Unknown command: '{cmd}'. Type 'help' for commands.[/dim]"
-                    )
-
-        except KeyboardInterrupt:
+        if not should_continue:
             return
 
         console.print()  # Blank line before next selection

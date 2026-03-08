@@ -450,6 +450,16 @@ void ClapGuiHost::teardownAudioProcessing() {
     m_outputPtrs.clear();
 }
 
+void ClapGuiHost::destroyGui() {
+    spdlog::info("ClapGuiHost::destroyGui()");
+    if (m_gui && m_plugin && m_guiCreated) {
+        m_gui->destroy(m_plugin);
+        m_guiCreated = false;
+    }
+    m_window.destroy();
+    m_gui = nullptr;
+}
+
 void ClapGuiHost::cleanup() {
     spdlog::debug("ClapGuiHost::cleanup()");
     if (m_gui && m_plugin && m_guiCreated) {
@@ -647,8 +657,10 @@ void ClapGuiHost::loadPlugin(const boost::filesystem::path& pluginPath) {
 rps::gui::IPluginGuiHost::OpenResult ClapGuiHost::open(const boost::filesystem::path& pluginPath) {
     spdlog::info("ClapGuiHost::open({})", pluginPath.string());
 
-    // Load the plugin (DLL, plugin instance, extensions, presets)
-    loadPlugin(pluginPath);
+    // Load the plugin if not already loaded (headless-first flow calls loadPlugin first)
+    if (!m_plugin) {
+        loadPlugin(pluginPath);
+    }
 
     // 6. Query GUI extension
     spdlog::info("  Step 6: Querying CLAP_EXT_GUI...");

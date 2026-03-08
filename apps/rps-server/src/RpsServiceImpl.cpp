@@ -211,6 +211,26 @@ grpc::Status RpsServiceImpl::ClosePluginGui(grpc::ServerContext* /*context*/,
     return grpc::Status::OK;
 }
 
+grpc::Status RpsServiceImpl::ShowPluginGui(grpc::ServerContext* /*context*/,
+                                            const rps::v1::ShowPluginGuiRequest* request,
+                                            rps::v1::ShowPluginGuiResponse* response) {
+    auto pluginPath = request->plugin_path();
+    bool ok = m_guiManager.showGui(pluginPath);
+    response->set_success(ok);
+    spdlog::info("ShowPluginGui: path={} success={}", pluginPath, ok);
+    return grpc::Status::OK;
+}
+
+grpc::Status RpsServiceImpl::ClosePluginSession(grpc::ServerContext* /*context*/,
+                                                 const rps::v1::ClosePluginSessionRequest* request,
+                                                 rps::v1::ClosePluginSessionResponse* response) {
+    auto pluginPath = request->plugin_path();
+    bool wasOpen = m_guiManager.closeSession(pluginPath);
+    response->set_was_open(wasOpen);
+    spdlog::info("ClosePluginSession: path={} was_open={}", pluginPath, wasOpen);
+    return grpc::Status::OK;
+}
+
 void RpsServiceImpl::stopScan() {
     m_engine.stop();
 }

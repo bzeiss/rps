@@ -27,6 +27,10 @@ enum class MessageType {
     GuiOpenedEvent,
     GuiClosedEvent,
     CloseGuiRequest,
+    // Headless-first lifecycle
+    PluginLoadedEvent,
+    ShowGuiRequest,
+    CloseSessionRequest,
     // Parameter streaming
     ParameterListEvent,
     ParameterValuesEvent,
@@ -97,6 +101,21 @@ struct GuiClosedEvent {
 };
 
 struct CloseGuiRequest {};
+
+// Headless-first lifecycle messages
+
+/// Sent by host after loadPlugin() completes (before any GUI).
+struct PluginLoadedEvent {
+    std::string pluginName;
+    std::string pluginVendor;
+    bool hasGui = false;
+};
+
+/// Request from server to host to show the GUI window.
+struct ShowGuiRequest {};
+
+/// Request from server to host to terminate the session entirely.
+struct CloseSessionRequest {};
 
 // ---------------------------------------------------------------------------
 // Parameter streaming messages (plugin host worker -> server)
@@ -243,6 +262,15 @@ GuiClosedEvent tag_invoke(boost::json::value_to_tag<GuiClosedEvent>, const boost
 void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const CloseGuiRequest& req);
 CloseGuiRequest tag_invoke(boost::json::value_to_tag<CloseGuiRequest>, const boost::json::value& jv);
 
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const PluginLoadedEvent& evt);
+PluginLoadedEvent tag_invoke(boost::json::value_to_tag<PluginLoadedEvent>, const boost::json::value& jv);
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const ShowGuiRequest& req);
+ShowGuiRequest tag_invoke(boost::json::value_to_tag<ShowGuiRequest>, const boost::json::value& jv);
+
+void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const CloseSessionRequest& req);
+CloseSessionRequest tag_invoke(boost::json::value_to_tag<CloseSessionRequest>, const boost::json::value& jv);
+
 void tag_invoke(boost::json::value_from_tag, boost::json::value& jv, const PluginParameterInfo& p);
 PluginParameterInfo tag_invoke(boost::json::value_to_tag<PluginParameterInfo>, const boost::json::value& jv);
 
@@ -287,6 +315,7 @@ struct Message {
     MessageType type;
     std::variant<ScanRequest, ScanResult, ProgressEvent, ErrorMessage,
                  OpenGuiRequest, GuiOpenedEvent, GuiClosedEvent, CloseGuiRequest,
+                 PluginLoadedEvent, ShowGuiRequest, CloseSessionRequest,
                  ParameterListEvent, ParameterValuesEvent,
                  GetStateRequest, GetStateResponse, SetStateRequest, SetStateResponse,
                  PresetListEvent, LoadPresetRequest, LoadPresetResponse, PresetLoadedEvent> payload;

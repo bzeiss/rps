@@ -42,6 +42,14 @@ public:
                                 const rps::v1::ClosePluginGuiRequest* request,
                                 rps::v1::ClosePluginGuiResponse* response) override;
 
+    grpc::Status ShowPluginGui(grpc::ServerContext* context,
+                               const rps::v1::ShowPluginGuiRequest* request,
+                               rps::v1::ShowPluginGuiResponse* response) override;
+
+    grpc::Status ClosePluginSession(grpc::ServerContext* context,
+                                    const rps::v1::ClosePluginSessionRequest* request,
+                                    rps::v1::ClosePluginSessionResponse* response) override;
+
     grpc::Status GetPluginState(grpc::ServerContext* context,
                                 const rps::v1::GetPluginStateRequest* request,
                                 rps::v1::GetPluginStateResponse* response) override;

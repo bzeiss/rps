@@ -59,6 +59,12 @@ public:
         uint32_t height = 600;
     };
 
+    /// Load the plugin from disk WITHOUT creating a GUI.
+    /// Sets up the plugin for audio processing, state, presets, etc.
+    /// @param pluginPath Filesystem path to the plugin binary.
+    /// @throws std::runtime_error on failure.
+    virtual void loadPlugin(const boost::filesystem::path& pluginPath) = 0;
+
     /// Load the plugin and prepare its GUI for display.
     /// @param pluginPath Filesystem path to the plugin binary.
     /// @return OpenResult with plugin name and initial GUI dimensions.
@@ -74,6 +80,14 @@ public:
 
     /// Request the GUI to close from another thread (e.g. IPC command).
     virtual void requestClose() = 0;
+
+    /// Tear down the GUI window and format-specific GUI resources.
+    /// The plugin stays loaded for headless operation (audio, state, presets).
+    /// Must be called after runEventLoop() exits and before a potential re-open.
+    virtual void destroyGui() = 0;
+
+    /// Get the loaded plugin's display name.
+    virtual std::string getPluginName() const = 0;
 
     /// Get the full list of parameters. Called once after the plugin GUI is opened.
     virtual std::vector<rps::ipc::PluginParameterInfo> getParameters() = 0;

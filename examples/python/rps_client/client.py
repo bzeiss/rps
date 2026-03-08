@@ -102,9 +102,21 @@ class RpsClient:
         return self._stub.OpenPluginGui(request)
 
     def close_plugin_gui(self, plugin_path: str) -> rps_pb2.ClosePluginGuiResponse:
-        """Close a currently open plugin GUI."""
+        """Close a currently open plugin GUI window (session stays alive)."""
         return self._stub.ClosePluginGui(
             rps_pb2.ClosePluginGuiRequest(plugin_path=plugin_path)
+        )
+
+    def show_plugin_gui(self, plugin_path: str) -> rps_pb2.ShowPluginGuiResponse:
+        """Show the GUI window for a headless plugin session."""
+        return self._stub.ShowPluginGui(
+            rps_pb2.ShowPluginGuiRequest(plugin_path=plugin_path)
+        )
+
+    def close_plugin_session(self, plugin_path: str) -> rps_pb2.ClosePluginSessionResponse:
+        """Close the entire plugin session (terminates the host process)."""
+        return self._stub.ClosePluginSession(
+            rps_pb2.ClosePluginSessionRequest(plugin_path=plugin_path)
         )
 
     def get_plugin_state(self, plugin_path: str) -> rps_pb2.GetPluginStateResponse:

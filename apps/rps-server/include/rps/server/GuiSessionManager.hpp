@@ -52,8 +52,14 @@ public:
                  grpc::ServerWriter<rps::v1::PluginEvent>* writer,
                  const AudioConfig& audioConfig = {});
 
-    /// Close a specific GUI session by plugin path.
+    /// Close a specific GUI window by plugin path (process stays alive).
     bool closeGui(const std::string& pluginPath);
+
+    /// Show the GUI for an existing headless session.
+    bool showGui(const std::string& pluginPath);
+
+    /// Close the entire session (terminates the host process).
+    bool closeSession(const std::string& pluginPath);
 
     /// Close all open GUI sessions (for server shutdown).
     void closeAll();
