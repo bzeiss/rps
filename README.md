@@ -132,7 +132,7 @@ cmake --build build --config Release
 *Note: The default `x64-linux` triplet in vcpkg automatically builds static libraries.*
 ```bash
 # Ensure you have build tools installed:
-# Ubuntu: sudo apt install build-essential cmake ninja-build pkg-config curl zip unzip tar
+# Ubuntu: sudo apt install build-essential cmake ninja-build pkg-config curl zip unzip tar autoconf autoconf-archive automake libtool
 # Fedora: sudo dnf install gcc-c++ cmake ninja-build pkgconf-pkg-config curl zip unzip tar autoconf autoconf-archive automake libtool
 
 # Enable VST2 with custom SDK path if needed: -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=/path/to/vstsdk2.4
