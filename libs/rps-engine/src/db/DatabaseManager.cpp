@@ -200,6 +200,113 @@ void DatabaseManager::initializeSchema() {
     tryAddColumn("ALTER TABLE vst3_classes ADD COLUMN class_flags INTEGER;");
     tryAddColumn("ALTER TABLE vst3_classes ADD COLUMN sub_categories TEXT;");
     tryAddColumn("ALTER TABLE vst3_classes ADD COLUMN sdk_version TEXT;");
+
+    // -----------------------------------------------------------------------
+    // Indexes — CREATE INDEX IF NOT EXISTS is safe for incremental migration.
+    // -----------------------------------------------------------------------
+
+    // plugins: covering index for ListPlugins gRPC query
+    // (WHERE status = 'SUCCESS' AND format = ? ORDER BY name)
+    // This serves the query as an index-only scan — no table access needed.
+    executeQuery("CREATE INDEX IF NOT EXISTS idx_plugins_status_format_name "
+                 "ON plugins(status, format, name);");
+
+    // plugins: format-only index for cache loading and format-filtered deletes
+    // (WHERE format IN (...))
+    executeQuery("CREATE INDEX IF NOT EXISTS idx_plugins_format "
+                 "ON plugins(format);");
+
+    // plugins: NOCASE name index for future autocomplete / fuzzy search
+    executeQuery("CREATE INDEX IF NOT EXISTS idx_plugins_name_nocase "
+                 "ON plugins(name COLLATE NOCASE);");
+
+    // plugins: vendor index for future vendor-based filtering / autocomplete
+    executeQuery("CREATE INDEX IF NOT EXISTS idx_plugins_vendor "
+                 "ON plugins(vendor COLLATE NOCASE);");
+
+    // plugins: uid index for direct UID lookups (hosting / graph references)
+    executeQuery("CREATE INDEX IF NOT EXISTS idx_plugins_uid "
+                 "ON plugins(uid);");
+
+    // Child table FK indexes: SQLite does NOT auto-create indexes for
+    // FOREIGN KEY columns. Without these, every DELETE FROM parameters
+    // WHERE plugin_id = ? does a full table scan.
+    executeQuery("CREATE INDEX IF NOT EXISTS idx_parameters_plugin_id "
+                 "ON parameters(plugin_id);");
+    executeQuery("CREATE INDEX IF NOT EXISTS idx_aax_plugins_plugin_id "
+                 "ON aax_plugins(plugin_id);");
+    executeQuery("CREATE INDEX IF NOT EXISTS idx_vst3_classes_plugin_id "
+                 "ON vst3_classes(plugin_id);");
+    executeQuery("CREATE INDEX IF NOT EXISTS idx_vst3_compat_class_id "
+                 "ON vst3_compat_uids(class_id);");
+    executeQuery("CREATE INDEX IF NOT EXISTS idx_au_plugins_plugin_id "
+                 "ON au_plugins(plugin_id);");
+
+    // Skipped/blocked: format index for incremental cache loading
+    executeQuery("CREATE INDEX IF NOT EXISTS idx_plugins_skipped_format "
+                 "ON plugins_skipped(format);");
+    executeQuery("CREATE INDEX IF NOT EXISTS idx_plugins_blocked_format "
+                 "ON plugins_blocked(format);");
+
+    // -----------------------------------------------------------------------
+    // FTS5 Full-Text Search — enables fast fuzzy/autocomplete search over
+    // plugin names, vendors, and categories. The virtual table is kept in
+    // sync by triggers so callers never need to update it manually.
+    //
+    // Usage:  SELECT * FROM plugins_fts WHERE plugins_fts MATCH 'pro*'
+    //         ORDER BY rank;
+    //
+    // The content= and content_rowid= options make this a "content-sync"
+    // (external content) FTS table backed by the plugins table. The triggers
+    // keep it perfectly in sync.
+    // -----------------------------------------------------------------------
+    executeQuery(R"(
+        CREATE VIRTUAL TABLE IF NOT EXISTS plugins_fts USING fts5(
+            name, vendor, category, format,
+            content='plugins',
+            content_rowid='id',
+            tokenize='unicode61 remove_diacritics 2'
+        );
+    )");
+
+    // Triggers: automatically mirror plugins INSERT/UPDATE/DELETE to the FTS index.
+    // Only index successful plugins to keep the index lean and relevant.
+
+    // After INSERT: add to FTS if status is SUCCESS
+    executeQuery(R"(
+        CREATE TRIGGER IF NOT EXISTS plugins_fts_insert AFTER INSERT ON plugins
+        WHEN new.status = 'SUCCESS'
+        BEGIN
+            INSERT INTO plugins_fts(rowid, name, vendor, category, format)
+            VALUES (new.id, new.name, new.vendor, new.category, new.format);
+        END;
+    )");
+
+    // After UPDATE: remove old entry, add new one if SUCCESS
+    executeQuery(R"(
+        CREATE TRIGGER IF NOT EXISTS plugins_fts_update AFTER UPDATE ON plugins
+        BEGIN
+            INSERT INTO plugins_fts(plugins_fts, rowid, name, vendor, category, format)
+            VALUES ('delete', old.id, old.name, old.vendor, old.category, old.format);
+            INSERT INTO plugins_fts(rowid, name, vendor, category, format)
+            SELECT new.id, new.name, new.vendor, new.category, new.format
+            WHERE new.status = 'SUCCESS';
+        END;
+    )");
+
+    // After DELETE: remove from FTS
+    executeQuery(R"(
+        CREATE TRIGGER IF NOT EXISTS plugins_fts_delete AFTER DELETE ON plugins
+        BEGIN
+            INSERT INTO plugins_fts(plugins_fts, rowid, name, vendor, category, format)
+            VALUES ('delete', old.id, old.name, old.vendor, old.category, old.format);
+        END;
+    )");
+
+    // Rebuild FTS index from current plugins table contents.
+    // This handles migration from pre-FTS databases and repairs any drift.
+    // The 'rebuild' command is idempotent and fast for small tables (~3000 plugins ≈ 5ms).
+    executeQuery("INSERT INTO plugins_fts(plugins_fts) VALUES ('rebuild');");
 }
 
 void DatabaseManager::upsertPluginResult(const boost::filesystem::path& pluginPath, const rps::ipc::ScanResult& result,

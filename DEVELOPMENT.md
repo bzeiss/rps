@@ -258,10 +258,70 @@ FourCC codes containing non-ASCII bytes (invalid UTF-8) are sanitized to hex rep
 | `parameters` | Plugin parameters (1:N with `plugins`) |
 | `aax_plugins` | AAX variant-specific triad IDs and stem formats (1:N with `plugins`) |
 | `vst3_classes` | VST3 multi-class entries per plugin (1:N with `plugins`): `class_index`, `name`, `uid`, `category`, `vendor`, `version` |
+| `vst3_compat_uids` | VST3 compatibility UIDs for class migration (1:N with `vst3_classes`) |
+| `au_plugins` | Audio Unit type/subtype/manufacturer data (1:N with `plugins`) |
 | `plugins_skipped` | Non-scannable plugins (empty bundles, no binary) — checked during incremental scan |
 | `plugins_blocked` | Plugins that exhausted retries or timed out — checked during incremental scan |
+| `plugins_fts` | FTS5 virtual table for full-text search over `name`, `vendor`, `category`, `format` (see §3.10b) |
 
 All mutating database operations are wrapped in explicit `BEGIN TRANSACTION / COMMIT` blocks for both atomicity and performance.
+
+### 3.10a Database Indexes
+
+SQLite does **not** auto-create indexes for `FOREIGN KEY` columns (unlike PostgreSQL). Without explicit indexes, every `DELETE FROM parameters WHERE plugin_id = ?` does a full table scan. All indexes are created with `CREATE INDEX IF NOT EXISTS` for safe incremental migration.
+
+| Index | Table | Columns | Purpose |
+|---|---|---|---|
+| `idx_plugins_status_format_name` | `plugins` | `(status, format, name)` | **Covering index** for `ListPlugins` gRPC query — serves `WHERE status='SUCCESS' AND format=? ORDER BY name` as an index-only scan |
+| `idx_plugins_format` | `plugins` | `(format)` | Cache loading and format-filtered deletes: `WHERE format IN (...)` |
+| `idx_plugins_name_nocase` | `plugins` | `(name COLLATE NOCASE)` | Case-insensitive name search / autocomplete |
+| `idx_plugins_vendor` | `plugins` | `(vendor COLLATE NOCASE)` | Vendor-based filtering |
+| `idx_plugins_uid` | `plugins` | `(uid)` | Direct UID lookups for hosting / graph references |
+| `idx_parameters_plugin_id` | `parameters` | `(plugin_id)` | FK join — cascading deletes |
+| `idx_aax_plugins_plugin_id` | `aax_plugins` | `(plugin_id)` | FK join — cascading deletes |
+| `idx_vst3_classes_plugin_id` | `vst3_classes` | `(plugin_id)` | FK join — cascading deletes |
+| `idx_vst3_compat_class_id` | `vst3_compat_uids` | `(class_id)` | FK join — nested subselect delete |
+| `idx_au_plugins_plugin_id` | `au_plugins` | `(plugin_id)` | FK join — cascading deletes |
+| `idx_plugins_skipped_format` | `plugins_skipped` | `(format)` | Incremental cache loading |
+| `idx_plugins_blocked_format` | `plugins_blocked` | `(format)` | Incremental cache loading |
+
+### 3.10b Full-Text Search (FTS5)
+
+The `plugins_fts` virtual table enables fast fuzzy and autocomplete search over plugin names, vendors, and categories using SQLite's **FTS5** extension. FTS5 is compiled into the SQLite amalgamation via vcpkg (`"features": ["fts5"]`), so it works with static linking on all platforms.
+
+**Configuration:**
+- External content table backed by `plugins` (`content='plugins'`, `content_rowid='id'`) — no data duplication.
+- Tokenizer: `unicode61 remove_diacritics 2` — handles accented characters (e.g., "Révérence" matches "reverence").
+- Indexed columns: `name`, `vendor`, `category`, `format`.
+
+**Automatic sync:** Three triggers (`plugins_fts_insert`, `plugins_fts_update`, `plugins_fts_delete`) keep the FTS index in sync with the `plugins` table. Only plugins with `status = 'SUCCESS'` are indexed. The FTS index is rebuilt on every `initializeSchema()` call to handle migration from pre-FTS databases.
+
+**Query examples:**
+```sql
+-- Prefix search (autocomplete): "pro" → "Pro-Q 3", "ProChannel", "Pro-C 2"
+SELECT p.* FROM plugins p
+  JOIN plugins_fts ON plugins_fts.rowid = p.id
+  WHERE plugins_fts MATCH 'pro*'
+  ORDER BY rank;
+
+-- Multi-term search: "fab comp" → FabFilter Pro-C 2
+SELECT p.* FROM plugins p
+  JOIN plugins_fts ON plugins_fts.rowid = p.id
+  WHERE plugins_fts MATCH 'fab* comp*'
+  ORDER BY rank;
+
+-- Column-specific search: vendor only
+SELECT p.* FROM plugins p
+  JOIN plugins_fts ON plugins_fts.rowid = p.id
+  WHERE plugins_fts MATCH 'vendor:fabfilter'
+  ORDER BY rank;
+
+-- Combined with format filter
+SELECT p.* FROM plugins p
+  JOIN plugins_fts ON plugins_fts.rowid = p.id
+  WHERE plugins_fts MATCH 'reverb*' AND p.format = 'vst3'
+  ORDER BY rank;
+```
 
 ### 3.11 Build Robustness & Static Linking
 To ensure the scanner binaries are portable and do not fail with "missing DLL" errors (exit code 127 on Windows), we strictly **statically link** the C/C++ runtimes (`-static-libgcc -static-libstdc++`), Boost, and SQLite. On Windows, we use the MSYS2 Clang64 environment for the most compliant C++23 build.

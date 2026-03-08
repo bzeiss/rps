@@ -12,7 +12,10 @@
     "boost-dll",
     "boost-date-time",
     "boost-crc",
-    "sqlite3",
+    {
+      "name": "sqlite3",
+      "features": ["fts5"]
+    },
     "grpc",
     "protobuf",
     "spdlog",
