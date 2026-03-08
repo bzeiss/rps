@@ -39,7 +39,7 @@ This document tracks identified architectural improvements and known bugs across
 ### 6. Expand to Out-of-Process Plugin Engine (RPE)
 - **Description:** Evolve the scanner into a full execution engine. The core GUI hosting infrastructure is already in place — `rps-pluginhost-vst3` and `rps-pluginhost-clap` can remotely instantiate plugins, embed native GUIs in SDL3 windows with ImGui preset sidebars, stream parameter changes, manage presets, and save/restore state via gRPC. The Python TUI (`open-gui` command) provides an interactive client with fuzzy plugin selection.
 - **Remaining Work:**
-  - **Audio Data Plane:** Add real-time audio buffer streaming. Do not use gRPC for this due to jitter/latency. Establish a Shared Memory Ring Buffer (local) or fast UDP socket (network) negotiated via gRPC.
+  - **Audio Data Plane:** ~~Add real-time audio buffer streaming.~~ ✅ Shared memory ring buffer implemented (`rps-audio` library). gRPC audio streaming via `StreamAudio` bidi RPC also implemented (server proxies to shared memory ring). Real-time playback available via both shared memory (`play-audio`) and gRPC (`play-audio-grpc`) paths. **Remaining:** fast UDP socket for low-latency remote/network streaming.
   - **Plugin Chains:** Support hosting entire effects chains (e.g., EQ → Compressor) within a single worker process to prevent IPC context-switching overhead during the audio loop.
   - **Network Streaming:** Enable remote plugin hosting over the network (audio via UDP, control via gRPC).
   - **macOS/Linux GUI Hosting:** Extend the SDL3-based GUI hosting to macOS (Cocoa embedding) and Linux (X11/Wayland embedding).

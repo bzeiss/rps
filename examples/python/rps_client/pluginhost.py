@@ -526,6 +526,153 @@ class AudioPlayback:
             )
 
 
+class GrpcAudioPlayback:
+    """Manages background audio playback via gRPC StreamAudio.
+
+    Sends audio blocks at real-time pace through the gRPC bidi stream.
+    The server proxies them to the shared memory ring, and the pluginhost's
+    audio device plays the processed output through speakers.
+    """
+
+    def __init__(self):
+        self._thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
+
+    @property
+    def is_playing(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    def stop(self, con: Console | None = None) -> None:
+        """Stop any active gRPC playback."""
+        if not self.is_playing:
+            return
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=5)
+        if con:
+            con.print("[green]■ gRPC audio stopped.[/green]")
+
+    def start(
+        self, client: RpsClient, plugin_path: str, filepath: str,
+        con: Console, block_size: int, num_channels: int,
+        sample_rate: int, *, looped: bool,
+    ) -> None:
+        """Start playback via gRPC (non-blocking)."""
+        import os
+
+        # Stop any existing playback first
+        if self.is_playing:
+            con.print("[dim]Stopping previous gRPC playback...[/dim]")
+            self.stop()
+
+        if not os.path.isfile(filepath):
+            con.print(f"[red]✗ File not found:[/red] {filepath}")
+            return
+
+        # Read input WAV
+        try:
+            samples, wav_sr, wav_ch = read_wav(filepath)
+        except Exception as e:
+            con.print(f"[red]✗ Cannot read WAV:[/red] {e}")
+            return
+
+        n_samples = len(samples)
+        duration_s = n_samples / (wav_sr * wav_ch)
+
+        if wav_sr != sample_rate:
+            con.print(
+                f"  [yellow]⚠ Sample rate mismatch:[/yellow] "
+                f"WAV={wav_sr}Hz, session={sample_rate}Hz — proceeding anyway"
+            )
+
+        # Pad samples to full blocks
+        block_floats = block_size * num_channels
+        total_blocks = (n_samples + block_floats - 1) // block_floats
+        pad_len = total_blocks * block_floats - n_samples
+        if pad_len > 0:
+            samples.extend([0.0] * pad_len)
+
+        samples_bytes = samples.tobytes()
+        block_byte_size = block_floats * 4  # float32 = 4 bytes
+        block_duration_s = block_size / sample_rate
+
+        mode = "Looping (gRPC)" if looped else "Playing (gRPC)"
+        con.print(
+            f"  [bold green]▶ {mode}[/bold green] {n_samples // wav_ch} frames "
+            f"({duration_s:.1f}s) — type [bold]stop-audio[/bold] to stop"
+        )
+
+        self._stop_event.clear()
+        self._thread = threading.Thread(
+            target=self._worker,
+            args=(client, plugin_path, samples_bytes, block_byte_size,
+                  total_blocks, block_duration_s, looped, con, duration_s),
+            daemon=True,
+        )
+        self._thread.start()
+
+    def _worker(
+        self, client: RpsClient, plugin_path: str,
+        samples_bytes: bytes, block_byte_size: int,
+        total_blocks: int, block_duration_s: float,
+        looped: bool, con: Console, duration_s: float,
+    ) -> None:
+        """Background worker: streams audio via gRPC at real-time pace."""
+        loop_count = 0
+        start_time = time.monotonic()
+
+        try:
+            while not self._stop_event.is_set():
+                loop_count += 1
+
+                # Build a paced generator for this pass
+                def _paced_blocks():
+                    loop_start = time.monotonic()
+                    for i in range(total_blocks):
+                        if self._stop_event.is_set():
+                            return
+                        offset = i * block_byte_size
+                        yield samples_bytes[offset:offset + block_byte_size]
+
+                        # Pace: don't get too far ahead of real-time
+                        target_time = loop_start + (i - 3) * block_duration_s
+                        now = time.monotonic()
+                        if now < target_time:
+                            # Use stop_event.wait for interruptible sleep
+                            self._stop_event.wait(target_time - now)
+
+                # Start the bidi stream — reader thread drains output
+                try:
+                    response_iter = client.stream_audio(
+                        plugin_path, _paced_blocks(),
+                    )
+                    # Drain the response iterator (output goes to audio device)
+                    for _ in response_iter:
+                        if self._stop_event.is_set():
+                            break
+                except Exception:
+                    if not self._stop_event.is_set():
+                        raise
+
+                if not looped:
+                    break
+
+        except Exception:
+            pass
+
+        elapsed = time.monotonic() - start_time
+        if looped:
+            con.print(
+                f"  [green]■ Stopped[/green] after {loop_count} loop(s), "
+                f"{elapsed:.1f}s total [dim](gRPC)[/dim]"
+            )
+        else:
+            con.print(
+                f"  [green]✓ Played[/green] {duration_s:.1f}s "
+                f"through audio device [dim](gRPC)[/dim]"
+            )
+
+
 def _handle_send_audio_grpc(
     client: RpsClient, plugin_path: str, filepath: str, con: Console,
     block_size: int, num_channels: int, sample_rate: int,
@@ -643,6 +790,7 @@ def _open_gui_session(
     plugin_ready = threading.Event()  # Fires after initial load messages are printed
     audio_ring: AudioRing | None = None
     audio_playback = AudioPlayback()
+    grpc_audio_playback = GrpcAudioPlayback()
 
     def _commands_hint() -> str:
         """Build a compact one-line summary of available commands."""
@@ -651,7 +799,9 @@ def _open_gui_session(
         if enable_audio:
             cmds.extend(["send-audio", "send-audio-grpc"])
             if audio_device:
-                cmds.extend(["play-audio", "play-audio-looped", "stop-audio"])
+                cmds.extend(["play-audio", "play-audio-looped",
+                             "play-audio-grpc", "play-audio-looped-grpc",
+                             "stop-audio"])
         cmds.extend(["back", "quit", "help"])
         return ", ".join(cmds)
 
@@ -777,6 +927,7 @@ def _open_gui_session(
             if cmd in ("quit", "exit", "q"):
                 console.print("[yellow]Exiting...[/yellow]")
                 audio_playback.stop()
+                grpc_audio_playback.stop()
                 try:
                     client.close_plugin_session(plugin_path)
                 except Exception:
@@ -788,6 +939,7 @@ def _open_gui_session(
             elif cmd in ("back", "b"):
                 console.print("[yellow]Returning to plugin selection...[/yellow]")
                 audio_playback.stop()
+                grpc_audio_playback.stop()
                 try:
                     client.close_plugin_session(plugin_path)
                 except Exception:
@@ -931,8 +1083,45 @@ def _open_gui_session(
                 else:
                     audio_playback.start_play_audio_looped(audio_ring, parts[1], console)
 
+            elif cmd == "play-audio-grpc" and len(parts) == 2:
+                if not enable_audio:
+                    console.print(
+                        "[red]✗ Audio not enabled.[/red] "
+                        "Use [bold]open-gui --audio[/bold] to enable."
+                    )
+                elif not audio_device:
+                    console.print(
+                        "[red]✗ No audio device.[/red] "
+                        "Use [bold]open-gui --audio --audio-device sdl3[/bold] for real-time playback."
+                    )
+                else:
+                    grpc_audio_playback.start(
+                        client, plugin_path, parts[1], console,
+                        block_size=block_size, num_channels=num_channels,
+                        sample_rate=sample_rate, looped=False,
+                    )
+
+            elif cmd == "play-audio-looped-grpc" and len(parts) == 2:
+                if not enable_audio:
+                    console.print(
+                        "[red]✗ Audio not enabled.[/red] "
+                        "Use [bold]open-gui --audio[/bold] to enable."
+                    )
+                elif not audio_device:
+                    console.print(
+                        "[red]✗ No audio device.[/red] "
+                        "Use [bold]open-gui --audio --audio-device sdl3[/bold] for real-time playback."
+                    )
+                else:
+                    grpc_audio_playback.start(
+                        client, plugin_path, parts[1], console,
+                        block_size=block_size, num_channels=num_channels,
+                        sample_rate=sample_rate, looped=True,
+                    )
+
             elif cmd == "stop-audio":
                 audio_playback.stop(console)
+                grpc_audio_playback.stop(console)
 
             elif cmd == "help":
                 console.print("[bold]Session commands:[/bold]")
@@ -947,8 +1136,10 @@ def _open_gui_session(
                     console.print("  send-audio <file.wav> — Process via shared memory (write output file)")
                     console.print("  send-audio-grpc <file.wav> — Process via gRPC stream (networked)")
                     if audio_device:
-                        console.print("  play-audio <file.wav>  — Real-time playback (background)")
-                        console.print("  play-audio-looped <file.wav> — Looped playback (background)")
+                        console.print("  play-audio <file.wav>  — Real-time playback via shared memory")
+                        console.print("  play-audio-looped <file.wav> — Looped playback via shared memory")
+                        console.print("  play-audio-grpc <file.wav>  — Real-time playback via gRPC")
+                        console.print("  play-audio-looped-grpc <file.wav> — Looped playback via gRPC")
                         console.print("  stop-audio            — Stop active playback")
                 console.print("  back                  — End session and return to plugin selection")
                 console.print("  quit                  — End session and exit")
@@ -967,6 +1158,7 @@ def _open_gui_session(
         session_done.set()  # Signal stream thread first to suppress gRPC errors
         console.print("\n[yellow]Interrupted — cleaning up...[/yellow]")
         audio_playback.stop()
+        grpc_audio_playback.stop()
         if audio_ring:
             try:
                 audio_ring.close()

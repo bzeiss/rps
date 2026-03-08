@@ -163,7 +163,7 @@ RPS can be used in five ways:
 1. **Standalone CLI** (`rps-standalone`) — run scans directly from the command line.
 2. **gRPC Server** (`rps-server`) — a long-lived daemon that accepts scan requests and plugin GUI hosting from any language client. See [gRPC Server](#grpc-server) and [Python TUI Client](#python-tui-client) below.
 3. **Plugin GUI Hosting** (`rps-pluginhost-vst3`, `rps-pluginhost-clap`) — isolated worker processes that open a plugin's native GUI in an SDL3 window with an ImGui preset browser sidebar. Driven via gRPC through `rps-server`.
-4. **Audio Processing** — send audio through hosted plugins via shared memory ring buffers. Use `open-gui --audio` in the Python client to enable audio, then `send-audio <file.wav>` to process a WAV file. For real-time playback through an audio device, use `open-gui --audio --audio-device sdl3`, then `play-audio <file.wav>` or `play-audio-looped <file.wav>`.
+4. **Audio Processing** — send audio through hosted plugins via shared memory ring buffers. Use `open-gui --audio` in the Python client to enable audio, then `send-audio <file.wav>` to process a WAV file. For real-time playback through an audio device, use `open-gui --audio --audio-device sdl3`, then `play-audio <file.wav>` or `play-audio-looped <file.wav>` (shared memory path). For network-transparent gRPC playback, use `play-audio-grpc <file.wav>` or `play-audio-looped-grpc <file.wav>`.
 5. **VST3 Scanner Master** (`vstscannermaster`) — drop-in replacement for Steinberg's `vstscannermaster.exe` that produces Cubase/Nuendo/Dorico-compatible XML cache files. See [VST3 Scanner Master](#vst3-scanner-master) below.
 
 ### Standalone CLI
@@ -408,8 +408,10 @@ uv run python -m rps_client open-gui --format vst3 --audio
 uv run python -m rps_client open-gui --format vst3 --audio --audio-device sdl3 -bs 512
 
 # Inside the interactive session:
-#   play-audio test.wav          — real-time playback through audio device
-#   play-audio-looped test.wav   — looped playback (Enter/Esc to stop)
+#   play-audio test.wav          — real-time playback via shared memory
+#   play-audio-looped test.wav   — looped playback via shared memory
+#   play-audio-grpc test.wav     — real-time playback via gRPC
+#   play-audio-looped-grpc test.wav — looped playback via gRPC
 ```
 
 Audio options for `open-gui`:
