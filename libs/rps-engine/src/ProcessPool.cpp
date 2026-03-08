@@ -308,8 +308,8 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
     try {
         auto connection = rps::ipc::MessageQueueConnection::createServer(ipcId);
 
-        std::vector<std::string> scanArgs = {"--ipc-id", ipcId, "--plugin-path", job.pluginPath.string()};
-        if (job.verbose) scanArgs.push_back("--verbose");
+        std::vector<std::string> scanArgs = {"--ipc-id", ipcId, "--plugin-path", job.pluginPath.string(),
+                                               "--worker-id", std::to_string(workerId)};
 
         bp::ipstream errStream;
         bp::ipstream outStream;
@@ -355,6 +355,10 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
             std::string line;
             while (std::getline(errStream, line)) {
                 std::string cleaned = stripAnsiCodes(line);
+                // Strip trailing \r left by std::getline on Windows (\r\n line endings)
+                if (!cleaned.empty() && cleaned.back() == '\r')
+                    cleaned.pop_back();
+                if (cleaned.empty()) continue;
                 {
                     std::lock_guard<std::mutex> lock(stderrMutex);
                     stderrLines.push_back(cleaned);
@@ -478,7 +482,7 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                         m_db->upsertPluginResult(job.pluginPath, res, elapsedMs, fileMtime, fileHash);
                         auto dbMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                             std::chrono::steady_clock::now() - dbT0).count();
-                        if (job.verbose) {
+                        {
                             std::cerr << "[Worker #" << workerId << " DBG] DB upsert: "
                                       << dbMs << "ms (" << res.parameters.size() << " params)\n";
                         }
@@ -590,7 +594,7 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
         try {
             auto cleanupT0 = std::chrono::steady_clock::now();
             auto logCleanup = [&](const char* step) {
-                if (job.verbose) {
+                {
                     auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::steady_clock::now() - cleanupT0).count();
                     std::cerr << "[Worker #" << workerId << " DBG] cleanup: " << step
@@ -620,7 +624,7 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
             deregisterChildProcess(workerId);
             logCleanup("wait() returned");
         } catch (const std::exception& ex) {
-            if (job.verbose) {
+            {
                 std::cerr << "[Worker #" << workerId << " DBG] cleanup exception: " << ex.what() << "\n";
             }
         }

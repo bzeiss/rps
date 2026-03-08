@@ -51,7 +51,6 @@ def scan(ctx, formats, mode, jobs, retries, timeout, limit, filter_str, single_p
             server_bin=server_bin,
             port=ctx.obj["port"],
             db=ctx.obj["db"],
-            log_level="debug" if verbose else "info",
         )
         click.echo(f"Starting rps-server ({server_bin})...")
     else:

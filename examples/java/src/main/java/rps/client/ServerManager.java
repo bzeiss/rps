@@ -16,15 +16,13 @@ public class ServerManager implements AutoCloseable {
     private final String binPath;
     private final int port;
     private final String dbPath;
-    private final String logLevel;
     private Process process;
     private WindowsJobObject windowsJob;
 
-    public ServerManager(String binPath, int port, String dbPath, String logLevel) {
+    public ServerManager(String binPath, int port, String dbPath) {
         this.binPath = binPath;
         this.port = port;
         this.dbPath = dbPath;
-        this.logLevel = logLevel;
     }
 
     public void start() throws IOException, InterruptedException {
@@ -46,8 +44,6 @@ public class ServerManager implements AutoCloseable {
         cmd.add(String.valueOf(port));
         cmd.add("--db");
         cmd.add(dbPath);
-        cmd.add("--log-level");
-        cmd.add(logLevel);
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.redirectError(ProcessBuilder.Redirect.DISCARD);

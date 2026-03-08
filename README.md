@@ -347,8 +347,6 @@ RPS Server Options:
   -p [ --port ] arg (=50051)       gRPC listen port
      --db arg (=rps-plugins.db)    Path to the SQLite database file
   -b [ --scanner-bin ] arg         Path to the scanner binary
-     --log arg (=rps-server.log)   Log file path
-     --log-level arg (=info)       Log level: trace, debug, info, warn, error
 ```
 
 ### gRPC API
@@ -422,6 +420,43 @@ Audio options for `open-gui`:
 | `--sample-rate` / `-sr` | 48000 | Audio sample rate (match your WAV) |
 | `--channels` / `-ch` | 2 | Channel count |
 | `--block-size` / `-bs` | 128 | Processing block size in samples |
+
+## Logging Configuration
+
+All RPS processes use **environment variables** for logging control. No CLI flags are needed — set the variables before launching any RPS tool, and child processes inherit them automatically.
+
+| Variable | Default | Description |
+|---|---|---|
+| `RPS_SERVER_LOGGING` | `false` | Enable file logging for `rps-server` |
+| `RPS_SERVER_LOGLEVEL` | `info` | Log level: `trace`, `debug`, `info`, `warn`, `error` |
+| `RPS_PLUGINSCANNER_LOGGING` | `false` | Enable file logging for scanner workers |
+| `RPS_PLUGINSCANNER_LOGLEVEL` | `info` | Log level for scanner workers |
+| `RPS_PLUGINHOST_LOGGING` | `false` | Enable file logging for plugin host workers |
+| `RPS_PLUGINHOST_LOGLEVEL` | `info` | Log level for plugin host workers |
+| `RPS_LOG_DIR` | *(auto)* | Directory for log files. Set automatically by `rps-server` to its CWD so child processes (scanner, pluginhost) write logs alongside the server. Override to redirect all logs elsewhere. |
+
+### Log File Names
+
+All log files are written to the directory specified by `RPS_LOG_DIR`. When launched via `rps-server`, this is automatically set to the server's working directory, so all logs appear alongside `rps-server.log`.
+
+| Process | Log File |
+|---|---|
+| `rps-server` | `rps-server.log` |
+| `rps-pluginscanner` | `rps-pluginscanner.worker_{N}.log` (one per worker) |
+| `rps-pluginhost` | `rps-pluginhost.{format}.{plugin_name}.log` |
+
+Log messages at `info` level and above are flushed immediately; `debug`/`trace` messages are flushed every 3 seconds.
+
+### Example: Diagnosing scanner timeouts
+
+```bash
+# Windows (PowerShell / cmd)
+set RPS_PLUGINSCANNER_LOGGING=true
+set RPS_PLUGINSCANNER_LOGLEVEL=debug
+rps-standalone --formats vst3
+
+# After the scan, check the per-worker log files to see where a plugin hung
+```
 
 ## Documentation
 

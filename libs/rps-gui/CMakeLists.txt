@@ -11,13 +11,13 @@ find_package(imgui CONFIG REQUIRED)
 
 target_link_libraries(rps-gui
     PUBLIC
+        rps-core
         rps-ipc
         rps-audio
         SDL3::SDL3
         imgui::imgui
         Boost::filesystem
         Boost::program_options
-        spdlog::spdlog
     PRIVATE
         rps_warnings
 )

@@ -24,6 +24,8 @@
 #pragma warning(pop)
 #endif
 #include <rps/ipc/Connection.hpp>
+#include <rps/core/LoggingInit.hpp>
+#include <spdlog/spdlog.h>
 #include <scanner.pb.h>
 #include <rps/scanner/IPluginFormatScanner.hpp>
 #include <rps/scanner/ClapScanner.hpp>
@@ -41,6 +43,8 @@
 #endif
 #include <rps/core/FormatTraits.hpp>
 
+// g_verbose is referenced by individual scanner implementations (extern bool g_verbose).
+// It's set based on the RPS_PLUGINSCANNER_LOGLEVEL environment variable.
 bool g_verbose = false;
 
 namespace rps::scanner {
@@ -82,7 +86,7 @@ int main(int argc, char* argv[]) {
         ("help,h", "Produce help message")
         ("ipc-id,i", po::value<std::string>(), "IPC connection handle ID")
         ("plugin-path,p", po::value<std::string>(), "Path to plugin to scan")
-        ("verbose,v", "Enable verbose/debug output");
+        ("worker-id,w", po::value<int>()->default_value(0), "Worker ID (for log file naming)");
         
     po::variables_map vm;
     try {
@@ -103,28 +107,29 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    g_verbose = vm.count("verbose") > 0;
+    int workerId = vm["worker-id"].as<int>();
+
+    // Initialize logging from RPS_PLUGINSCANNER_LOGGING / RPS_PLUGINSCANNER_LOGLEVEL
+    std::string logFileName = "rps-pluginscanner.worker_" + std::to_string(workerId) + ".log";
+    rps::core::initLogging("PLUGINSCANNER", logFileName);
+
+    // Set g_verbose based on the effective spdlog level (used by scanner implementations)
+    g_verbose = (spdlog::default_logger()->level() <= spdlog::level::debug);
 
     std::string ipcId = vm["ipc-id"].as<std::string>();
     std::string pluginPathStr = vm.count("plugin-path") ? vm["plugin-path"].as<std::string>() : "unknown";
     fs::path pluginPath(pluginPathStr);
 
-    // Stage logging: flushed immediately so orchestrator captures output even on crash
-    auto logStage = [&](const std::string& stage) {
-        if (g_verbose) {
-            std::cerr << "[scanner] " << pluginPath.filename().string() << ": " << stage << std::endl;
-        }
-    };
-
     try {
-        logStage("Connecting to IPC queue...");
+        spdlog::info("{}: Connecting to IPC queue...", pluginPath.filename().string());
         // 1. Connect to Orchestrator IPC Queue
         auto connection = rps::ipc::MessageQueueConnection::createClient(ipcId);
 
-        logStage("Waiting for ScanCommand...");
+        spdlog::info("{}: Waiting for ScanCommand...", pluginPath.filename().string());
         // 2. Wait for the ScanCommand (protobuf over MQ)
         rps::scanner::ScanCommand scanCmd;
         if (!connection->receiveProto(scanCmd, 5000)) {
+            spdlog::error("Failed to receive ScanCommand from Orchestrator.");
             std::cerr << "Failed to receive ScanCommand from Orchestrator.\n";
             return 1;
         }
@@ -133,7 +138,7 @@ int main(int argc, char* argv[]) {
         pluginPathStr = scanCmd.plugin_path();
         pluginPath = boost::filesystem::path(pluginPathStr);
 
-        logStage("Finding appropriate scanner...");
+        spdlog::info("{}: Finding {} scanner...", pluginPath.filename().string(), reqFormat);
         // 3. Find appropriate scanner
         auto scanners = rps::scanner::ScannerFactory::createAllScanners();
         rps::scanner::IPluginFormatScanner* activeScanner = nullptr;
@@ -155,6 +160,7 @@ int main(int argc, char* argv[]) {
         }
 
         if (!activeScanner && pluginPathStr != "CRASH_ME" && pluginPathStr != "HANG_ME") {
+            spdlog::error("{}: No scanner handles format '{}'", pluginPath.filename().string(), reqFormat);
             rps::scanner::ScannerEvent evtMsg;
             auto* err = evtMsg.mutable_error();
             err->set_error("Unsupported Format");
@@ -175,6 +181,7 @@ int main(int argc, char* argv[]) {
         // --- CRASH TEST SIMULATION ---
         if (pluginPathStr == "CRASH_ME") {
             progressCb(10, "Simulating crash...");
+            spdlog::error("Scanner triggering intentional crash!");
             std::cerr << "Scanner triggering intentional crash!\n";
             int* ptr = nullptr;
             *ptr = 42; // Segmentation fault
@@ -182,6 +189,7 @@ int main(int argc, char* argv[]) {
         
         if (pluginPathStr == "HANG_ME") {
             progressCb(10, "Simulating hang...");
+            spdlog::error("Scanner triggering intentional hang!");
             std::cerr << "Scanner triggering intentional hang!\n";
             while (true) {
                 std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -190,19 +198,17 @@ int main(int argc, char* argv[]) {
         // -----------------------------
 
         // 5. Execute Scan
-        logStage("Starting scan with " + activeScanner->getFormatName() + " scanner...");
+        spdlog::info("{}: Starting scan with {} scanner...",
+                     pluginPath.filename().string(), activeScanner->getFormatName());
         if (activeScanner) {
             try {
                 auto t0 = std::chrono::steady_clock::now();
                 auto result = activeScanner->scan(pluginPath, progressCb);
                 auto t1 = std::chrono::steady_clock::now();
 
-                if (g_verbose) {
-                    auto scanMs = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
-                    std::cerr << "[scanner] " << pluginPath.filename().string()
-                              << ": scan() returned in " << scanMs << "ms"
-                              << " (" << result.parameters.size() << " params)" << std::endl;
-                }
+                auto scanMs = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+                spdlog::debug("{}: scan() returned in {}ms ({} params)",
+                              pluginPath.filename().string(), scanMs, result.parameters.size());
 
                 // Convert C++ struct → proto at the IPC boundary
                 rps::scanner::ScannerEvent evtMsg;
@@ -232,14 +238,12 @@ int main(int argc, char* argv[]) {
                 bool sent = connection->sendProto(evtMsg);
                 auto t3 = std::chrono::steady_clock::now();
 
-                if (g_verbose) {
-                    auto sendMs = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
-                    std::cerr << "[scanner] " << pluginPath.filename().string()
-                              << ": IPC sendProto " << (sent ? "OK" : "FAILED")
-                              << " in " << sendMs << "ms" << std::endl;
-                }
+                auto sendMs = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
+                spdlog::debug("{}: IPC sendProto {} in {}ms",
+                              pluginPath.filename().string(), sent ? "OK" : "FAILED", sendMs);
             } catch (const std::exception& scanErr) {
                 std::string what = scanErr.what();
+                spdlog::error("{}: Scan error: {}", pluginPath.filename().string(), what);
                 std::cerr << "Scanner Fatal Error: " << what << "\n";
                 rps::scanner::ScannerEvent evtMsg;
                 auto* err = evtMsg.mutable_error();
@@ -253,6 +257,7 @@ int main(int argc, char* argv[]) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     } catch (const std::exception& e) {
+        spdlog::error("Scanner fatal error: {}", e.what());
         std::cerr << "Scanner Fatal Error: " << e.what() << "\n";
         // Fall through to _exit below
     }
@@ -267,5 +272,3 @@ int main(int argc, char* argv[]) {
     _exit(0);
 #endif
 }
-
-

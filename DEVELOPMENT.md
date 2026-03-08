@@ -60,7 +60,7 @@ We adhere to a set of strict constraints to ensure maximum compatibility, adopti
   - **Boost 1.90** (specifically `Boost.Process`, `Boost.Interprocess`, `Boost.JSON` (scanner only, for VST3 moduleinfo.json parsing), `Boost.Program_options`, `Boost.Filesystem`, `Boost.UUID`).
   - **SQLite3** (for the final output database).
   - **gRPC / Protobuf** (for the `rps-server` API layer).
-  - **spdlog** (structured logging for `rps-server`).
+  - **spdlog** (structured logging across all processes — server, scanner, pluginhost — controlled via environment variables).
   - Plugin SDK Headers (VST3, CLAP, LV2, AU, AAX, and optionally VST2.4).
   - **SDL3** (for plugin GUI hosting windows).
   - **Dear ImGui** (for the preset browser sidebar UI).
@@ -255,9 +255,31 @@ All mutating database operations are wrapped in explicit `BEGIN TRANSACTION / CO
 ### 3.11 Build Robustness & Static Linking
 To ensure the scanner binaries are portable and do not fail with "missing DLL" errors (exit code 127 on Windows), we strictly **statically link** the C/C++ runtimes (`-static-libgcc -static-libstdc++`), Boost, and SQLite. On Windows, we use the MSYS2 Clang64 environment for the most compliant C++23 build.
 
+### 3.12 Logging System
+
+All RPS processes use a unified logging system based on **spdlog**, controlled entirely via **environment variables** (`RPS_{PREFIX}_LOGGING` and `RPS_{PREFIX}_LOGLEVEL`). No CLI flags are used for logging.
+
+The shared helper `rps::core::initLogging()` in `libs/rps-core/src/LoggingInit.cpp`:
+- Reads `RPS_{PREFIX}_LOGGING` and `RPS_{PREFIX}_LOGLEVEL` from the environment.
+- Reads `RPS_LOG_DIR` to determine where log files are created (falls back to CWD).
+- When enabled: creates spdlog with stderr + file sinks at the requested level.
+- When disabled (default): sets spdlog level to `off` (all calls become near-zero-cost no-ops).
+- `flush_on(info)`: all info-level and above messages are flushed immediately (critical for short-lived processes like the scanner).
+- `flush_every(3s)`: debug/trace messages are flushed periodically.
+
+Log file location:
+- **`rps-server`** sets `RPS_LOG_DIR` to its own CWD at startup (via `_putenv_s`/`setenv`). This is inherited by child processes (scanner, pluginhost), which run in temp directories but write their logs alongside the server.
+
+Log file naming:
+- **`rps-server`**: `rps-server.log`
+- **`rps-pluginscanner`**: `rps-pluginscanner.worker_{N}.log` (worker ID passed via `--worker-id` from ProcessPool).
+- **`rps-pluginhost`**: `rps-pluginhost.{format}.{plugin_name}.log` (constructed from CLI args).
+
+The scanner's `g_verbose` global (used by individual scanner implementations like `Vst3Scanner.cpp` etc.) is driven by the effective spdlog level: `g_verbose = true` when the level is `debug` or `trace`.
+
 ---
 
-### 3.12 gRPC Server Architecture
+### 3.13 gRPC Server Architecture
 
 The `rps-server` application exposes the `rps::engine::ScanEngine` via a gRPC service defined in `proto/rps.proto`. The key insight is that the existing `ScanObserver` abstract interface is a natural event bus — `GrpcScanObserver` implements it and serializes each callback into a protobuf `ScanEvent` message written to the gRPC response stream.
 
@@ -268,13 +290,13 @@ Client (Python/C++/etc.)  ──gRPC──▶  RpsServiceImpl  ──▶  ScanEn
 ```
 
 - **One scan at a time**: `ScanEngine::m_scanning` atomic flag. Returns `ALREADY_EXISTS` gRPC status if busy.
-- **Logging**: `spdlog` with two sinks (stdout + file). Current verbose `std::cerr` output → `spdlog::debug()`. Normal → `spdlog::info()`. Errors → `spdlog::error()`.
+- **Logging**: `spdlog` with stderr + file sinks, controlled via `RPS_SERVER_LOGGING` / `RPS_SERVER_LOGLEVEL` environment variables (see §3.12).
 - **Shutdown**: `Shutdown` RPC triggers `grpc::Server::Shutdown()` asynchronously (after returning the response). Signal handlers (SIGINT/SIGTERM) also trigger graceful shutdown.
 - **Lifecycle**: Designed to be spawned and killed by a parent application. The Python example client demonstrates this pattern.
 
 ---
 
-### 3.13 Python TUI Client
+### 3.14 Python TUI Client
 
 The example Python client (`examples/python/`) demonstrates the full gRPC workflow:
 

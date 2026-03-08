@@ -23,14 +23,10 @@ class ServerManager:
         server_bin: str = "rps-server",
         port: int = 50051,
         db: str = "rps-plugins.db",
-        log_file: str = "rps-server.log",
-        log_level: str = "info",
     ):
         self.server_bin = server_bin
         self.port = port
         self.db = db
-        self.log_file = log_file
-        self.log_level = log_level
         self._process: subprocess.Popen | None = None
         self._windows_job: WindowsJobObject | None = None
         self._old_sigint_handler = None
@@ -67,8 +63,6 @@ class ServerManager:
             self.server_bin,
             "--port", str(self.port),
             "--db", self.db,
-            "--log", self.log_file,
-            "--log-level", self.log_level,
         ]
         self._process = subprocess.Popen(
             cmd,

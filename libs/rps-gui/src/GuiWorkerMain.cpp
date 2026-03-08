@@ -18,9 +18,8 @@
 #pragma warning(pop)
 #endif
 
+#include <rps/core/LoggingInit.hpp>
 #include <spdlog/spdlog.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
-#include <spdlog/sinks/basic_file_sink.h>
 
 #include <iostream>
 #include <thread>
@@ -212,22 +211,22 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
     dup2(STDERR_FILENO, STDOUT_FILENO);
 #endif
 
-    // Set up logging — both console and file for crash diagnostics
-    // (Must happen AFTER stdout redirect so console sink goes to stderr)
-    try {
-        auto consoleSink = std::make_shared<spdlog::sinks::stderr_color_sink_mt>();
-        auto fileSink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(
-            "rps-pluginhost.log", true);
-        auto logger = std::make_shared<spdlog::logger>(
-            "pluginhost", spdlog::sinks_init_list{consoleSink, fileSink});
-        logger->set_level(spdlog::level::debug);
-        logger->flush_on(spdlog::level::debug);  // Flush every message for crash diagnostics
-        // Include format in every log line for easy identification
-        logger->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] [" + format + "] %v");
-        spdlog::set_default_logger(logger);
-    } catch (...) {
-        // Fall back to default logger
-        spdlog::set_level(spdlog::level::debug);
+    // Set up logging via environment variables
+    // (Must happen AFTER stdout redirect so stderr sink goes to real stderr)
+    {
+        // Build log filename from format + plugin name
+        auto pluginFilename = boost::filesystem::path(pluginPath).stem().string();
+        // Sanitize: replace characters that are problematic in filenames
+        for (auto& c : pluginFilename) {
+            if (c == ' ' || c == '/' || c == '\\' || c == ':') c = '_';
+        }
+        std::string logFileName = "rps-pluginhost." + format + "." + pluginFilename + ".log";
+        rps::core::initLogging("PLUGINHOST", logFileName);
+
+        // For crash diagnostics: flush every message when logging is enabled
+        if (spdlog::default_logger()->level() != spdlog::level::off) {
+            spdlog::default_logger()->flush_on(spdlog::level::debug);
+        }
     }
 
     spdlog::info("=== rps-pluginhost [{}] starting ===", format);

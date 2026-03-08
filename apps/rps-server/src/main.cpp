@@ -1,8 +1,7 @@
 #include <rps/server/RpsServiceImpl.hpp>
+#include <rps/core/LoggingInit.hpp>
 #include <grpcpp/grpcpp.h>
 #include <spdlog/spdlog.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
-#include <spdlog/sinks/basic_file_sink.h>
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable: 4100)
@@ -57,9 +56,7 @@ int main(int argc, char* argv[]) {
 #else
             "rps-pluginscanner"
 #endif
-        ), "Path to the scanner binary")
-        ("log", po::value<std::string>()->default_value("rps-server.log"), "Log file path")
-        ("log-level", po::value<std::string>()->default_value("info"), "Log level: trace, debug, info, warn, error");
+        ), "Path to the scanner binary");
 
     po::variables_map vm;
     try {
@@ -75,26 +72,26 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    // --- Setup logging ---
-    std::string logFile = vm["log"].as<std::string>();
-    std::string logLevel = vm["log-level"].as<std::string>();
+    // --- Setup logging via environment variables ---
+    rps::core::initLogging("SERVER", "rps-server.log");
 
-    try {
-        auto consoleSink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-        auto fileSink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(logFile, true);
-        auto logger = std::make_shared<spdlog::logger>("rps", spdlog::sinks_init_list{consoleSink, fileSink});
-        spdlog::set_default_logger(logger);
-        spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] %v");
-
-        if (logLevel == "trace") spdlog::set_level(spdlog::level::trace);
-        else if (logLevel == "debug") spdlog::set_level(spdlog::level::debug);
-        else if (logLevel == "info") spdlog::set_level(spdlog::level::info);
-        else if (logLevel == "warn") spdlog::set_level(spdlog::level::warn);
-        else if (logLevel == "error") spdlog::set_level(spdlog::level::err);
-        else spdlog::set_level(spdlog::level::info);
-    } catch (const spdlog::spdlog_ex& ex) {
-        std::cerr << "Log init failed: " << ex.what() << std::endl;
-        return 1;
+    // Ensure RPS_LOG_DIR is set to an absolute path so child processes
+    // (scanner, pluginhost) running in temp directories resolve it correctly.
+    {
+        std::string logDir;
+        if (const char* envDir = std::getenv("RPS_LOG_DIR")) {
+            // User provided — resolve relative paths against server CWD
+            auto p = boost::filesystem::absolute(envDir);
+            logDir = p.string();
+        } else {
+            // Default to server's CWD
+            logDir = boost::filesystem::current_path().string();
+        }
+#ifdef _WIN32
+        _putenv_s("RPS_LOG_DIR", logDir.c_str());
+#else
+        setenv("RPS_LOG_DIR", logDir.c_str(), 1);
+#endif
     }
 
 #ifdef _WIN32
@@ -140,8 +137,6 @@ int main(int argc, char* argv[]) {
     spdlog::info("RPS Server starting on {}", serverAddress);
     spdlog::info("Database: {}", dbPath);
     spdlog::info("Scanner: {}", scannerPath.string());
-    spdlog::info("Log file: {}", logFile);
-    spdlog::info("Log level: {}", logLevel);
 
     // --- Build and start gRPC server ---
     rps::server::RpsServiceImpl service(dbPath, scannerPath.string());

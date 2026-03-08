@@ -96,17 +96,15 @@ static bool processDebugEnabled() {
 // ---------------------------------------------------------------------------
 class ServerManager {
 public:
-    ServerManager(const std::string& bin, int port, const std::string& db,
-                  const std::string& logLevel)
-        : m_bin(bin), m_port(port), m_db(db), m_logLevel(logLevel) {}
+    ServerManager(const std::string& bin, int port, const std::string& db)
+        : m_bin(bin), m_port(port), m_db(db) {}
 
     ~ServerManager() { stop(); }
 
     bool start(int timeoutSec = 10) {
         std::string cmd = m_bin
             + " --port " + std::to_string(m_port)
-            + " --db " + m_db
-            + " --log-level " + m_logLevel;
+            + " --db " + m_db;
 
 #ifdef _WIN32
         STARTUPINFOA si{};
@@ -141,7 +139,7 @@ public:
         // Fork + exec on POSIX
         m_pid = fork();
         if (m_pid == 0) {
-            // Suppress stdout/stderr — server logs to file already
+            // Suppress stdout/stderr — server logs to file when env vars are set
             int devnull = open("/dev/null", O_WRONLY);
             if (devnull >= 0) {
                 dup2(devnull, STDOUT_FILENO);
@@ -151,7 +149,6 @@ public:
             execlp(m_bin.c_str(), m_bin.c_str(),
                    "--port", std::to_string(m_port).c_str(),
                    "--db", m_db.c_str(),
-                   "--log-level", m_logLevel.c_str(),
                    nullptr);
             _exit(1);
         }
@@ -229,7 +226,6 @@ private:
     std::string m_bin;
     int m_port;
     std::string m_db;
-    std::string m_logLevel;
     bool m_running = false;
 #ifdef _WIN32
     HANDLE m_processHandle = nullptr;
@@ -743,9 +739,8 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        std::string logLevel = vm.count("verbose") ? "debug" : "info";
         mgr = std::make_unique<ServerManager>(
-            serverBin, vm["port"].as<int>(), vm["db"].as<std::string>(), logLevel);
+            serverBin, vm["port"].as<int>(), vm["db"].as<std::string>());
 
         std::cout << "Starting rps-server (" << serverBin << ")...\n";
         if (!mgr->start()) {

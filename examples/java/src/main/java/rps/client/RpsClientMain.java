@@ -54,7 +54,7 @@ public class RpsClientMain {
 
         String serverBin = ServerManager.findServerBinary();
         final boolean ownServer = serverBin != null;
-        try (ServerManager server = (serverBin != null) ? new ServerManager(serverBin, port, dbPath, "info") : null) {
+        try (ServerManager server = (serverBin != null) ? new ServerManager(serverBin, port, dbPath) : null) {
             if (server != null) {
                 Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                     try { server.close(); } catch (Exception ignored) {}
