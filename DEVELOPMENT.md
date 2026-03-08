@@ -30,21 +30,21 @@ RPS solves this problem by using a strict **multi-process architecture**:
 
 5. **`rps-pluginscanner`** (The Worker)
    - A disposable, isolated process.
-   - It connects to the engine via IPC (Inter-Process Communication), receives a `ScanRequest`, and loads a single target plugin into its own memory space.
-   - It extracts the necessary metadata (name, parameters, inputs/outputs) and reports it back via `ProgressEvent` and `ScanResult` messages.
+   - It connects to the engine via IPC (Boost.Interprocess message queues with Protobuf serialization), receives a `ScanCommand`, and loads a single target plugin into its own memory space.
+   - It extracts the necessary metadata (name, parameters, inputs/outputs) and reports it back via `ScanProgressEvent` and `ScanResultEvent` messages.
 
 6. **`rps-pluginhost-vst3`** (VST3 GUI Host Worker)
    - An isolated process that loads a VST3 plugin, creates an SDL3 window, and embeds the plugin's native editor view.
    - Features an ImGui preset browser sidebar (collapsible, searchable, multi-column table).
    - Discovers presets from `IUnitInfo` (`IProgramListData`) and `.vstpreset` file scanning across standard directories (`%APPDATA%/VST3 Presets/`, `Documents/VST3 Presets/`, `%COMMONPROGRAMFILES%/VST3 Presets/`) with vendor-agnostic matching.
    - Loads presets via `IUnitInfo` + minimal audio process pass, or `.vstpreset` file parsing (inline binary parser for component/controller state chunks).
-   - Communicates with the server via the same IPC message queues.
+   - Communicates with the server via length-prefixed Protobuf over stdin/stdout pipes.
 
 7. **`rps-pluginhost-clap`** (CLAP GUI Host Worker)
    - An isolated process that loads a CLAP plugin, creates an SDL3 window, and embeds the plugin's native editor view.
    - Same ImGui preset sidebar architecture as the VST3 host.
    - Discovers and loads presets via the CLAP preset-load extension.
-   - Communicates with the server via IPC message queues.
+   - Communicates with the server via length-prefixed Protobuf over stdin/stdout pipes.
 
 ---
 
@@ -57,7 +57,7 @@ We adhere to a set of strict constraints to ensure maximum compatibility, adopti
 - **Compilers**: The project must build cleanly with **Clang**, **GCC**, and **MSVC**.
 - **Allowed Dependencies**:
   - The C++ Standard Template Library (STL).
-  - **Boost 1.90** (specifically `Boost.Process`, `Boost.Interprocess`, `Boost.JSON`, `Boost.Program_options`, `Boost.Filesystem`, `Boost.UUID`).
+  - **Boost 1.90** (specifically `Boost.Process`, `Boost.Interprocess`, `Boost.JSON` (scanner only, for VST3 moduleinfo.json parsing), `Boost.Program_options`, `Boost.Filesystem`, `Boost.UUID`).
   - **SQLite3** (for the final output database).
   - **gRPC / Protobuf** (for the `rps-server` API layer).
   - **spdlog** (structured logging for `rps-server`).
@@ -104,7 +104,10 @@ We have successfully completed **Phase 1 (IPC Foundation)**, **Phase 2 (Process 
 
 #### Libraries
 - `libs/rps-core/`: Format traits, registry, and filesystem discovery logic.
-- `libs/rps-ipc/`: Shared IPC transport layer and JSON serialization logic (engine ↔ scanner/host).
+- `libs/rps-ipc/`: Shared IPC transport layer (engine ↔ scanner/host). Provides two transport implementations:
+  - `Connection.hpp/.cpp` (`MessageQueueConnection`): Boost.Interprocess message queues with Protobuf serialization. Used by the scanner path.
+  - `StdioPipeConnection.hpp/.cpp`: Length-prefixed Protobuf over stdin/stdout pipes. Used by the pluginhost path.
+  - `Messages.hpp`: Shared C++ data structs (`ScanResult`, `ParameterInfo`) used internally by the engine.
 - `libs/rps-engine/`: **The reusable scan engine library** (namespace `rps::engine`). Contains all orchestration logic extracted from the original CLI app:
   - `ScanEngine.hpp/.cpp`: Top-level `ScanEngine` class with `runScan(ScanConfig, ScanObserver*)`. Thread-safe (one scan at a time).
   - `ScanConfig`: Struct encapsulating all scan parameters (formats, mode, jobs, timeout, etc.).
@@ -129,7 +132,7 @@ We have successfully completed **Phase 1 (IPC Foundation)**, **Phase 2 (Process 
 - `apps/rps-server/`: **gRPC server** exposing the scan engine and GUI hosting to any language.
   - `src/RpsServiceImpl.cpp`: Implements the `RpsService` gRPC service (StartScan, StopScan, GetStatus, Shutdown, OpenPluginGui, ClosePluginGui, ListPlugins, GetPluginState, SetPluginState, LoadPreset).
   - `src/GrpcScanObserver.cpp`: Implements `ScanObserver`, serializes events into protobuf `ScanEvent` messages and writes them to a `grpc::ServerWriter`.
-   - `src/GuiSessionManager.cpp`: Manages active plugin GUI sessions. Spawns the appropriate host worker process (`rps-pluginhost-vst3` or `rps-pluginhost-clap`), establishes IPC, creates shared memory audio ring buffers when audio is requested, and relays events (including `AudioReady`) between the gRPC stream and the host worker.
+   - `src/GuiSessionManager.cpp`: Manages active plugin GUI sessions. Spawns the appropriate host worker process (`rps-pluginhost-vst3` or `rps-pluginhost-clap`) with stdin/stdout pipes, establishes IPC via `StdioPipeConnection`, creates shared memory audio ring buffers when audio is requested, and relays events (including `AudioReady`) between the gRPC stream and the host worker.
   - Uses `spdlog` for dual-sink logging (stdout + file).
 
 - `apps/rps-pluginhost-vst3/`: **VST3 GUI host worker** process.
@@ -145,27 +148,48 @@ We have successfully completed **Phase 1 (IPC Foundation)**, **Phase 2 (Process 
 - `examples/python/`: Python TUI client using `rich` for per-worker progress bars. Features an interactive `open-gui` command with an `InquirerPy` fuzzy plugin selector (arrow keys, Page-Up/Down for 20-entry jumps, cursor position memory). Supports audio processing via `open-gui --audio` with two paths: `send-audio <file.wav>` (local shared memory) and `send-audio-grpc <file.wav>` (bidirectional gRPC streaming). Real-time audio device playback via `--audio-device sdl3` with `play-audio <file.wav>` and `play-audio-looped <file.wav>` (looped playback, Enter/Esc to stop). Spawns/kills `rps-server` as a subprocess.
 - `examples/cpp/`: C++ gRPC client with ANSI terminal TUI. Same features as the Python client: auto-spawns server, per-worker progress bars, streaming results.
 
-### 3.2 The IPC Protocol Schema
-Located in `libs/rps-ipc/include/rps/ipc/Messages.hpp`.
+### 3.2 The IPC Protocol
 
-Instead of binary serialization like Protobuf, we chose to serialize our IPC messages as **JSON strings** using `Boost.JSON`. This provides clean, extensible, and easily debuggable messages. If a scanner crashes, we can easily inspect the last JSON payload sent over the pipe.
+RPS uses **Protobuf** for all internal IPC serialization. The protocol definitions are split across two `.proto` files:
 
-The protocol consists of a wrapper `Message` struct containing a variant payload:
-- `ScanRequest`: Sent by Engine -> Scanner. Contains the path to the `.dll`/`.so`.
-- `ProgressEvent`: Sent by Scanner -> Engine. Contains percentage and status strings (e.g., "Instantiating Plugin"). Crucial for resetting the engine's watchdog timer.
-- `ScanResult`: Sent by Scanner -> Engine on success. Contains rich DAW-ready metadata: Name, Vendor, Version, UID, Description, URL, Categories, Parameter lists, and an `extraData` map for format-specific metadata (e.g., AAX variant triad IDs).
-- `ErrorMessage`: Sent by Scanner -> Engine on caught, non-fatal errors. Errors prefixed with `SKIP:` are treated as non-scannable plugins (stored in `plugins_skipped`).
+#### Scanner IPC (`proto/scanner.proto`)
+Used between the scan engine (`ProcessPool`) and `rps-pluginscanner`:
+- `ScanCommand`: Sent by Engine → Scanner. Contains the path to the plugin and the target format.
+- `ScannerEvent`: Sent by Scanner → Engine. A `oneof` union containing:
+  - `ScanResultEvent`: On success — rich DAW-ready metadata: Name, Vendor, Version, UID, Description, URL, Categories, Parameter lists, and an `extra_data` map for format-specific metadata (e.g., AAX variant triad IDs).
+  - `ScanProgressEvent`: Percentage and status strings (e.g., "Instantiating Plugin"). Crucial for resetting the engine's watchdog timer.
+  - `ScanErrorEvent`: On caught, non-fatal errors. Errors prefixed with `SKIP:` are treated as non-scannable plugins (stored in `plugins_skipped`).
+
+#### Pluginhost IPC (`proto/host.proto`)
+Used between `rps-server` and the GUI host workers (`rps-pluginhost-vst3`, `rps-pluginhost-clap`):
+- `HostCommand`: Commands from server → host (open GUI, close GUI, get params, load preset, save/restore state, etc.).
+- `HostEvent`: Events from host → server (GUI opened/closed, parameter updates, preset lists, audio ready, errors).
+
+Protobuf messages are converted to/from internal C++ structs (`rps::ipc::ScanResult`, `rps::ipc::ParameterInfo`) at the IPC boundary. The rest of the codebase (DatabaseManager, ScanObserver, etc.) uses the C++ structs directly.
 
 ### 3.3 The IPC Transport Layer
-Located in `libs/rps-ipc/include/rps/ipc/Connection.hpp`.
+Located in `libs/rps-ipc/`.
 
-We use **Boost.Interprocess** `message_queue` for fast, local, cross-platform communication. 
-Each worker is assigned a unique UUID by the engine at startup. The engine spawns two queues per worker (one for TX, one for RX) named using that UUID. The scanner receives this UUID via command-line arguments and connects to the existing queues.
+RPS uses two transport mechanisms, chosen to best fit each communication pattern:
+
+#### Scanner Path: Boost.Interprocess Message Queues
+The scanner path (`ProcessPool` ↔ `rps-pluginscanner`) uses **Boost.Interprocess** `message_queue`:
+- Each worker is assigned a unique UUID by the engine at startup. The engine spawns two queues per worker (one for TX, one for RX) named using that UUID.
+- The scanner receives this UUID via command-line arguments and connects to the existing queues.
+- **Rationale**: Message queues are well-suited for the scanner's crash-prone workflow. Stdout/stderr from the scanner process are captured separately for crash diagnostics, and the MQ transport keeps the IPC channel independent of the process's standard I/O streams.
+
+#### Pluginhost Path: stdin/stdout Pipes
+The pluginhost path (`GuiSessionManager` ↔ `rps-pluginhost-*`) uses **length-prefixed Protobuf over stdin/stdout pipes** (`StdioPipeConnection`):
+- Wire format: `[4-byte uint32_t length, little-endian][N-byte serialized protobuf payload]`.
+- The server spawns the host process with `boost::process` pipe redirection (`bp::std_in < cmdPipe`, `bp::std_out > evtPipe`).
+- **Plugin stdout protection**: At startup, before any plugin code runs, the host process saves the original stdout fd, then redirects stdout → stderr via `_dup2(2, 1)` (Windows) / `dup2(STDERR_FILENO, STDOUT_FILENO)` (POSIX). The saved original stdout fd is used for the IPC pipe. Any plugin stdout output goes harmlessly to stderr/logs.
+- OS-native handles are used directly for I/O with reliable timeout support (`PeekNamedPipe`/`ReadFile`/`WriteFile` on Windows, `poll`/`read`/`write` on POSIX).
+- **Rationale**: Pipes are simpler, eliminate named shared memory, and enable proper capture of plugin stdout without corrupting the IPC stream. No `--ipc-id` argument is needed.
 
 ### 3.4 Crash Isolation, Watchdog Logic, and UI Suppression
 The core feature of RPS is fully implemented in `ProcessPool.cpp` and `scanner/main.cpp`:
 
-1. The engine uses `boost::process` to spawn the scanner and passes the IPC UUID.
+1. The engine uses `boost::process` to spawn the scanner and passes the IPC UUID (for the scanner path) or uses pipe redirection (for the pluginhost path).
 2. **UI Suppression (Windows)**: The engine assigns the scanner child process to a Windows Job Object with `JOB_OBJECT_UILIMIT_HANDLES`. This silently blocks the plugin from creating Win32 `MessageBox` dialogs (which commonly happen during license/mutex failures) that would otherwise block the scanner indefinitely. The scanner itself also calls `SetErrorMode` to suppress OS-level crash dialogs.
 3. The engine enters a polling loop. Every time it receives a `ProgressEvent`, it updates a `lastResponseTime` timestamp.
 4. If the process dies (e.g., a **Segmentation Fault** / `0xC0000005`), the engine catches it gracefully, logs the exit code, and moves on.

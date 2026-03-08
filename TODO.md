@@ -11,12 +11,11 @@ This document tracks identified architectural improvements and known bugs across
 
 ## 🟠 High Priority (Architecture & Performance)
 
-### 2. Replace Internal IPC Mechanism (JSON/Named Queues -> Protobuf/Anonymous Pipes)
-- **Files:** `libs/rps-ipc/src/Connection.cpp`, `libs/rps-ipc/include/rps/ipc/Connection.hpp`
-- **Description:** Currently, communication between the Orchestrator and the Worker processes uses `boost::interprocess::message_queue` combined with Boost.JSON serialization. 
-  - **Issue 1:** Named queues can remain orphaned in the OS if the orchestrator is hard-killed (e.g., `SIGKILL`), causing conflicts on subsequent runs.
-  - **Issue 2:** JSON serialization is relatively slow and memory-intensive for large plugins with thousands of parameters.
-- **Action:** Since the project already uses Protobuf for the external gRPC API, switch the internal IPC to also use Protobuf (or FlatBuffers). Migrate the transport layer from named queues to anonymous pipes (Standard I/O streams using `boost::process`) to guarantee OS-level cleanup upon process termination.
+### ~~2. Replace Internal IPC Mechanism (JSON/Named Queues -> Protobuf)~~ ✅ DONE
+- **Status:** Completed. All internal IPC now uses Protobuf serialization.
+  - **Scanner path** (`ProcessPool` ↔ `rps-pluginscanner`): Protobuf over Boost.Interprocess message queues (`proto/scanner.proto`). MQ retained for crash diagnostics and stdout/stderr independence.
+  - **Pluginhost path** (`GuiSessionManager` ↔ `rps-pluginhost-*`): Length-prefixed Protobuf over stdin/stdout pipes (`proto/host.proto`, `StdioPipeConnection`). Plugin stdout redirected to stderr to protect the IPC stream.
+- **Removed:** `Messages.cpp` (JSON serialization), `Boost::json` dependency from `rps-ipc` and `rps-engine`. `Messages.hpp` retained as data-only structs.
 
 ## 🟡 Medium Priority (Enhancements)
 

@@ -11,9 +11,9 @@ Scanning audio plugins is notoriously unreliable. Many plugins contain bugs, fai
 RPS solves this by using a **multi-process architecture**:
 - **`rps-server`**: A gRPC server that coordinates scanning and plugin GUI hosting. It manages a pool of worker processes, handles watchdogs/timeouts, streams progress events to clients, and aggregates results into a central SQLite database. If a plugin crashes, only the worker dies—the server logs the failure and moves on.
 - **`rps-standalone`**: A standalone CLI wrapper around the same scan engine (no server needed).
-- **`rps-pluginscanner`**: The worker. It isolates the unsafe, third-party plugin code from the rest of your system.
-- **`rps-pluginhost-vst3`**: An isolated GUI host process for VST3 plugins. Opens the plugin's native editor in an SDL3 window with an ImGui preset sidebar. Supports real-time audio processing.
-- **`rps-pluginhost-clap`**: An isolated GUI host process for CLAP plugins, using the same SDL3/ImGui sidebar architecture. Supports real-time audio processing.
+- **`rps-pluginscanner`**: The worker. It isolates the unsafe, third-party plugin code from the rest of your system. Communicates with the engine via Protobuf over Boost.Interprocess message queues.
+- **`rps-pluginhost-vst3`**: An isolated GUI host process for VST3 plugins. Opens the plugin's native editor in an SDL3 window with an ImGui preset sidebar. Communicates via Protobuf over stdin/stdout pipes. Supports real-time audio processing.
+- **`rps-pluginhost-clap`**: An isolated GUI host process for CLAP plugins, using the same SDL3/ImGui sidebar architecture. Communicates via Protobuf over stdin/stdout pipes. Supports real-time audio processing.
 - **`rps-audio`** (`libs/rps-audio/`): Shared memory SPSC lock-free ring buffer library for low-latency audio transport between processes.
 - **`examples/`**: Client examples.
 
