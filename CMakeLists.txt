@@ -127,6 +127,7 @@ add_subdirectory(apps/rps-server)
 add_subdirectory(apps/rps-vstscannermaster)
 add_subdirectory(apps/rps-pluginhost-clap)
 add_subdirectory(apps/rps-pluginhost-vst3)
+add_subdirectory(apps/rps-pluginhost)
 
 # Example clients
 add_subdirectory(examples/cpp)

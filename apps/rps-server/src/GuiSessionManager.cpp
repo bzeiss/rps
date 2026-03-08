@@ -33,30 +33,34 @@ GuiSessionManager::GuiSessionManager(const std::string& hostBinDir)
     : m_hostBinDir(hostBinDir) {}
 
 boost::filesystem::path GuiSessionManager::resolveHostBinary(const std::string& format) const {
-    std::string binaryName;
-    if (format == "clap") {
-        binaryName = "rps-pluginhost-clap";
-    } else if (format == "vst3") {
-        binaryName = "rps-pluginhost-vst3";
-    } else {
-        // Future: "vst2" -> "rps-pluginhost-vst2", etc.
+    // Validate format
+    if (format != "clap" && format != "vst3") {
+        // Future: "vst2", "au", etc.
         return {};
     }
 
+    // Try unified binary first, then format-specific fallback
+    std::vector<std::string> candidates = {
+        "rps-pluginhost",            // unified binary (preferred)
+        "rps-pluginhost-" + format,  // format-specific fallback
+    };
+
 #ifdef _WIN32
-    binaryName += ".exe";
+    for (auto& c : candidates) c += ".exe";
 #endif
 
-    // Check in the host binary directory (typically next to rps-server)
-    boost::filesystem::path candidate = boost::filesystem::path(m_hostBinDir) / binaryName;
-    if (boost::filesystem::exists(candidate)) {
-        return candidate;
-    }
+    for (const auto& binaryName : candidates) {
+        // Check in the host binary directory (typically next to rps-server)
+        boost::filesystem::path candidate = boost::filesystem::path(m_hostBinDir) / binaryName;
+        if (boost::filesystem::exists(candidate)) {
+            return candidate;
+        }
 
-    // Fall back to current directory
-    candidate = boost::filesystem::path(binaryName);
-    if (boost::filesystem::exists(candidate)) {
-        return candidate;
+        // Fall back to current directory
+        candidate = boost::filesystem::path(binaryName);
+        if (boost::filesystem::exists(candidate)) {
+            return candidate;
+        }
     }
 
     return {};

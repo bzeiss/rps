@@ -57,3 +57,6 @@ examples/python/rps_client/__pycache__
 examples/python/rps_client/__pycache__/*
 examples/python/foo.vstpreset
 examples/python/*.wav
+examples/python/*.state
+examples/python/rps-pluginhost.exe
+examples/python/test.state
