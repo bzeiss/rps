@@ -257,23 +257,30 @@ bool SdlWindow::pollEvents(ResizeCallback /*resizeCb*/) {
 void SdlWindow::renderToolbar(int winW, int winH) {
     (void)winH;
     float toolbarH = static_cast<float>(kToolbarHeight);
-    float toolbarW = static_cast<float>(winW);
+    float sidebarW = static_cast<float>(getSidebarWidth());
+    float toolbarX = sidebarW;
+    float toolbarW = static_cast<float>(winW) - sidebarW;
 
-    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowPos(ImVec2(toolbarX, 0));
     ImGui::SetNextWindowSize(ImVec2(toolbarW, toolbarH));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6, 4));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.10f, 0.10f, 0.12f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_NavHighlight, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(0.10f, 0.10f, 0.12f, 1.0f));
     ImGui::Begin("##Toolbar", nullptr,
                  ImGuiWindowFlags_NoTitleBar |
                  ImGuiWindowFlags_NoResize |
                  ImGuiWindowFlags_NoMove |
                  ImGuiWindowFlags_NoCollapse |
                  ImGuiWindowFlags_NoScrollbar |
-                 ImGuiWindowFlags_NoBringToFrontOnFocus);
+                 ImGuiWindowFlags_NoBringToFrontOnFocus |
+                 ImGuiWindowFlags_NoNav);
 
     float btnH = toolbarH - 8.0f; // button height with padding
 
-    // --- Left: Presets toggle ---
+    // --- Left: Presets toggle (at left edge of toolbar = left edge of plugin area) ---
     if (m_sidebarCollapsed) {
         if (ImGui::Button("<< Presets", ImVec2(0, btnH))) {
             toggleSidebar(false);
@@ -292,6 +299,7 @@ void SdlWindow::renderToolbar(int winW, int winH) {
     ImVec2 deltaSize = ImGui::CalcTextSize("Delta");
     float btnPadX = ImGui::GetStyle().FramePadding.x * 2.0f;
 
+    // Right-aligned positions are relative to toolbar width (not window width)
     float rightEdge = toolbarW - ImGui::GetStyle().WindowPadding.x;
     float levelsW = levelsSize.x + btnPadX;
     float bypassW = bypassSize.x + btnPadX;
@@ -304,7 +312,8 @@ void SdlWindow::renderToolbar(int winW, int winH) {
     // Delta toggle
     ImGui::SameLine();
     ImGui::SetCursorPosX(deltaX);
-    if (m_deltaActive) {
+    bool deltaWasActive = m_deltaActive;
+    if (deltaWasActive) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.55f, 0.10f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.65f, 0.15f, 1.0f));
     }
@@ -314,14 +323,15 @@ void SdlWindow::renderToolbar(int winW, int winH) {
             m_toolbarCallbacks.onDeltaChanged(m_deltaActive);
         }
     }
-    if (m_deltaActive) {
+    if (deltaWasActive) {
         ImGui::PopStyleColor(2);
     }
 
     // Bypass toggle
     ImGui::SameLine();
     ImGui::SetCursorPosX(bypassX);
-    if (m_bypassActive) {
+    bool bypassWasActive = m_bypassActive;
+    if (bypassWasActive) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.80f, 0.20f, 0.20f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.90f, 0.30f, 0.30f, 1.0f));
     }
@@ -331,7 +341,7 @@ void SdlWindow::renderToolbar(int winW, int winH) {
             m_toolbarCallbacks.onBypassChanged(m_bypassActive);
         }
     }
-    if (m_bypassActive) {
+    if (bypassWasActive) {
         ImGui::PopStyleColor(2);
     }
 
@@ -343,8 +353,8 @@ void SdlWindow::renderToolbar(int winW, int winH) {
     ImGui::PopStyleColor();
 
     ImGui::End();
-    ImGui::PopStyleColor();
-    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(4);
+    ImGui::PopStyleVar(2);
 }
 
 void SdlWindow::renderSidebar() {
@@ -363,9 +373,9 @@ void SdlWindow::renderSidebar() {
     // Current effective sidebar width
     uint32_t effectiveWidth = getSidebarWidth();
 
-    // Sidebar content area starts below toolbar
-    float sidebarY = static_cast<float>(kToolbarHeight);
-    float sidebarH = static_cast<float>(winH) - sidebarY;
+    // Sidebar takes full window height (toolbar is beside it, not above)
+    float sidebarY = 0.0f;
+    float sidebarH = static_cast<float>(winH);
 
     // --- Splitter: only active when sidebar is expanded ---
     if (!m_sidebarCollapsed) {
@@ -674,19 +684,24 @@ void SdlWindow::renderSidebar() {
     // Render ImGui
     ImGui::Render();
 
-    // Draw the toolbar background
-    SDL_FRect toolbarFillRect{0.0f, 0.0f, static_cast<float>(winW), static_cast<float>(kToolbarHeight)};
-    SDL_SetRenderDrawColor(m_renderer, 25, 25, 30, 255);
-    SDL_RenderFillRect(m_renderer, &toolbarFillRect);
+    // Clear renderer to prevent stale pixel data from bleeding through
+    SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 255);
+    SDL_RenderClear(m_renderer);
 
-    // Draw the sidebar background (below toolbar)
+    // Draw the sidebar background (full height)
     if (!m_sidebarCollapsed) {
-        SDL_FRect sidebarFillRect{0.0f, static_cast<float>(kToolbarHeight),
+        SDL_FRect sidebarFillRect{0.0f, 0.0f,
                                   static_cast<float>(getSidebarWidth()),
-                                  static_cast<float>(winH) - static_cast<float>(kToolbarHeight)};
+                                  static_cast<float>(winH)};
         SDL_SetRenderDrawColor(m_renderer, 30, 30, 36, 255);
         SDL_RenderFillRect(m_renderer, &sidebarFillRect);
     }
+
+    // Draw the toolbar background (only over plugin area)
+    float tbX = static_cast<float>(getSidebarWidth());
+    SDL_FRect toolbarFillRect{tbX, 0.0f, static_cast<float>(winW) - tbX, static_cast<float>(kToolbarHeight)};
+    SDL_SetRenderDrawColor(m_renderer, 25, 25, 30, 255);
+    SDL_RenderFillRect(m_renderer, &toolbarFillRect);
 
     // Render ImGui draw data
     ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), m_renderer);
