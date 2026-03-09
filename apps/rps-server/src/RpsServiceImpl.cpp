@@ -3,7 +3,9 @@
 #include <rps/engine/db/DatabaseManager.hpp>
 #include <rps/audio/IAudioDevice.hpp>
 #include <rps/coordinator/GraphNode.hpp>
+#include <rps/coordinator/AudioBuffer.hpp>
 #include <rps/coordinator/ChannelFormat.hpp>
+#include <SDL3/SDL.h>
 #include <sqlite3.h>
 #include <spdlog/spdlog.h>
 #include <thread>
@@ -306,6 +308,203 @@ grpc::Status RpsServiceImpl::StreamAudio(
                             "No audio blocks received");
     }
 
+    // ---------------------------------------------------------------------------
+    // Graph mode: process blocks through GraphExecutor in-place
+    // ---------------------------------------------------------------------------
+    if (!firstBlock.graph_id().empty()) {
+        const auto& graphId = firstBlock.graph_id();
+        auto* executor = m_coordinator.getExecutor(graphId);
+        if (!executor || !executor->isPrepared()) {
+            return grpc::Status(grpc::StatusCode::NOT_FOUND,
+                                "No active graph executor for: " + graphId);
+        }
+
+        // Determine block size and channels from the graph config
+        auto* graph = m_coordinator.getGraph(graphId);
+        if (!graph) {
+            return grpc::Status(grpc::StatusCode::NOT_FOUND,
+                                "Graph not found: " + graphId);
+        }
+        const auto& cfg = graph->config();
+        const uint32_t numChannels = 2;  // chains are created with stereo
+        const uint32_t blockFloats = cfg.blockSize * numChannels;
+        const uint32_t blockBytes = blockFloats * sizeof(float);
+
+        // Find input/output node IDs (chain convention)
+        std::string inputNodeId = "chain_in";
+        std::string outputNodeId = "chain_out";
+
+        // --- Audio device for real-time playback (optional) ---
+        constexpr uint32_t kPlaybackRingBlocks = 16;
+        struct PlaybackRing {
+            std::vector<float> buffer;
+            std::atomic<uint32_t> writePos{0};
+            std::atomic<uint32_t> readPos{0};
+            uint32_t blockFloats = 0;
+            uint32_t blockSize = 0;
+            uint32_t numChannels = 0;
+        };
+        auto playbackRing = std::make_unique<PlaybackRing>();
+        playbackRing->blockFloats = blockFloats;
+        playbackRing->blockSize = cfg.blockSize;
+        playbackRing->numChannels = numChannels;
+        playbackRing->buffer.resize(kPlaybackRingBlocks * blockFloats, 0.0f);
+
+        // Audio device callback — reads from playback ring
+        auto audioCallback = [](const float* /*input*/, float* output,
+                                uint32_t numFrames, void* userData) {
+            auto* ring = static_cast<PlaybackRing*>(userData);
+            if (!ring || !output) return;
+
+            uint32_t rd = ring->readPos.load(std::memory_order_acquire);
+            uint32_t wr = ring->writePos.load(std::memory_order_acquire);
+
+            if (rd != wr) {
+                uint32_t slot = rd % kPlaybackRingBlocks;
+                const float* src = ring->buffer.data() + slot * ring->blockFloats;
+                uint32_t framesToCopy = std::min(numFrames, ring->blockSize);
+                std::memcpy(output, src, framesToCopy * ring->numChannels * sizeof(float));
+                if (framesToCopy < numFrames) {
+                    std::memset(output + framesToCopy * ring->numChannels, 0,
+                                (numFrames - framesToCopy) * ring->numChannels * sizeof(float));
+                }
+                ring->readPos.store(rd + 1, std::memory_order_release);
+            } else {
+                std::memset(output, 0, numFrames * ring->numChannels * sizeof(float));
+            }
+        };
+
+        std::unique_ptr<rps::audio::IAudioDevice> audioDevice;
+        const auto& audioDeviceBackend = firstBlock.audio_device();
+        if (!audioDeviceBackend.empty()) {
+            // Ensure SDL3 audio subsystem is initialized (safe to call multiple times)
+            if (!SDL_WasInit(SDL_INIT_AUDIO)) {
+                if (!SDL_Init(SDL_INIT_AUDIO)) {
+                    spdlog::error("SDL_Init(AUDIO) failed: {}", SDL_GetError());
+                } else {
+                    spdlog::info("SDL3 audio subsystem initialized");
+                }
+            }
+            audioDevice = rps::audio::createAudioDevice(audioDeviceBackend);
+            if (audioDevice) {
+                rps::audio::AudioDeviceConfig devCfg;
+                devCfg.sampleRate = cfg.sampleRate;
+                devCfg.blockSize = cfg.blockSize;
+                devCfg.numOutputChannels = numChannels;
+                devCfg.numInputChannels = 0;
+
+                if (audioDevice->open(devCfg, audioCallback, playbackRing.get())) {
+                    audioDevice->start();
+                    spdlog::info("StreamAudio(graph): opened {} audio device for playback",
+                                 audioDeviceBackend);
+                } else {
+                    spdlog::warn("StreamAudio(graph): failed to open {} audio device",
+                                 audioDeviceBackend);
+                    audioDevice.reset();
+                }
+            }
+        }
+
+        spdlog::info("StreamAudio (graph mode) started for: {}", graphId);
+
+        auto processOneBlock = [&](const rps::v1::AudioInputBlock& block) -> bool {
+            if (block.audio_data().size() != blockBytes) {
+                spdlog::warn("StreamAudio(graph): wrong block size {} (expected {})",
+                             block.audio_data().size(), blockBytes);
+                return true; // skip but continue
+            }
+
+            const auto* inData = reinterpret_cast<const float*>(block.audio_data().data());
+
+            // Build deinterleaved input buffer
+            coordinator::AudioBuffer inBuf(numChannels, cfg.blockSize);
+            for (uint32_t ch = 0; ch < numChannels; ++ch) {
+                auto* dst = inBuf.channel(ch);
+                for (uint32_t s = 0; s < cfg.blockSize; ++s) {
+                    dst[s] = inData[s * numChannels + ch];
+                }
+            }
+
+            // Process
+            std::unordered_map<std::string, coordinator::AudioBuffer> inputBuffers;
+            inputBuffers.emplace(inputNodeId, std::move(inBuf));
+
+            std::unordered_map<std::string, coordinator::AudioBuffer> outputBuffers;
+            outputBuffers.emplace(outputNodeId, coordinator::AudioBuffer(numChannels, cfg.blockSize));
+
+            try {
+                executor->processBlock(inputBuffers, outputBuffers);
+            } catch (const std::exception& e) {
+                spdlog::error("StreamAudio(graph): processBlock failed: {}", e.what());
+                return false;
+            }
+
+            // Re-interleave output
+            auto& outBuf = outputBuffers[outputNodeId];
+            std::vector<float> outInterleaved(blockFloats);
+            for (uint32_t ch = 0; ch < numChannels; ++ch) {
+                const auto* src = outBuf.channel(ch);
+                for (uint32_t s = 0; s < cfg.blockSize; ++s) {
+                    outInterleaved[s * numChannels + ch] = src[s];
+                }
+            }
+
+            // Write to playback ring for SDL audio device
+            if (audioDevice) {
+                uint32_t wr = playbackRing->writePos.load(std::memory_order_relaxed);
+                uint32_t rd = playbackRing->readPos.load(std::memory_order_acquire);
+                if (wr - rd < kPlaybackRingBlocks) {
+                    uint32_t slot = wr % kPlaybackRingBlocks;
+                    std::memcpy(
+                        playbackRing->buffer.data() + slot * blockFloats,
+                        outInterleaved.data(),
+                        blockFloats * sizeof(float));
+                    playbackRing->writePos.store(wr + 1, std::memory_order_release);
+                }
+                // else: playback ring full, skip (SDL will under-run gracefully)
+            }
+
+            rps::v1::AudioOutputBlock outBlock;
+            outBlock.set_audio_data(outInterleaved.data(), outInterleaved.size() * sizeof(float));
+            outBlock.set_sequence(block.sequence());
+            return stream->Write(outBlock);
+        };
+
+        // Process first block
+        if (!processOneBlock(firstBlock)) {
+            if (audioDevice) { audioDevice->stop(); audioDevice->close(); }
+            return grpc::Status::OK;
+        }
+
+        // Process remaining blocks
+        rps::v1::AudioInputBlock inBlock;
+        uint64_t totalBlocks = 1;
+        while (stream->Read(&inBlock)) {
+            if (!processOneBlock(inBlock)) break;
+            ++totalBlocks;
+        }
+
+        // Clean up audio device
+        if (audioDevice) {
+            // Let playback ring drain before stopping
+            for (int i = 0; i < 50; ++i) {
+                uint32_t rd = playbackRing->readPos.load(std::memory_order_acquire);
+                uint32_t wr = playbackRing->writePos.load(std::memory_order_acquire);
+                if (rd >= wr) break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+            audioDevice->stop();
+            audioDevice->close();
+            spdlog::info("StreamAudio(graph): audio device closed");
+        }
+
+        spdlog::info("StreamAudio (graph mode) ended for: {} ({} blocks)", graphId, totalBlocks);
+        return grpc::Status::OK;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Plugin mode: route through GUI session's audio ring (existing behavior)
+    // ---------------------------------------------------------------------------
     const auto& pluginPath = firstBlock.plugin_path();
     auto* ring = m_guiManager.getAudioRing(pluginPath);
     if (!ring) {

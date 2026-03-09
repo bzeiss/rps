@@ -159,6 +159,33 @@ class RpsClient:
 
         return self._stub.StreamAudio(_generate())
 
+    def stream_graph_audio(self, graph_id: str, input_blocks: Iterator,
+                           audio_device: str = ""):
+        """Open a bidirectional audio stream through a graph.
+
+        Args:
+            graph_id: The graph ID (must be active with an executor).
+            input_blocks: Iterator of raw audio block bytes (interleaved float32).
+            audio_device: Audio device backend for server-side playback (e.g. 'sdl3').
+
+        Returns:
+            Iterator of AudioOutputBlock messages from the server.
+        """
+        def _generate():
+            seq = 0
+            for block_bytes in input_blocks:
+                msg = rps_pb2.AudioInputBlock(
+                    graph_id=graph_id if seq == 0 else "",
+                    audio_data=block_bytes,
+                    sequence=seq,
+                )
+                if seq == 0 and audio_device:
+                    msg.audio_device = audio_device
+                yield msg
+                seq += 1
+
+        return self._stub.StreamAudio(_generate())
+
     def list_audio_devices(self, backend: str = ""):
         """List available audio device backends and their devices."""
         resp = self._stub.ListAudioDevices(

@@ -19,6 +19,7 @@
 #endif
 
 #include <rps/core/LoggingInit.hpp>
+#include <rps/core/CpuTopology.hpp>
 #include <spdlog/spdlog.h>
 
 #include <iostream>
@@ -232,6 +233,18 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
 
     spdlog::info("=== rps-pluginhost [{}] starting ===", format);
     spdlog::info("  plugin-path: {}", pluginPath);
+
+    // Pin GUI thread to E-cores (if hybrid CPU) to keep P-cores free for DSP
+    {
+        auto topo = rps::core::discoverTopology();
+        if (topo.isHybrid) {
+            if (rps::core::pinThreadToEfficiencyCores(topo)) {
+                spdlog::info("GUI thread pinned to {} E-cores", topo.eCoreCount);
+            } else {
+                spdlog::warn("Failed to pin GUI thread to E-cores");
+            }
+        }
+    }
 
     // Set up pipe-based IPC using saved stdout fd
     spdlog::info("Setting up pipe IPC...");

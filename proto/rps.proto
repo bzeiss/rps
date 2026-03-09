@@ -318,9 +318,11 @@ message AudioReady {
 // ---------------------------------------------------------------------------
 
 message AudioInputBlock {
-  string plugin_path = 1;          // Route to the correct GUI session
+  string plugin_path = 1;          // Route to a GUI session (single-plugin mode)
   bytes audio_data = 2;            // Interleaved float32 samples (blockSize × numChannels × 4 bytes)
   uint64 sequence = 3;             // Monotonic sequence number for ordering
+  string graph_id = 4;             // Route to a graph executor (chain/graph mode)
+  string audio_device = 5;         // Audio device backend for playback (e.g. "sdl3")
 }
 
 message AudioOutputBlock {

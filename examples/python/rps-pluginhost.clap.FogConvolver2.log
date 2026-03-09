@@ -1,0 +1,73 @@
+[2026-03-09 12:40:42.772] [info] =====================================================================
+[2026-03-09 12:40:42.772] [info] Logging initialized: file=rps-pluginhost.clap.FogConvolver2.log, level=debug
+[2026-03-09 12:40:42.772] [info] === rps-pluginhost [clap] starting ===
+[2026-03-09 12:40:42.772] [info]   plugin-path: C:\Program Files\Common Files\CLAP\AudioThing\FogConvolver2.clap
+[2026-03-09 12:40:42.772] [info] Setting up pipe IPC...
+[2026-03-09 12:40:42.772] [info] Pipe IPC connected
+[2026-03-09 12:40:42.772] [info] Initializing SDL3 audio subsystem...
+[2026-03-09 12:40:42.804] [info] SDL3 audio initialized
+[2026-03-09 12:40:42.804] [info] Loading plugin (headless)...
+[2026-03-09 12:40:42.804] [info] ClapGuiHost::loadPlugin(C:\Program Files\Common Files\CLAP\AudioThing\FogConvolver2.clap)
+[2026-03-09 12:40:42.804] [info]   Step 1: Loading CLAP DLL...
+[2026-03-09 12:40:42.819] [info]   DLL loaded at 0x7fffaaaf0000
+[2026-03-09 12:40:42.819] [info]   clap_entry found at 0x7fffab273010
+[2026-03-09 12:40:42.819] [info]   Step 2: Checking CLAP version and initializing entry...
+[2026-03-09 12:40:42.819] [info]   Plugin CLAP version: 1.1.8
+[2026-03-09 12:40:42.819] [info]   Calling entry->init()...
+[2026-03-09 12:40:42.819] [info]   entry->init() succeeded
+[2026-03-09 12:40:42.819] [info]   Step 3: Getting plugin factory...
+[2026-03-09 12:40:42.820] [info]   Factory has 1 plugin(s)
+[2026-03-09 12:40:42.820] [info]   Plugin: 'Fog Convolver 2' (id: com.AudioThing.FogConvolver2, vendor: AudioThing)
+[2026-03-09 12:40:42.820] [info]   Step 4: Creating CLAP host...
+[2026-03-09 12:40:42.820] [info]   Step 5: Creating plugin instance...
+[2026-03-09 12:40:42.879] [info]   Plugin instance created at 0x1b1bf75c0f0
+[2026-03-09 12:40:42.879] [info]   Calling plugin->init()...
+[2026-03-09 12:40:42.879] [debug] hostGetExtension: clap.log
+[2026-03-09 12:40:42.879] [debug] hostGetExtension: clap.thread-check
+[2026-03-09 12:40:42.879] [debug] hostGetExtension: clap.thread-pool
+[2026-03-09 12:40:42.879] [debug] hostGetExtension: clap.audio-ports
+[2026-03-09 12:40:42.879] [debug] hostGetExtension: clap.audio-ports-config
+[2026-03-09 12:40:42.879] [debug] hostGetExtension: clap.note-ports
+[2026-03-09 12:40:42.879] [debug] hostGetExtension: clap.timer-support
+[2026-03-09 12:40:42.879] [debug] hostGetExtension: clap.posix-fd-support
+[2026-03-09 12:40:42.879] [debug] hostGetExtension: clap.resource-directory.draft/0
+[2026-03-09 12:40:42.879] [debug] hostGetExtension: clap.latency
+[2026-03-09 12:40:42.879] [debug] hostGetExtension: clap.gui
+[2026-03-09 12:40:42.879] [debug] hostGetExtension: clap.params
+[2026-03-09 12:40:42.879] [debug] hostGetExtension: clap.track-info.draft/1
+[2026-03-09 12:40:42.879] [debug] hostGetExtension: clap.state
+[2026-03-09 12:40:42.879] [debug] hostGetExtension: clap.note-name
+[2026-03-09 12:40:42.879] [debug] hostGetExtension: clap.remote-controls.draft/2
+[2026-03-09 12:40:42.879] [debug] hostGetExtension: clap.voice-info
+[2026-03-09 12:40:42.879] [debug] hostGetExtension: clap.context-menu.draft/0
+[2026-03-09 12:40:42.879] [debug] hostGetExtension: clap.preset-load.draft/2
+[2026-03-09 12:40:42.879] [info]   plugin->init() succeeded
+[2026-03-09 12:40:42.879] [info]   Params extension found (count=true get_info=true get_value=true value_to_text=true)
+[2026-03-09 12:40:42.879] [info]   State extension found (save=true load=true)
+[2026-03-09 12:40:42.879] [info]   No preset-load extension
+[2026-03-09 12:40:42.879] [info]   No preset discovery factory — no presets available
+[2026-03-09 12:40:42.879] [info]   Plugin loaded successfully: 'Fog Convolver 2'
+[2026-03-09 12:40:42.879] [info] Plugin loaded: 'Fog Convolver 2'
+[2026-03-09 12:40:42.879] [info] getParameters: plugin has 121 parameters
+[2026-03-09 12:40:42.879] [info] Sending ParameterList (121 params)
+[2026-03-09 12:40:42.890] [info] Opening audio shared memory: rps_audio_95f910a7-fffd-4513-a64e-c7a74d83a5c5
+[2026-03-09 12:40:42.890] [info] SharedAudioRing::open('rps_audio_95f910a7-fffd-4513-a64e-c7a74d83a5c5')
+[2026-03-09 12:40:42.890] [info] Opened audio events: 'rps-audio-rps_audio_95f910a7-fffd-4513-a64e-c7a74d83a5c5-input', 'rps-audio-rps_audio_95f910a7-fffd-4513-a64e-c7a74d83a5c5-output'
+[2026-03-09 12:40:42.890] [info] SharedAudioRing opened: sr=48000, bs=128, ch=2, rings=8
+[2026-03-09 12:40:42.890] [info] ClapGuiHost::setupAudioProcessing(sr=48000, bs=128, ch=2)
+[2026-03-09 12:40:42.890] [info]   Audio ports: 1 input port(s), 1 output port(s)
+[2026-03-09 12:40:42.890] [info]   Input port [0] 'Input': 2 ch, type=stereo
+[2026-03-09 12:40:42.890] [info]   Output port [0] 'Output': 2 ch, type=stereo
+[2026-03-09 12:40:42.905] [info]   Audio processing active: 2 in → 2 out, bs=128, sr=48000, inPorts=1, outPorts=1
+[2026-03-09 12:40:42.905] [info] Audio processing setup: 2 in -> 2 out
+[2026-03-09 12:40:42.935] [info] SDL3AudioDevice: opened (48000Hz, 2 ch, bs=128)
+[2026-03-09 12:40:42.935] [info] SDL3AudioDevice: started
+[2026-03-09 12:40:42.935] [info] Audio device started: SDL3 (48000Hz, bs=128)
+[2026-03-09 12:40:42.935] [info] Audio worker thread created with 8MB stack
+[2026-03-09 12:40:42.935] [info] Entering headless IPC command loop...
+[2026-03-09 12:40:42.935] [info] Audio worker thread started (device mode, 8MB stack)
+[2026-03-09 12:40:42.935] [info] Audio worker thread elevated to Pro Audio priority
+[2026-03-09 12:40:42.935] [info] Delta delay buffer: 0 samples
+[2026-03-09 12:40:46.661] [info] start_processing() from audio thread
+[2026-03-09 12:40:46.661] [info] processAudioBlock: first call in=2 out=2 bs=128 ports=1/1
+[2026-03-09 12:40:46.662] [info]   process() returned status=1

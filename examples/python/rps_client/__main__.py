@@ -231,11 +231,13 @@ def load_state(ctx, plugin_path, input_file):
 
 @cli.command("chain")
 @click.option("--format", "format_filter", default="", help="Filter plugins by format for interactive select")
+@click.option("--audio", "enable_audio", is_flag=True, help="Enable audio processing commands")
 @click.option("--sample-rate", "-sr", default=48000, type=int, help="Audio sample rate (default: 48000)")
 @click.option("--channels", "-ch", default=2, type=int, help="Audio channel count (default: 2)")
 @click.option("--block-size", "-bs", default=128, type=int, help="Audio block size (default: 128)")
+@click.option("--audio-device", "-ad", default="", help="Audio device backend for real-time playback (e.g. 'sdl3')")
 @click.pass_context
-def chain(ctx, format_filter, sample_rate, channels, block_size):
+def chain(ctx, format_filter, enable_audio, sample_rate, channels, block_size, audio_device):
     """Interactive chain manager — create and manage multi-plugin graphs."""
     from rps_client.chain import run_chain
 
@@ -259,8 +261,9 @@ def chain(ctx, format_filter, sample_rate, channels, block_size):
             with RpsClient(server_addr) as client:
                 run_chain(
                     client, format_filter=format_filter,
+                    enable_audio=enable_audio,
                     sample_rate=sample_rate, block_size=block_size,
-                    num_channels=channels,
+                    num_channels=channels, audio_device=audio_device,
                 )
     except KeyboardInterrupt:
         click.echo("\nInterrupted.")
