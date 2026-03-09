@@ -114,6 +114,28 @@ public:
                               const rps::v1::DestroyChainRequest* request,
                               rps::v1::DestroyChainResponse* response) override;
 
+    // -- Graph detail & mutation (Phase 11) --
+
+    grpc::Status GetGraphDetail(grpc::ServerContext* context,
+                                const rps::v1::GetGraphDetailRequest* request,
+                                rps::v1::GetGraphDetailResponse* response) override;
+
+    grpc::Status RemoveNode(grpc::ServerContext* context,
+                            const rps::v1::RemoveNodeRequest* request,
+                            rps::v1::RemoveNodeResponse* response) override;
+
+    grpc::Status DisconnectNodes(grpc::ServerContext* context,
+                                 const rps::v1::DisconnectNodesRequest* request,
+                                 rps::v1::DisconnectNodesResponse* response) override;
+
+    grpc::Status OpenGraphNodeGui(grpc::ServerContext* context,
+                                  const rps::v1::OpenGraphNodeGuiRequest* request,
+                                  grpc::ServerWriter<rps::v1::PluginEvent>* writer) override;
+
+    grpc::Status CloseGraphNodeGui(grpc::ServerContext* context,
+                                   const rps::v1::CloseGraphNodeGuiRequest* request,
+                                   rps::v1::CloseGraphNodeGuiResponse* response) override;
+
     // Called by main to set the server pointer for shutdown
     void setServer(grpc::Server* server);
 

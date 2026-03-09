@@ -82,6 +82,12 @@ void Coordinator::destroyGraph(const std::string& graphId) {
     spdlog::info("Coordinator: destroyed graph '{}'", graphId);
 }
 
+void Coordinator::setGraphName(const std::string& graphId, const std::string& name) {
+    std::lock_guard lock(m_mutex);
+    auto& mg = findGraph(graphId);
+    mg.name = name;
+}
+
 // ---------------------------------------------------------------------------
 // Node management
 // ---------------------------------------------------------------------------
@@ -292,6 +298,7 @@ GraphInfo Coordinator::getGraphInfo(const std::string& graphId) {
 
     GraphInfo info;
     info.graphId = graphId;
+    info.name = mg.name;
     info.state = mg.state;
     info.nodeCount = static_cast<uint32_t>(mg.graph.nodeCount());
     info.edgeCount = static_cast<uint32_t>(mg.graph.edges().size());

@@ -87,6 +87,25 @@ service RpsService {
 
   // Destroy a chain (alias for DestroyGraph).
   rpc DestroyChain(DestroyChainRequest) returns (DestroyChainResponse);
+
+  // ---------------------------------------------------------------------------
+  // Graph detail & mutation (Phase 11)
+  // ---------------------------------------------------------------------------
+
+  // Get detailed graph content: all nodes and edges.
+  rpc GetGraphDetail(GetGraphDetailRequest) returns (GetGraphDetailResponse);
+
+  // Remove a node and its connected edges from a graph.
+  rpc RemoveNode(RemoveNodeRequest) returns (RemoveNodeResponse);
+
+  // Remove an edge (disconnect two nodes).
+  rpc DisconnectNodes(DisconnectNodesRequest) returns (DisconnectNodesResponse);
+
+  // Open a plugin GUI for a specific node within a graph.
+  rpc OpenGraphNodeGui(OpenGraphNodeGuiRequest) returns (stream PluginEvent);
+
+  // Close a plugin GUI for a specific node within a graph.
+  rpc CloseGraphNodeGui(CloseGraphNodeGuiRequest) returns (CloseGraphNodeGuiResponse);
 }
 
 // ---------------------------------------------------------------------------
@@ -574,6 +593,7 @@ message GetGraphInfoResponse {
   uint32 edge_count = 4;
   uint32 slice_count = 5;
   string strategy = 6;
+  string name = 7;                // User-assigned graph name (may be empty)
 }
 
 // ---------------------------------------------------------------------------
@@ -590,6 +610,7 @@ message CreateChainRequest {
   uint32 sample_rate = 2;         // e.g. 48000 (default if 0)
   uint32 block_size = 3;          // e.g. 128 (default if 0)
   uint32 num_channels = 4;        // e.g. 2 (stereo, default if 0)
+  string name = 5;                // Optional user-friendly name
 }
 
 message CreateChainResponse {
@@ -603,3 +624,67 @@ message DestroyChainRequest {
 }
 
 message DestroyChainResponse {}
+
+// ---------------------------------------------------------------------------
+// Phase 11: Graph detail & mutation messages
+// ---------------------------------------------------------------------------
+
+message GetGraphDetailRequest {
+  string graph_id = 1;
+}
+
+message GraphNodeDetail {
+  string node_id = 1;
+  string type = 2;                // "input", "output", "plugin", "gain", "mixer", etc.
+  string plugin_path = 3;         // Only for plugin nodes
+  string format = 4;              // Only for plugin nodes ("vst3", "clap")
+  uint32 input_channels = 5;      // Channel count of first input port
+  uint32 output_channels = 6;     // Channel count of first output port
+  uint32 input_port_count = 7;    // Number of input ports (valid indices: 0..N-1)
+  uint32 output_port_count = 8;   // Number of output ports (valid indices: 0..N-1)
+}
+
+message GraphEdgeDetail {
+  string edge_id = 1;
+  string source_node_id = 2;
+  uint32 source_port = 3;
+  string dest_node_id = 4;
+  uint32 dest_port = 5;
+}
+
+message GetGraphDetailResponse {
+  string graph_id = 1;
+  string name = 2;
+  string state = 3;               // "inactive", "active"
+  string strategy = 4;
+  repeated GraphNodeDetail nodes = 5;
+  repeated GraphEdgeDetail edges = 6;
+}
+
+message RemoveNodeRequest {
+  string graph_id = 1;
+  string node_id = 2;
+}
+
+message RemoveNodeResponse {}
+
+message DisconnectNodesRequest {
+  string graph_id = 1;
+  string edge_id = 2;
+}
+
+message DisconnectNodesResponse {}
+
+message OpenGraphNodeGuiRequest {
+  string graph_id = 1;
+  string node_id = 2;
+  bool enable_audio = 3;
+  string audio_device = 4;
+}
+
+message CloseGraphNodeGuiRequest {
+  string graph_id = 1;
+  string node_id = 2;
+}
+
+message CloseGraphNodeGuiResponse {}

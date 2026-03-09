@@ -620,6 +620,7 @@ grpc::Status RpsServiceImpl::GetGraphInfo(grpc::ServerContext* /*context*/,
     try {
         auto info = m_coordinator.getGraphInfo(request->graph_id());
         response->set_graph_id(info.graphId);
+        response->set_name(info.name);
         response->set_state(info.state == coordinator::GraphState::Active ? "active" : "inactive");
         response->set_node_count(info.nodeCount);
         response->set_edge_count(info.edgeCount);
@@ -658,6 +659,11 @@ grpc::Status RpsServiceImpl::CreateChain(grpc::ServerContext* /*context*/,
         coordinator::ChannelLayout layout{chanFmt, numChannels};
 
         auto graphId = m_coordinator.createGraph({sampleRate, blockSize});
+
+        // Store user-provided name if any
+        if (!request->name().empty()) {
+            m_coordinator.setGraphName(graphId, request->name());
+        }
 
         // Add input node
         m_coordinator.addNode(graphId, coordinator::createInputNode("chain_in", {layout, ""}));
@@ -712,4 +718,104 @@ grpc::Status RpsServiceImpl::DestroyChain(grpc::ServerContext* /*context*/,
     }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 11: Graph detail & mutation handlers
+// ---------------------------------------------------------------------------
+
+grpc::Status RpsServiceImpl::GetGraphDetail(grpc::ServerContext* /*context*/,
+                                             const rps::v1::GetGraphDetailRequest* request,
+                                             rps::v1::GetGraphDetailResponse* response) {
+    try {
+        auto info = m_coordinator.getGraphInfo(request->graph_id());
+        auto* graph = m_coordinator.getGraph(request->graph_id());
+        if (!graph) {
+            return grpc::Status(grpc::StatusCode::NOT_FOUND,
+                                std::format("Graph '{}' not found", request->graph_id()));
+        }
+
+        response->set_graph_id(info.graphId);
+        response->set_name(info.name);
+        response->set_state(info.state == coordinator::GraphState::Active ? "active" : "inactive");
+        switch (info.strategy) {
+            case coordinator::SlicingStrategy::Performance: response->set_strategy("performance"); break;
+            case coordinator::SlicingStrategy::Default: response->set_strategy("default"); break;
+            case coordinator::SlicingStrategy::CrashIsolation: response->set_strategy("crash_isolation"); break;
+        }
+
+        // Populate nodes
+        for (const auto& [nodeId, node] : graph->nodes()) {
+            auto* nd = response->add_nodes();
+            nd->set_node_id(nodeId);
+            nd->set_type(std::string(coordinator::nodeTypeToString(node.type)));
+            if (node.pluginConfig) {
+                nd->set_plugin_path(node.pluginConfig->pluginPath);
+                nd->set_format(node.pluginConfig->format);
+            }
+            nd->set_input_channels(static_cast<uint32_t>(node.inputPorts.size() > 0 ? node.inputPorts[0].layout.channelCount : 0));
+            nd->set_output_channels(static_cast<uint32_t>(node.outputPorts.size() > 0 ? node.outputPorts[0].layout.channelCount : 0));
+            nd->set_input_port_count(static_cast<uint32_t>(node.inputPorts.size()));
+            nd->set_output_port_count(static_cast<uint32_t>(node.outputPorts.size()));
+        }
+
+        // Populate edges
+        for (const auto& edge : graph->edges()) {
+            auto* ed = response->add_edges();
+            ed->set_edge_id(edge.id);
+            ed->set_source_node_id(edge.sourceNodeId);
+            ed->set_source_port(edge.sourcePort);
+            ed->set_dest_node_id(edge.destNodeId);
+            ed->set_dest_port(edge.destPort);
+        }
+
+        spdlog::debug("GetGraphDetail: graph={} nodes={} edges={}",
+                       request->graph_id(), graph->nodeCount(), graph->edges().size());
+        return grpc::Status::OK;
+    } catch (const std::exception& e) {
+        return grpc::Status(grpc::StatusCode::NOT_FOUND, e.what());
+    }
+}
+
+grpc::Status RpsServiceImpl::RemoveNode(grpc::ServerContext* /*context*/,
+                                         const rps::v1::RemoveNodeRequest* request,
+                                         rps::v1::RemoveNodeResponse* /*response*/) {
+    try {
+        m_coordinator.removeNode(request->graph_id(), request->node_id());
+        spdlog::info("RemoveNode: graph={} node={}", request->graph_id(), request->node_id());
+        return grpc::Status::OK;
+    } catch (const std::exception& e) {
+        return grpc::Status(grpc::StatusCode::NOT_FOUND, e.what());
+    }
+}
+
+grpc::Status RpsServiceImpl::DisconnectNodes(grpc::ServerContext* /*context*/,
+                                              const rps::v1::DisconnectNodesRequest* request,
+                                              rps::v1::DisconnectNodesResponse* /*response*/) {
+    try {
+        m_coordinator.disconnectNodes(request->graph_id(), request->edge_id());
+        spdlog::info("DisconnectNodes: graph={} edge={}", request->graph_id(), request->edge_id());
+        return grpc::Status::OK;
+    } catch (const std::exception& e) {
+        return grpc::Status(grpc::StatusCode::NOT_FOUND, e.what());
+    }
+}
+
+grpc::Status RpsServiceImpl::OpenGraphNodeGui(grpc::ServerContext* /*context*/,
+                                               const rps::v1::OpenGraphNodeGuiRequest* request,
+                                               grpc::ServerWriter<rps::v1::PluginEvent>* /*writer*/) {
+    // TODO: Implement per-node GUI hosting within graph mode
+    spdlog::warn("OpenGraphNodeGui: not yet implemented (graph={} node={})",
+                 request->graph_id(), request->node_id());
+    return grpc::Status(grpc::StatusCode::UNIMPLEMENTED, "Per-node GUI not yet implemented");
+}
+
+grpc::Status RpsServiceImpl::CloseGraphNodeGui(grpc::ServerContext* /*context*/,
+                                                const rps::v1::CloseGraphNodeGuiRequest* request,
+                                                rps::v1::CloseGraphNodeGuiResponse* /*response*/) {
+    // TODO: Implement per-node GUI close within graph mode
+    spdlog::warn("CloseGraphNodeGui: not yet implemented (graph={} node={})",
+                 request->graph_id(), request->node_id());
+    return grpc::Status(grpc::StatusCode::UNIMPLEMENTED, "Per-node GUI not yet implemented");
+}
+
 } // namespace rps::server
+

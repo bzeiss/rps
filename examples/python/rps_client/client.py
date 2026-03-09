@@ -247,6 +247,7 @@ class RpsClient:
         sample_rate: int = 48000,
         block_size: int = 128,
         num_channels: int = 2,
+        name: str = "",
     ) -> rps_pb2.CreateChainResponse:
         """Create a linear plugin chain.
 
@@ -271,7 +272,28 @@ class RpsClient:
                 sample_rate=sample_rate,
                 block_size=block_size,
                 num_channels=num_channels,
+                name=name,
             )
+        )
+
+    # -- Graph detail & mutation (Phase 11) --
+
+    def get_graph_detail(self, graph_id: str):
+        """Get detailed graph content: nodes and edges."""
+        return self._stub.GetGraphDetail(
+            rps_pb2.GetGraphDetailRequest(graph_id=graph_id)
+        )
+
+    def remove_node(self, graph_id: str, node_id: str):
+        """Remove a node and its connected edges."""
+        return self._stub.RemoveNode(
+            rps_pb2.RemoveNodeRequest(graph_id=graph_id, node_id=node_id)
+        )
+
+    def disconnect_nodes(self, graph_id: str, edge_id: str):
+        """Remove an edge (disconnect two nodes)."""
+        return self._stub.DisconnectNodes(
+            rps_pb2.DisconnectNodesRequest(graph_id=graph_id, edge_id=edge_id)
         )
 
     def destroy_chain(self, graph_id: str) -> rps_pb2.DestroyChainResponse:

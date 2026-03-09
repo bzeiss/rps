@@ -28,6 +28,7 @@ enum class GraphState : uint8_t {
 
 struct GraphInfo {
     std::string       graphId;
+    std::string       name;                           ///< User-assigned name
     GraphState        state = GraphState::Inactive;
     uint32_t          nodeCount = 0;
     uint32_t          edgeCount = 0;
@@ -64,6 +65,9 @@ public:
 
     /// Destroy a graph and all its resources. Deactivates first if active.
     void destroyGraph(const std::string& graphId);
+
+    /// Set a user-friendly name for a graph.
+    void setGraphName(const std::string& graphId, const std::string& name);
 
     // -- Node management --
 
@@ -127,6 +131,7 @@ public:
 private:
     struct ManagedGraph {
         Graph                       graph;
+        std::string                 name;              ///< User-assigned name
         GraphState                  state = GraphState::Inactive;
         SlicingStrategy             strategy = SlicingStrategy::Performance;
         std::unique_ptr<GraphExecutor> executor;  // In-process executor (Performance mode)
