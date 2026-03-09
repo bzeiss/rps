@@ -392,6 +392,52 @@ The example Python client (`examples/python/`) demonstrates the full gRPC workfl
 
 Dependencies: `grpcio`, `grpcio-tools`, `rich`, `click`, `InquirerPy` (see `examples/python/pyproject.toml`).
 
+#### Chain Manager Example Flow
+
+The `chain` command provides an interactive REPL for multi-plugin graph processing:
+
+```bash
+# Launch with audio enabled (SDL3 device, 48kHz, 128-sample blocks)
+uv run python -m rps_client chain --audio --sample-rate 48000 --audio-device sdl3 -bs 128
+```
+
+```
+chain> create --name "foo" "C:\Program Files\Common Files\VST3\AIR Channel Strip.vst3" "C:\Program Files\Common Files\CLAP\TAL-DAC.clap\TAL-DAC.clap"
+✓ Chain created: graph_0 ("foo")
+
+chain> info foo
+     Graph: graph_0 ("foo")
+     State: active | Nodes: 4 | Edges: 3 | Slices: 1
+
+chain> detail foo
+     Nodes: chain_in → plugin_0 → plugin_1 → chain_out
+     Edges: chain_in:0 → plugin_0:0, plugin_0:0 → plugin_1:0, plugin_1:0 → chain_out:0
+
+chain> deactivate foo
+✓ Graph deactivated (required before topology changes)
+
+chain> connect foo plugin_0:0 plugin_1:0
+✓ Edge created
+
+chain> disconnect foo e_1
+✓ Edge removed
+
+chain> remove-node foo plugin_1
+✓ Node removed
+
+chain> activate foo
+✓ Graph activated
+
+chain> destroy foo
+✓ Graph destroyed
+```
+
+Audio commands (require `--audio` flag):
+- `play-audio <id|name> <file.wav>` — real-time playback through the graph
+- `play-audio-looped <id|name> <file.wav>` — looped playback
+- `send-audio <id|name> <file.wav>` — offline process → `<name>_processed.wav`
+- `stop-audio` — stop playback
+
 ---
 
 ## 4. Next Steps
