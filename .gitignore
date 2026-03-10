@@ -73,3 +73,4 @@ vcpkg-manifest-install.log
 build.ninja
 CMakeCache.txt
 plans
+examples/python/rps-pluginhost.*.log

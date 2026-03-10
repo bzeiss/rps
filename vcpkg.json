@@ -19,7 +19,10 @@
     "grpc",
     "protobuf",
     "spdlog",
-    "sdl3",
+    {
+      "name": "sdl3",
+      "features": ["alsa"]
+    },
     {
       "name": "imgui",
       "features": ["sdl3-binding", "sdl3-renderer-binding", "docking-experimental"]

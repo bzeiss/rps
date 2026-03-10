@@ -26,6 +26,14 @@
 #include <chrono>
 #include <filesystem>
 #include <atomic>
+#include <mutex>
+
+#ifdef __linux__
+#include <poll.h>        // poll() for POSIX fd support
+#endif
+
+#include <clap/ext/timer-support.h>
+#include <clap/ext/posix-fd-support.h>
 
 namespace rps::scanner {
 
@@ -124,6 +132,82 @@ static clap_host_state_t s_hostState = {
     .mark_dirty = [](const clap_host_t*) {},
 };
 
+// ---------------------------------------------------------------------------
+// Timer support extension — Linux plugins use this for GUI repainting
+// ---------------------------------------------------------------------------
+struct RegisteredTimer {
+    clap_id id;
+    uint32_t periodMs;
+    std::chrono::steady_clock::time_point nextFire;
+};
+static std::mutex s_timerMutex;
+static std::vector<RegisteredTimer> s_timers;
+static clap_id s_nextTimerId = 1;
+
+static clap_host_timer_support_t s_hostTimerSupport = {
+    .register_timer = [](const clap_host_t*, uint32_t period_ms, clap_id* timer_id) -> bool {
+        std::lock_guard lock(s_timerMutex);
+        *timer_id = s_nextTimerId++;
+        s_timers.push_back({*timer_id, period_ms,
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(period_ms)});
+        spdlog::info("Timer registered: id={}, period={}ms", *timer_id, period_ms);
+        return true;
+    },
+    .unregister_timer = [](const clap_host_t*, clap_id timer_id) -> bool {
+        std::lock_guard lock(s_timerMutex);
+        auto it = std::remove_if(s_timers.begin(), s_timers.end(),
+            [timer_id](const RegisteredTimer& t) { return t.id == timer_id; });
+        if (it != s_timers.end()) {
+            s_timers.erase(it, s_timers.end());
+            spdlog::info("Timer unregistered: id={}", timer_id);
+            return true;
+        }
+        return false;
+    },
+};
+
+// ---------------------------------------------------------------------------
+// POSIX fd support extension — Linux plugins use this for X11 event delivery
+// ---------------------------------------------------------------------------
+#ifdef __linux__
+struct RegisteredFd {
+    int fd;
+    clap_posix_fd_flags_t flags;
+};
+static std::mutex s_fdMutex;
+static std::vector<RegisteredFd> s_fds;
+
+static clap_host_posix_fd_support_t s_hostPosixFdSupport = {
+    .register_fd = [](const clap_host_t*, int fd, clap_posix_fd_flags_t flags) -> bool {
+        std::lock_guard lock(s_fdMutex);
+        s_fds.push_back({fd, flags});
+        spdlog::info("POSIX fd registered: fd={}, flags=0x{:x}", fd, flags);
+        return true;
+    },
+    .modify_fd = [](const clap_host_t*, int fd, clap_posix_fd_flags_t flags) -> bool {
+        std::lock_guard lock(s_fdMutex);
+        for (auto& entry : s_fds) {
+            if (entry.fd == fd) {
+                entry.flags = flags;
+                return true;
+            }
+        }
+        return false;
+    },
+    .unregister_fd = [](const clap_host_t*, int fd) -> bool {
+        std::lock_guard lock(s_fdMutex);
+        auto it = std::remove_if(s_fds.begin(), s_fds.end(),
+            [fd](const RegisteredFd& e) { return e.fd == fd; });
+        if (it != s_fds.end()) {
+            s_fds.erase(it, s_fds.end());
+            spdlog::info("POSIX fd unregistered: fd={}", fd);
+            return true;
+        }
+        return false;
+    },
+};
+#endif // __linux__
+
 // Core host callbacks
 const void* hostGetExtension(const clap_host* /*host*/, const char* extensionId) {
     spdlog::debug("hostGetExtension: {}", extensionId);
@@ -142,6 +226,14 @@ const void* hostGetExtension(const clap_host* /*host*/, const char* extensionId)
     if (strcmp(extensionId, CLAP_EXT_STATE) == 0) {
         return &s_hostState;
     }
+    if (strcmp(extensionId, CLAP_EXT_TIMER_SUPPORT) == 0) {
+        return &s_hostTimerSupport;
+    }
+#ifdef __linux__
+    if (strcmp(extensionId, CLAP_EXT_POSIX_FD_SUPPORT) == 0) {
+        return &s_hostPosixFdSupport;
+    }
+#endif // __linux__
     return nullptr;
 }
 
@@ -151,8 +243,11 @@ void hostRequestRestart(const clap_host*) {
 void hostRequestProcess(const clap_host*) {
     spdlog::debug("hostRequestProcess called");
 }
+static std::atomic<bool> s_scheduleMainThreadCallback{false};
+
 void hostRequestCallback(const clap_host*) {
-    spdlog::debug("hostRequestCallback called");
+    spdlog::debug("hostRequestCallback called — scheduling on_main_thread");
+    s_scheduleMainThreadCallback.store(true, std::memory_order_release);
 }
 
 } // anonymous namespace
@@ -227,16 +322,12 @@ std::optional<rps::gui::AudioBusLayout> ClapGuiHost::setupAudioProcessing(
         spdlog::info("  No audio_ports extension, assuming {} channels", numChannels);
     }
 
-    // 3. Activate the plugin
-    if (!m_plugin->activate(m_plugin, static_cast<double>(sampleRate),
-                            blockSize, blockSize)) {
-        spdlog::error("  activate() failed");
+    // 3. Activate the plugin (moved to activatePlugin() for proper lifecycle management)
+    m_activateSampleRate = sampleRate;
+    m_activateBlockSize = blockSize;
+    if (!activatePlugin()) {
         return std::nullopt;
     }
-
-    // NOTE: start_processing() is NOT called here.
-    // Per CLAP spec, start_processing() must be called from the [audio-thread].
-    // It is called lazily on the first processAudioBlock() call.
 
     // 4. Allocate de-interleaved channel buffers for the main port
     m_audioInputChannels = inCh;
@@ -433,6 +524,31 @@ uint32_t ClapGuiHost::getLatencySamples() const {
     return 0;
 }
 
+bool ClapGuiHost::activatePlugin() {
+    if (m_audioActive) {
+        spdlog::info("activatePlugin: already active, skipping");
+        return true;
+    }
+    if (!m_plugin) {
+        spdlog::error("activatePlugin: no plugin loaded");
+        return false;
+    }
+    if (!m_plugin->activate(m_plugin, static_cast<double>(m_activateSampleRate),
+                            m_activateBlockSize, m_activateBlockSize)) {
+        spdlog::error("activatePlugin: activate() failed");
+        return false;
+    }
+    m_audioActive = true;
+    spdlog::info("activatePlugin: activated (sr={}, bs={})", m_activateSampleRate, m_activateBlockSize);
+    return true;
+}
+
+void ClapGuiHost::deactivatePlugin() {
+    if (!m_audioActive || !m_plugin) return;
+    m_plugin->deactivate(m_plugin);
+    m_audioActive = false;
+    spdlog::info("deactivatePlugin: deactivated");
+}
 void ClapGuiHost::teardownAudioProcessing() {
     if (!m_audioActive) return;
 
@@ -697,12 +813,28 @@ rps::gui::IPluginGuiHost::OpenResult ClapGuiHost::open(const boost::filesystem::
     }
     spdlog::info("  API '{}' is supported", windowApi);
 
+    // On GUI reopen: cycle deactivate→activate before gui->create().
+    // Some plugins (u-he Diva) don't properly reconnect their internal GUI/audio
+    // bindings after gui->destroy() + gui->create() unless a deactivate→activate
+    // cycle refreshes the plugin's internal state.
+    if (m_audioActive) {
+        spdlog::info("  Reactivating plugin before gui->create() (reopen)");
+        deactivatePlugin();
+        activatePlugin();
+    }
+
     spdlog::info("  Calling gui->create()...");
     if (!m_gui->create(m_plugin, windowApi, false)) {
         throw std::runtime_error("clap_plugin_gui->create() failed.");
     }
     m_guiCreated = true;
     spdlog::info("  GUI created successfully");
+
+    // NOTE: We intentionally do NOT call set_scale().
+    // The reference clap-host doesn't call it either. Plugins like u-he manage
+    // their own internal GUI scaling. Calling set_scale(1.0) can prevent the
+    // plugin from honoring its user-configured GUI scale and from properly
+    // requesting resizes when the scale changes.
 
     // 8. Query whether the plugin supports resizing
     spdlog::info("  Step 8: Querying can_resize...");
@@ -721,25 +853,17 @@ rps::gui::IPluginGuiHost::OpenResult ClapGuiHost::open(const boost::filesystem::
 
     // 10. Create SDL3 window
     spdlog::info("  Step 10: Creating SDL3 window (resizable={})...", m_canResize);
-    bool hasPresets = m_presets.presets_size() > 0;
-    m_window.create(m_pluginName, w, h, m_canResize, hasPresets);
+    // Always enable sidebar/toolbar — toolbar (bypass, delta) should always be visible.
+    // The sidebar starts collapsed anyway; preset content only shows when presets exist.
+    // Always create the window as resizable: can_resize=false means the HOST shouldn't
+    // allow user drag-resize, but the PLUGIN can still call request_resize() (e.g., when
+    // changing GUI scale). Without SDL_WINDOW_RESIZABLE, programmatic resizes are ignored.
+    m_window.create(m_pluginName, w, h, /*resizable=*/true, true);
     spdlog::info("  SDL3 window created");
 
-    if (m_canResize && m_gui->adjust_size) {
-        // Discover the plugin's minimum size by requesting a very small size.
-        // adjust_size will snap to the nearest valid dimensions.
-        uint32_t minW = 1, minH = 1;
-        if (m_gui->adjust_size(m_plugin, &minW, &minH)) {
-            spdlog::info("  Plugin minimum size: {}x{}", minW, minH);
-            m_window.setMinimumSize(minW, minH);
-        } else {
-            m_window.setMinimumSize(w, h);
-        }
-    } else if (!m_canResize) {
-        // Non-resizable: lock both min and max to the initial size
-        m_window.setMinimumSize(w, h);
-        m_window.setMaximumSize(w, h);
-    }
+    // NOTE: Don't lock size constraints yet — the plugin's actual child window
+    // may be larger than get_size() reported (e.g. on Linux with DPI scaling).
+    // We set constraints AFTER discovering the actual child size.
 
     // 11. Set parent (embed plugin GUI into SDL window)
     spdlog::info("  Step 11: Setting parent window...");
@@ -761,9 +885,14 @@ rps::gui::IPluginGuiHost::OpenResult ClapGuiHost::open(const boost::filesystem::
     }
     spdlog::info("  set_parent() succeeded");
 
-    // 11b. Explicitly set size — some plugins require this before show()
-    spdlog::info("  Step 11b: Calling set_size({}x{})...", w, h);
-    if (m_gui->set_size) {
+    // Flush X11 display after set_parent to ensure the plugin's reparent/child
+
+
+    // 11b. Explicitly set size — only for resizable plugins.
+    // For non-resizable plugins, the size is already correct from get_size(),
+    // and calling set_size with can_resize=false can crash some plugins.
+    if (m_canResize && m_gui->set_size) {
+        spdlog::info("  Step 11b: Calling set_size({}x{})...", w, h);
         if (!m_gui->set_size(m_plugin, w, h)) {
             spdlog::warn("  set_size() returned false (non-fatal)");
         } else {
@@ -782,10 +911,28 @@ rps::gui::IPluginGuiHost::OpenResult ClapGuiHost::open(const boost::filesystem::
     }
 
 
-    // 12b. Initial child HWND offset for sidebar (handled by SdlWindow::repositionChildHwnd)
-    m_window.repositionChildHwnd(w, h);
+    // 12b. Reposition child and detect actual size (may differ from get_size on Linux)
+    auto [actualW, actualH] = m_window.repositionChildHwnd(w, h);
+    spdlog::info("  Actual plugin size: {}x{} (reported: {}x{})", actualW, actualH, w, h);
 
-    // 12c. Populate sidebar presets
+    // 12c. NOW set size constraints based on actual child size
+    if (m_canResize && m_gui->adjust_size) {
+        // Discover the plugin's minimum size by requesting a very small size.
+        uint32_t minW = 1, minH = 1;
+        if (m_gui->adjust_size(m_plugin, &minW, &minH)) {
+            spdlog::info("  Plugin minimum size: {}x{}", minW, minH);
+            m_window.setMinimumSize(minW, minH);
+        } else {
+            m_window.setMinimumSize(actualW, actualH);
+        }
+    } else if (!m_canResize) {
+        // Non-resizable by the user, but the plugin can still call request_resize()
+        // (e.g., when changing GUI scale). Set minimum to actual child size to prevent
+        // user drag-shrinking, but do NOT lock maximum — that would block request_resize.
+        m_window.setMinimumSize(actualW, actualH);
+    }
+
+    // 12d. Populate sidebar presets
     if (m_presets.presets_size() > 0) {
         m_window.setPresets(m_presets);
         m_window.setPresetSelectedCallback([this](const std::string& presetId) {
@@ -794,7 +941,7 @@ rps::gui::IPluginGuiHost::OpenResult ClapGuiHost::open(const boost::filesystem::
         });
     }
 
-    return OpenResult{m_pluginName, w, h};
+    return OpenResult{m_pluginName, actualW, actualH};
 }
 
 void ClapGuiHost::runEventLoop(
@@ -831,7 +978,87 @@ void ClapGuiHost::runEventLoop(
     auto lastParamPoll = std::chrono::steady_clock::now();
     constexpr auto kParamPollInterval = std::chrono::milliseconds(50);
 
+    // Query the plugin's timer extension for on_timer() callback
+    const clap_plugin_timer_support_t* pluginTimerExt = nullptr;
+    if (m_plugin) {
+        pluginTimerExt = static_cast<const clap_plugin_timer_support_t*>(
+            m_plugin->get_extension(m_plugin, CLAP_EXT_TIMER_SUPPORT));
+    }
+
+#ifdef __linux__
+    // Query the plugin's posix-fd extension for on_fd() callback
+    const clap_plugin_posix_fd_support_t* pluginFdExt = nullptr;
+    if (m_plugin) {
+        pluginFdExt = static_cast<const clap_plugin_posix_fd_support_t*>(
+            m_plugin->get_extension(m_plugin, CLAP_EXT_POSIX_FD_SUPPORT));
+    }
+    spdlog::info("POSIX fd support: pluginFdExt={}, on_fd={}",
+                 pluginFdExt != nullptr,
+                 pluginFdExt ? (pluginFdExt->on_fd != nullptr) : false);
+    {
+        std::lock_guard lock(s_fdMutex);
+        spdlog::info("Registered fds: {}", s_fds.size());
+        for (const auto& fd : s_fds) {
+            spdlog::info("  fd={}, flags=0x{:x}", fd.fd, fd.flags);
+        }
+    }
+#endif // __linux__
+
+
+    // Some plugins (e.g. TAL-Pha) create their X11 child window asynchronously
+    // after show() returns. Retry repositionChildHwnd in the event loop until
+    // the child is found and positioned correctly (~1 second timeout).
+    int repositionRetries = 60;
+
     while (m_window.pollEvents()) {
+
+        // Deferred child reposition — keep trying until child is found
+        if (repositionRetries > 0) {
+            uint32_t curW = 0, curH = 0;
+            if (m_gui && m_gui->get_size && m_gui->get_size(m_plugin, &curW, &curH)) {
+                m_window.repositionChildHwnd(curW, curH);
+            }
+            if (m_window.hasPluginChild()) {
+                spdlog::info("Deferred reposition succeeded ({}x{})", curW, curH);
+                repositionRetries = 0;  // Done
+            } else {
+                --repositionRetries;
+            }
+        }
+
+        // --- Fire registered POSIX fd callbacks ---
+#ifdef __linux__
+        if (pluginFdExt && pluginFdExt->on_fd) {
+            std::vector<RegisteredFd> fdsCopy;
+            {
+                std::lock_guard lock(s_fdMutex);
+                fdsCopy = s_fds;
+            }
+            for (const auto& rfd : fdsCopy) {
+                pluginFdExt->on_fd(m_plugin, rfd.fd, CLAP_POSIX_FD_READ);
+            }
+        }
+#endif // __linux__
+
+        // --- Fire registered timer callbacks ---
+        if (pluginTimerExt && pluginTimerExt->on_timer) {
+            auto now = std::chrono::steady_clock::now();
+            std::lock_guard lock(s_timerMutex);
+            for (auto& timer : s_timers) {
+                if (now >= timer.nextFire) {
+                    pluginTimerExt->on_timer(m_plugin, timer.id);
+                    timer.nextFire = now + std::chrono::milliseconds(timer.periodMs);
+                }
+            }
+        }
+
+        // --- Honor plugin's request_callback → call on_main_thread ---
+        if (s_scheduleMainThreadCallback.exchange(false, std::memory_order_acq_rel)) {
+            if (m_plugin && m_plugin->on_main_thread) {
+                m_plugin->on_main_thread(m_plugin);
+            }
+        }
+
         // Parameter polling at ~20Hz
         if (paramChangeCb) {
             auto now = std::chrono::steady_clock::now();
@@ -846,6 +1073,18 @@ void ClapGuiHost::runEventLoop(
 
         // No sleep needed — SDL_WaitEventTimeout blocks efficiently
     }
+
+    // Clean up registered timers and fds for this plugin session
+    {
+        std::lock_guard lock(s_timerMutex);
+        s_timers.clear();
+    }
+#ifndef _WIN32
+    {
+        std::lock_guard lock(s_fdMutex);
+        s_fds.clear();
+    }
+#endif
 
     spdlog::info("ClapGuiHost::runEventLoop() ended");
 

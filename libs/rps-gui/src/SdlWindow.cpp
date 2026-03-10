@@ -5,6 +5,10 @@
 #include <windows.h>
 #endif
 
+#ifdef __linux__
+#include <dlfcn.h>   // dlopen, dlsym, dlclose
+#endif
+
 #include <rps/gui/SdlWindow.hpp>
 #include <SDL3/SDL.h>
 #include <stdexcept>
@@ -55,6 +59,18 @@ void SdlWindow::destroy() {
     SDL_FlushEvents(SDL_EVENT_FIRST, SDL_EVENT_LAST);
 }
 
+void SdlWindow::hide() {
+    if (m_window) {
+        SDL_HideWindow(m_window);
+    }
+}
+
+void SdlWindow::show() {
+    if (m_window) {
+        SDL_ShowWindow(m_window);
+    }
+}
+
 void SdlWindow::create(const std::string& title, uint32_t width, uint32_t height,
                         bool resizable, bool enableSidebar) {
     // Flush any stale events from a previous window
@@ -89,6 +105,7 @@ void SdlWindow::create(const std::string& title, uint32_t width, uint32_t height
     SDL_SetHint("SDL_WINDOW_RETAIN_CONTENT", "1");
 #endif
 
+
     m_window = SDL_CreateWindow(
         title.c_str(),
         static_cast<int>(totalWidth),
@@ -121,12 +138,16 @@ void SdlWindow::create(const std::string& title, uint32_t width, uint32_t height
 void SdlWindow::initImGui() {
     if (m_imguiInitialized) return;
 
-    IMGUI_CHECKVERSION();
     ImGui::CreateContext();
 
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; // Enable Multi-Viewport / Docking features
+#ifndef __linux__
+    // Multi-viewport creates additional platform windows. On Linux/X11, this
+    // can interfere with mouse event routing to the plugin's child window
+    // (grabs the pointer during drags). Safe on Windows/macOS.
+    io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+#endif
     // Disable imgui.ini saving
     io.IniFilename = nullptr;
 
@@ -143,19 +164,31 @@ void SdlWindow::initImGui() {
     style.Colors[ImGuiCol_WindowBg] = ImVec4(0.12f, 0.12f, 0.14f, 1.0f);
 
     ImGui_ImplSDL3_InitForSDLRenderer(m_window, m_renderer);
-    ImGui_ImplSDLRenderer3_Init(m_renderer);
-
+    ImGui_ImplSDLRenderer3_Init(m_renderer); // Initialize Dear ImGui
     m_imguiInitialized = true;
-    spdlog::info("Dear ImGui initialized for sidebar");
+    if (m_sidebarEnabled) {
+        spdlog::info("Dear ImGui initialized for sidebar");
+    }
+
+
 }
 
 void SdlWindow::shutdownImGui() {
     if (!m_imguiInitialized) return;
 
-    ImGui_ImplSDLRenderer3_Shutdown();
-    ImGui_ImplSDL3_Shutdown();
-    ImGui::DestroyContext();
-    m_imguiInitialized = false;
+    if (m_imguiInitialized) {
+        ImGui_ImplSDLRenderer3_Shutdown();
+        ImGui_ImplSDL3_Shutdown();
+        ImGui::DestroyContext();
+        m_imguiInitialized = false;
+    }
+
+
+
+    if (m_renderer) {
+        // This block was already present, but the user's snippet cut it off.
+        // It should remain here.
+    }
 }
 
 void* SdlWindow::getNativeHandle() const {
@@ -181,10 +214,9 @@ void* SdlWindow::getNativeHandle() const {
     }
     return nsview;
 #elif defined(__linux__)
-    // Try X11 first, then Wayland
-    void* xwindow = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, nullptr);
+    auto xwindow = SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
     if (xwindow) {
-        return xwindow;
+        return reinterpret_cast<void*>(static_cast<uintptr_t>(xwindow));
     }
     throw std::runtime_error("SdlWindow: no supported window handle found on Linux (X11 required)");
 #else
@@ -202,6 +234,7 @@ void SdlWindow::resize(uint32_t width, uint32_t height) {
         totalHeight += kToolbarHeight;
     }
 
+    spdlog::info("SdlWindow::resize: {}x{} -> SDL total {}x{}", width, height, totalWidth, totalHeight);
     SDL_SetWindowSize(m_window, static_cast<int>(totalWidth), static_cast<int>(totalHeight));
 }
 
@@ -238,8 +271,40 @@ bool SdlWindow::pollEvents(ResizeCallback /*resizeCb*/) {
     SDL_Event event;
     if (SDL_WaitEventTimeout(&event, 16)) {
         do {
-            // Feed events to ImGui if toolbar active
-            if (m_imguiInitialized) {
+            bool inPluginArea = false;
+
+#ifdef __linux__
+            // Check if this mouse event is in the plugin child area.
+            // If so, don't pass it to ImGui — the child window receives
+            // native X11 events directly.
+            if (m_sidebarEnabled &&
+                (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+                 event.type == SDL_EVENT_MOUSE_BUTTON_UP ||
+                 event.type == SDL_EVENT_MOUSE_MOTION ||
+                 event.type == SDL_EVENT_MOUSE_WHEEL)) {
+
+                float my = (event.type == SDL_EVENT_MOUSE_MOTION) ? event.motion.y
+                         : (event.type == SDL_EVENT_MOUSE_WHEEL) ? event.wheel.mouse_y
+                         : event.button.y;
+                float toolbarH = static_cast<float>(getToolbarHeight());
+                float sidebarW = static_cast<float>(getSidebarWidth());
+                float mx = (event.type == SDL_EVENT_MOUSE_MOTION) ? event.motion.x
+                         : (event.type == SDL_EVENT_MOUSE_WHEEL) ? event.wheel.mouse_x
+                         : event.button.x;
+
+                if (my > toolbarH && mx > sidebarW) {
+                    inPluginArea = true;
+                    m_mouseInPluginArea = true;
+                } else {
+                    m_mouseInPluginArea = false;
+                }
+            }
+
+#endif // __linux__
+
+            // Feed events to ImGui if toolbar active — but NOT mouse events
+            // in the plugin area (those go to the child via native X11)
+            if (m_imguiInitialized && !inPluginArea) {
                 ImGui_ImplSDL3_ProcessEvent(&event);
             }
 
@@ -248,14 +313,21 @@ bool SdlWindow::pollEvents(ResizeCallback /*resizeCb*/) {
                     return false;
                 case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
                     return false;
+                case SDL_EVENT_WINDOW_RESIZED:
+                case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+                    m_lastResizeTime = std::chrono::steady_clock::now();
+                    break;
                 default:
                     break;
             }
         } while (SDL_PollEvent(&event));
     }
 
-    // Render sidebar if enabled
-    if (m_imguiInitialized && m_renderer) {
+    // Render sidebar if enabled — suppress for 200ms after last resize to avoid
+    // SDL renderer painting over the plugin's area during drag resize
+    bool recentlyResized = (std::chrono::steady_clock::now() - m_lastResizeTime)
+                           < std::chrono::milliseconds(200);
+    if (m_imguiInitialized && m_renderer && !recentlyResized) {
         renderSidebar();
     }
 
@@ -693,11 +765,11 @@ void SdlWindow::renderSidebar() {
     // Render ImGui
     ImGui::Render();
 
-    // Clear renderer to prevent stale pixel data from bleeding through
-    SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 255);
-    SDL_RenderClear(m_renderer);
+    // Draw only the toolbar and sidebar backgrounds — do NOT clear the entire
+    // window. SDL_RenderClear would overwrite the plugin's child window content
+    // (the child renders into its own X11 window inside the parent).
 
-    // Draw the sidebar background (full height)
+    // Sidebar background (full height, left side)
     if (!m_sidebarCollapsed) {
         SDL_FRect sidebarFillRect{0.0f, 0.0f,
                                   static_cast<float>(getSidebarWidth()),
@@ -706,7 +778,7 @@ void SdlWindow::renderSidebar() {
         SDL_RenderFillRect(m_renderer, &sidebarFillRect);
     }
 
-    // Draw the toolbar background (only over plugin area)
+    // Toolbar background (top strip, to the right of sidebar)
     float tbX = static_cast<float>(getSidebarWidth());
     SDL_FRect toolbarFillRect{tbX, 0.0f, static_cast<float>(winW) - tbX, static_cast<float>(kToolbarHeight)};
     SDL_SetRenderDrawColor(m_renderer, 25, 25, 30, 255);
@@ -802,10 +874,10 @@ void SdlWindow::handleResize(uint32_t width, uint32_t height) {
     repositionChildHwnd(pluginWidth, pluginHeight);
 }
 
-void SdlWindow::repositionChildHwnd(uint32_t pluginW, uint32_t pluginH) {
-#ifdef _WIN32
-    if (!m_window || !m_sidebarEnabled) return;
+std::pair<uint32_t, uint32_t> SdlWindow::repositionChildHwnd(uint32_t pluginW, uint32_t pluginH) {
+    if (!m_window || !m_sidebarEnabled) return {pluginW, pluginH};
 
+#ifdef _WIN32
     HWND parentHwnd = static_cast<HWND>(getNativeHandle());
     HWND child = GetWindow(parentHwnd, GW_CHILD);
     if (child) {
@@ -815,9 +887,100 @@ void SdlWindow::repositionChildHwnd(uint32_t pluginW, uint32_t pluginH) {
                      static_cast<int>(pluginW), static_cast<int>(pluginH),
                      SWP_NOZORDER | SWP_NOACTIVATE);
     }
+    return {pluginW, pluginH};
+#elif defined(__linux__)
+    // On Linux/X11, reposition the plugin's child window below the toolbar.
+    // Only move (don't resize) — let the plugin manage its own window size.
+    // If the child is larger than expected (plugin applies its own DPI), resize
+    // the SDL parent window to fit.
+
+    uint32_t actualW = pluginW, actualH = pluginH;
+
+    SDL_PropertiesID props = SDL_GetWindowProperties(m_window);
+    if (!props) return {pluginW, pluginH};
+
+    void* xdisplay = SDL_GetPointerProperty(props,
+        SDL_PROP_WINDOW_X11_DISPLAY_POINTER, nullptr);
+    auto parentXWin = static_cast<unsigned long>(SDL_GetNumberProperty(props,
+        SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0));
+    if (!xdisplay || !parentXWin) return {pluginW, pluginH};
+
+    void* libX11 = dlopen("libX11.so.6", RTLD_NOW | RTLD_NOLOAD);
+    if (!libX11) libX11 = dlopen("libX11.so", RTLD_NOW | RTLD_NOLOAD);
+    if (!libX11) return {pluginW, pluginH};
+
+    using XQueryTreeFn = int (*)(void*, unsigned long, unsigned long*,
+                                  unsigned long*, unsigned long**, unsigned int*);
+    using XGetGeometryFn = int (*)(void*, unsigned long, unsigned long*,
+                                    int*, int*, unsigned int*, unsigned int*,
+                                    unsigned int*, unsigned int*);
+    using XFreeFn = int (*)(void*);
+    using XFlushFn = int (*)(void*);
+
+    auto xQueryTree = reinterpret_cast<XQueryTreeFn>(dlsym(libX11, "XQueryTree"));
+    auto xMoveResize = reinterpret_cast<int (*)(void*, unsigned long, int, int, unsigned int, unsigned int)>(
+        dlsym(libX11, "XMoveResizeWindow"));
+    auto xGetGeom = reinterpret_cast<XGetGeometryFn>(dlsym(libX11, "XGetGeometry"));
+    auto xFree = reinterpret_cast<XFreeFn>(dlsym(libX11, "XFree"));
+    auto xFlush = reinterpret_cast<XFlushFn>(dlsym(libX11, "XFlush"));
+    auto xMapWindow = reinterpret_cast<int (*)(void*, unsigned long)>(dlsym(libX11, "XMapWindow"));
+
+    if (xQueryTree && xMoveResize && xGetGeom && xFree && xFlush) {
+        unsigned long rootRet = 0, parentRet = 0;
+        unsigned long* children = nullptr;
+        unsigned int nChildren = 0;
+
+        // Query children of the SDL window — the plugin embedded its child here
+        if (xQueryTree(xdisplay, parentXWin, &rootRet, &parentRet,
+                       &children, &nChildren) && nChildren > 0 && children) {
+            
+            int sidebarW = static_cast<int>(getSidebarWidth());
+            int toolbarH = static_cast<int>(getToolbarHeight());
+
+            for (unsigned int i = 0; i < nChildren; ++i) {
+                // Detect actual child size (e.g. if Diva is running at 110% DPI)
+                unsigned long croot = 0;
+                int cx = 0, cy = 0;
+                unsigned int cw = 0, ch = 0, cborder = 0, cdepth = 0;
+                if (xGetGeom(xdisplay, children[i], &croot, &cx, &cy, &cw, &ch, &cborder, &cdepth)) {
+                    spdlog::info("repositionChildHwnd: plugin child 0x{:x}: actual={}x{} (expected={}x{})",
+                                 children[i], cw, ch, pluginW, pluginH);
+                    
+                    if (cw > actualW) actualW = cw;
+                    if (ch > actualH) actualH = ch;
+
+                    // Position the plugin child at (sidebarW, toolbarH) to leave space
+                    // for ImGui toolbar at top and sidebar at left
+                    xMoveResize(xdisplay, children[i], sidebarW, toolbarH, cw, ch);
+                    if (xMapWindow) xMapWindow(xdisplay, children[i]);
+
+                    // Save the plugin child XID for reference
+                    m_x11PluginChild = children[i];
+                }
+            }
+
+            // If child is larger than expected, resize the SDL parent to fit
+            if (actualW != pluginW || actualH != pluginH) {
+                int newParentW = static_cast<int>(actualW) + sidebarW;
+                int newParentH = static_cast<int>(actualH) + toolbarH;
+                spdlog::info("repositionChildHwnd: resizing SDL window to {}x{}", newParentW, newParentH);
+                SDL_SetWindowSize(m_window, newParentW, newParentH);
+            }
+
+            spdlog::debug("repositionChildHwnd (X11): plugin child at ({},{}) size {}x{}",
+                          sidebarW, toolbarH, actualW, actualH);
+        } else {
+            spdlog::debug("repositionChildHwnd (X11): no children found in SDL window");
+        }
+        if (children) xFree(children);
+        xFlush(xdisplay);
+    }
+    dlclose(libX11);
+    return {actualW, actualH};
 #else
     (void)pluginW;
     (void)pluginH;
+    return {pluginW, pluginH};
 #endif
 }
 
@@ -927,5 +1090,12 @@ void SdlWindow::setPresetSelectedCallback(PresetSelectedCallback cb) {
 void SdlWindow::setToolbarCallbacks(ToolbarCallbacks cb) {
     m_toolbarCallbacks = std::move(cb);
 }
+
+
+
+
+
+
+
 
 } // namespace rps::gui

@@ -138,6 +138,9 @@ private:
     std::vector<std::vector<float*>> m_extraOutputBusPtrs;
 
     void cleanup();
+
+    // IPlugFrame + IRunLoop (Linux) — opaque pointer to Vst3PlugFrame (defined in .cpp)
+    void* m_plugFramePtr = nullptr;
 };
 
 } // namespace rps::scanner

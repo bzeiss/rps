@@ -261,10 +261,25 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
 
     if (audioDeviceBackend == "sdl3") {
         spdlog::info("Initializing SDL3 audio subsystem...");
+#ifdef __linux__
+        // Audio driver preference: check RPS_AUDIO_DRIVER env var first,
+        // then SDL_AUDIO_DRIVER (SDL's native env var), then default list.
+        // SDL3 loads backends via dlopen at runtime from system libraries.
+        const char* rpsDriver = std::getenv("RPS_AUDIO_DRIVER");
+        const char* sdlDriver = std::getenv("SDL_AUDIO_DRIVER");
+        if (rpsDriver && *rpsDriver) {
+            SDL_SetHint(SDL_HINT_AUDIO_DRIVER, rpsDriver);
+            spdlog::info("Audio driver from RPS_AUDIO_DRIVER: {}", rpsDriver);
+        } else if (!sdlDriver || !*sdlDriver) {
+            // No env override — use sensible defaults (JACK last due to PipeWire wiring issues)
+            SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "pipewire,pulseaudio,alsa,jack");
+        }
+#endif
         if (!SDL_Init(SDL_INIT_AUDIO)) {
             spdlog::error("SDL_Init(AUDIO) failed: {}", SDL_GetError());
         } else {
-            spdlog::info("SDL3 audio initialized");
+            spdlog::info("SDL3 audio initialized (driver: {})",
+                         SDL_GetCurrentAudioDriver() ? SDL_GetCurrentAudioDriver() : "unknown");
         }
     }
 
@@ -301,6 +316,7 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
 
         // === Audio processing setup ===
         std::unique_ptr<rps::audio::SharedAudioRing> audioRing;
+        bool guiActivated = false;  // Track GUI-only activation to prevent double-activate
         std::atomic<bool> audioShutdown{false};
         std::thread audioThread;
         rps::gui::AudioBusLayout audioLayout{};
@@ -708,6 +724,14 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
 
                 // Initialize SDL VIDEO if not already done
                 if (!SDL_WasInit(SDL_INIT_VIDEO)) {
+#ifdef __linux__
+                    // All audio plugin formats (CLAP, VST3) only support X11 window
+                    // embedding on Linux — there is no Wayland GUI API in any standard.
+                    // Force SDL to use the X11 video driver so we get a real X11 window
+                    // that plugins can embed into. On Wayland, this uses XWayland.
+                    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11");
+                    spdlog::info("Forcing SDL video driver to X11 (plugin GUI requires X11)");
+#endif
                     if (!SDL_Init(SDL_INIT_VIDEO)) {
                         spdlog::error("SDL_Init(VIDEO) failed: {}", SDL_GetError());
                         rps::host::HostEvent errEvt;
@@ -718,6 +742,29 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
                 }
 
                 try {
+                    // Ensure the plugin is activated before opening the GUI.
+                    // Some plugins (e.g., u-he Diva) require activate() before
+                    // GUI controls respond to mouse interaction. If audio was already
+                    // set up via --audio-shm, this is a no-op (already activated).
+                    // Guard against double-activation on GUI reopen (CLAP requires
+                    // deactivate() before re-activate(), violating this crashes plugins).
+                    if (host->supportsAudioProcessing() && !audioRing && !guiActivated) {
+                        spdlog::info("Activating plugin for GUI-only mode (no audio-shm)");
+                        // Use sensible defaults — we won't actually process audio,
+                        // but the plugin needs to be in an active state.
+                        const uint32_t defaultSr = 48000;
+                        const uint32_t defaultBs = 256;
+                        const uint32_t defaultCh = 2;
+                        auto layoutOpt = host->setupAudioProcessing(defaultSr, defaultBs, defaultCh);
+                        if (layoutOpt) {
+                            spdlog::info("Plugin activated for GUI (sr={}, bs={}, ch={})",
+                                         defaultSr, defaultBs, defaultCh);
+                            guiActivated = true;
+                        } else {
+                            spdlog::warn("Plugin activation for GUI failed — controls may be unresponsive");
+                        }
+                    }
+
                     auto result = host->open(boost::filesystem::path(pluginPath));
                     spdlog::info("GUI opened: '{}' ({}x{})", result.name, result.width, result.height);
 

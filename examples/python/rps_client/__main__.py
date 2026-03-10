@@ -130,7 +130,7 @@ def shutdown(ctx):
 
 @cli.command("pluginhost")
 @click.option("--format", "format_filter", default="", help="Filter plugins by format (e.g. 'clap')")
-@click.option("--audio", "enable_audio", is_flag=True, help="Enable audio processing (shared memory ring buffer)")
+@click.option("--audio/--no-audio", "enable_audio", default=True, help="Enable audio processing (default: on)")
 @click.option("--sample-rate", "-sr", default=48000, type=int, help="Audio sample rate (default: 48000)")
 @click.option("--channels", "-ch", default=2, type=int, help="Audio channel count (default: 2)")
 @click.option("--block-size", "-bs", default=128, type=int, help="Audio block size in samples (default: 128)")

@@ -41,6 +41,10 @@
 #include <array>
 #include <atomic>
 
+#ifdef __linux__
+#include <poll.h>
+#endif
+
 using namespace Steinberg;
 using namespace Steinberg::Vst;
 
@@ -48,7 +52,70 @@ namespace rps::scanner {
 
 // ---------------------------------------------------------------------------
 // IPlugFrame implementation — handles plugin-initiated resizes
+// On Linux, also provides IRunLoop via queryInterface (for timer/fd support).
 // ---------------------------------------------------------------------------
+
+#ifdef __linux__
+// IRunLoop implementation (Linux only)
+// On Linux, there's no global event run loop. The host must provide one
+// so the plugin can register file descriptors (for X11 events) and timers.
+class Vst3RunLoop : public Linux::IRunLoop {
+public:
+    struct RegisteredFd {
+        Linux::IEventHandler* handler;
+        Linux::FileDescriptor fd;
+    };
+    struct RegisteredTimer {
+        Linux::ITimerHandler* handler;
+        Linux::TimerInterval intervalMs;
+        std::chrono::steady_clock::time_point nextFire;
+    };
+
+    tresult PLUGIN_API registerEventHandler(Linux::IEventHandler* handler,
+                                             Linux::FileDescriptor fd) override {
+        if (!handler) return kInvalidArgument;
+        spdlog::info("IRunLoop: registerEventHandler fd={}", fd);
+        m_fdHandlers.push_back({handler, fd});
+        return kResultTrue;
+    }
+
+    tresult PLUGIN_API unregisterEventHandler(Linux::IEventHandler* handler) override {
+        auto it = std::remove_if(m_fdHandlers.begin(), m_fdHandlers.end(),
+                                  [handler](const RegisteredFd& r) { return r.handler == handler; });
+        m_fdHandlers.erase(it, m_fdHandlers.end());
+        return kResultTrue;
+    }
+
+    tresult PLUGIN_API registerTimer(Linux::ITimerHandler* handler,
+                                      Linux::TimerInterval milliseconds) override {
+        if (!handler) return kInvalidArgument;
+        spdlog::info("IRunLoop: registerTimer interval={}ms", milliseconds);
+        m_timers.push_back({handler, milliseconds,
+                            std::chrono::steady_clock::now() + std::chrono::milliseconds(milliseconds)});
+        return kResultTrue;
+    }
+
+    tresult PLUGIN_API unregisterTimer(Linux::ITimerHandler* handler) override {
+        auto it = std::remove_if(m_timers.begin(), m_timers.end(),
+                                  [handler](const RegisteredTimer& r) { return r.handler == handler; });
+        m_timers.erase(it, m_timers.end());
+        return kResultTrue;
+    }
+
+    // FUnknown — not ref-counted (singleton lifetime)
+    tresult PLUGIN_API queryInterface(const TUID /*iid*/, void** /*obj*/) override { return kNoInterface; }
+    uint32 PLUGIN_API addRef() override { return 1; }
+    uint32 PLUGIN_API release() override { return 1; }
+
+    std::vector<RegisteredFd>& fdHandlers() { return m_fdHandlers; }
+    std::vector<RegisteredTimer>& timers() { return m_timers; }
+
+private:
+    std::vector<RegisteredFd> m_fdHandlers;
+    std::vector<RegisteredTimer> m_timers;
+};
+#endif // __linux__
+
 class Vst3PlugFrame : public U::ImplementsNonDestroyable<U::Directly<IPlugFrame>> {
 public:
     explicit Vst3PlugFrame(Vst3GuiHost& host) : m_host(host) {}
@@ -63,8 +130,24 @@ public:
         return kResultTrue;
     }
 
+#ifdef __linux__
+    // Expose IRunLoop to plugins via queryInterface (follows VST3 editorhost pattern)
+    tresult PLUGIN_API queryInterface(const TUID iid, void** obj) override {
+        if (FUnknownPrivate::iidEqual(iid, Linux::IRunLoop::iid)) {
+            *obj = &m_runLoop;
+            return kResultTrue;
+        }
+        return U::ImplementsNonDestroyable<U::Directly<IPlugFrame>>::queryInterface(iid, obj);
+    }
+
+    Vst3RunLoop& runLoop() { return m_runLoop; }
+#endif // __linux__
+
 private:
     Vst3GuiHost& m_host;
+#ifdef __linux__
+    Vst3RunLoop m_runLoop;
+#endif // __linux__
 };
 
 // ---------------------------------------------------------------------------
@@ -867,10 +950,11 @@ rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::
         m_window.setMaximumSize(w, h);
     }
 
-    // 11. Set IPlugFrame and attach view to the window
+    // 11. Set IPlugFrame (+ IRunLoop on Linux) and attach view to the window
     spdlog::info("  Step 8: Attaching view to window...");
-    static Vst3PlugFrame plugFrame(*this);
-    m_view->setFrame(&plugFrame);
+    auto* plugFrame = new Vst3PlugFrame(*this);
+    m_plugFramePtr = plugFrame;
+    m_view->setFrame(plugFrame);
 
     void* nativeHandle = m_window.getNativeHandle();
 
@@ -878,6 +962,7 @@ rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::
         throw std::runtime_error("IPlugView::attached() failed for " + m_pluginName);
     }
     spdlog::info("  View attached to native window at {:p}", nativeHandle);
+
 
     // 12. Re-query size after attachment — plugins may call resizeView() during
     //     attached(), changing their size (e.g. Roland XV-5080: 400x100 → 1877x247).
@@ -971,6 +1056,40 @@ void Vst3GuiHost::runEventLoop(
 
     // Event loop — blocks until window is closed
     while (m_window.pollEvents()) {
+#ifdef __linux__
+        // --- Fire IRunLoop fd handlers (Linux) ---
+        if (auto* pf = static_cast<Vst3PlugFrame*>(m_plugFramePtr)) {
+            auto& fds = pf->runLoop().fdHandlers();
+            if (!fds.empty()) {
+                std::vector<struct pollfd> pfds(fds.size());
+                for (size_t i = 0; i < fds.size(); ++i) {
+                    pfds[i].fd = fds[i].fd;
+                    pfds[i].events = POLLIN;
+                    pfds[i].revents = 0;
+                }
+                int ready = poll(pfds.data(), static_cast<nfds_t>(pfds.size()), 0);
+                if (ready > 0) {
+                    for (size_t i = 0; i < fds.size(); ++i) {
+                        if (pfds[i].revents & (POLLIN | POLLHUP | POLLERR)) {
+                            fds[i].handler->onFDIsSet(fds[i].fd);
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Fire IRunLoop timers (Linux) ---
+        if (auto* pf = static_cast<Vst3PlugFrame*>(m_plugFramePtr)) {
+            auto now = std::chrono::steady_clock::now();
+            for (auto& timer : pf->runLoop().timers()) {
+                if (now >= timer.nextFire) {
+                    timer.handler->onTimer();
+                    timer.nextFire = now + std::chrono::milliseconds(timer.intervalMs);
+                }
+            }
+        }
+#endif // __linux__
+
         // Parameter polling
         if (paramChangeCb) {
             auto now = std::chrono::steady_clock::now();
