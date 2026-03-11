@@ -606,6 +606,20 @@ void ClapGuiHost::cleanup() {
 #endif
         m_libHandle = nullptr;
     }
+
+    // Clean up registered timers and fds — only on full plugin destruction.
+    // Plugins register these during init/gui->create() and expect them to
+    // persist across gui->destroy()/gui->create() cycles (GUI reopen).
+    {
+        std::lock_guard lock(s_timerMutex);
+        s_timers.clear();
+    }
+#ifndef _WIN32
+    {
+        std::lock_guard lock(s_fdMutex);
+        s_fds.clear();
+    }
+#endif
 }
 
 void ClapGuiHost::onPluginRequestResize(uint32_t width, uint32_t height) {
@@ -1074,17 +1088,6 @@ void ClapGuiHost::runEventLoop(
         // No sleep needed — SDL_WaitEventTimeout blocks efficiently
     }
 
-    // Clean up registered timers and fds for this plugin session
-    {
-        std::lock_guard lock(s_timerMutex);
-        s_timers.clear();
-    }
-#ifndef _WIN32
-    {
-        std::lock_guard lock(s_fdMutex);
-        s_fds.clear();
-    }
-#endif
 
     spdlog::info("ClapGuiHost::runEventLoop() ended");
 
