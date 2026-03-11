@@ -301,8 +301,22 @@ void SdlWindow::resize(uint32_t width, uint32_t height) {
     }
 
     spdlog::info("SdlWindow::resize: {}x{} -> SDL total {}x{}", width, height, totalWidth, totalHeight);
-    ++m_resizeSerial;  // Mark this as a programmatic resize
     SDL_SetWindowSize(m_window, static_cast<int>(totalWidth), static_cast<int>(totalHeight));
+
+#ifdef __linux__
+    // Resize the plugin container immediately so the plugin sees the correct
+    // parent size right away. Without this, the container stays at the old size
+    // until handleResize→repositionChildHwnd fires, causing the plugin to
+    // fire more request_resize calls in a feedback loop.
+    if (m_x11Display && m_pluginContainer && m_sidebarEnabled) {
+        XMoveResizeWindow(static_cast<Display*>(m_x11Display),
+                          static_cast<Window>(m_pluginContainer),
+                          static_cast<int>(getSidebarWidth()),
+                          static_cast<int>(kToolbarHeight),
+                          width, height);
+        XFlush(static_cast<Display*>(m_x11Display));
+    }
+#endif
 }
 
 void SdlWindow::setMinimumSize(uint32_t width, uint32_t height) {
@@ -877,51 +891,15 @@ void SdlWindow::setResizeCallback(ResizeCallback cb) {
 void SdlWindow::handleResize(uint32_t width, uint32_t height) {
     if (!m_window) return;
 
-    // Skip the resize callback if this event is from our own programmatic resize.
-    // Without this, a feedback loop occurs: resize() → SDL_SetWindowSize →
-    // WM adjusts by a few pixels → handleResize fires → resizeCb tells plugin →
-    // plugin requests original size → resize() → ...
-    bool fromProgrammaticResize = (m_resizeSerial != m_lastHandledSerial);
-    if (fromProgrammaticResize) {
-        m_lastHandledSerial = m_resizeSerial;
-    }
+    // Since SDL_WINDOW_RESIZABLE is off, ALL resize events are responses to our
+    // own SDL_SetWindowSize calls. There are no user-initiated WM drags.
+    // We do NOT fire m_resizeCb here — the plugin drives resizing through
+    // request_resize → onPluginRequestResize, not through SDL events.
+    // Firing the callback would create a feedback loop.
 
-    // Get current window position for left-edge drag detection
-    int curX = 0;
-    SDL_GetWindowPosition(m_window, &curX, nullptr);
-    int curW = static_cast<int>(width);
-
-    // Detect left-edge drag: window X changed AND width changed
-    // If the right edge is fixed (X changed, width changed by opposite amount),
-    // the user dragged the left edge.
-    bool leftEdgeDragged = false;
-    if (m_sidebarEnabled && !m_sidebarCollapsed && m_prevWinW > 0 && !m_inProgrammaticResize) {
-        int xDelta = curX - m_prevWinX; // negative = dragged left (window grew)
-        int wDelta = curW - m_prevWinW; // positive = window grew
-
-        // Left-edge drag: X moves and width changes by the opposite amount
-        // (within a small tolerance for rounding)
-        if (xDelta != 0 && wDelta != 0 && std::abs(xDelta + wDelta) <= 2) {
-            leftEdgeDragged = true;
-
-            // Absorb width delta into sidebar width
-            int newSidebarW = static_cast<int>(m_sidebarWidth) + wDelta;
-            if (newSidebarW < 150) {
-                newSidebarW = 150;
-            }
-            if (newSidebarW > curW - 100) {
-                newSidebarW = curW - 100;
-            }
-            m_sidebarWidth = static_cast<uint32_t>(newSidebarW);
-
-            spdlog::debug("Left-edge drag detected: xDelta={}, wDelta={}, sidebarW={}",
-                          xDelta, wDelta, m_sidebarWidth);
-        }
-    }
-
-    // Update tracking state
-    m_prevWinX = curX;
-    m_prevWinW = curW;
+    // Update tracking state for position detection
+    SDL_GetWindowPosition(m_window, &m_prevWinX, nullptr);
+    m_prevWinW = static_cast<int>(width);
 
     uint32_t effSidebar = getSidebarWidth();
     uint32_t effToolbar = getToolbarHeight();
@@ -929,18 +907,6 @@ void SdlWindow::handleResize(uint32_t width, uint32_t height) {
     uint32_t pluginHeight = height > effToolbar ? height - effToolbar : height;
     if (m_sidebarEnabled && pluginWidth > effSidebar) {
         pluginWidth -= effSidebar;
-    }
-
-    if (leftEdgeDragged) {
-        // Left-edge drag: sidebar absorbed the change, still update child HWND offset
-        if (m_resizeCb && !fromProgrammaticResize) {
-            m_resizeCb(pluginWidth, pluginHeight);
-        }
-    } else {
-        // Normal resize — only fire callback for user-initiated resizes (not our own)
-        if (m_resizeCb && !fromProgrammaticResize) {
-            m_resizeCb(pluginWidth, pluginHeight);
-        }
     }
 
     // Reposition the plugin's child window to account for sidebar + toolbar offset
