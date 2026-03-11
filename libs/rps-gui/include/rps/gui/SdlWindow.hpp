@@ -153,6 +153,8 @@ private:
     bool m_inProgrammaticResize = false; // Skip left-edge detection during sidebar toggle
     int m_prevWinX = 0;    // Track window X position for left-edge drag detection
     int m_prevWinW = 0;    // Track window width for left-edge drag detection
+    uint32_t m_resizeSerial = 0;       // Incremented by resize() for each programmatic resize
+    uint32_t m_lastHandledSerial = 0;  // Last serial seen by handleResize()
 
     rps::v1::PresetList m_presets;
     int m_selectedPresetIndex = -1;
