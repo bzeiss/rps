@@ -321,21 +321,17 @@ bool SdlWindow::pollEvents(ResizeCallback /*resizeCb*/) {
                     return false;
                 case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
                     return false;
-                case SDL_EVENT_WINDOW_RESIZED:
-                case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
-                    m_lastResizeTime = std::chrono::steady_clock::now();
-                    break;
                 default:
                     break;
             }
         } while (SDL_PollEvent(&event));
     }
 
-    // Render sidebar if enabled — suppress for 200ms after last resize to avoid
-    // SDL renderer painting over the plugin's area during drag resize
-    bool recentlyResized = (std::chrono::steady_clock::now() - m_lastResizeTime)
-                           < std::chrono::milliseconds(200);
-    if (m_imguiInitialized && m_renderer && !recentlyResized) {
+    // Enforce plugin child position every frame (idempotent, ~1μs per call)
+    enforceChildPosition();
+
+    // Render toolbar/sidebar if ImGui active and child has been positioned
+    if (m_imguiInitialized && m_renderer && hasPluginChild()) {
         renderSidebar();
     }
 
@@ -926,6 +922,7 @@ std::pair<uint32_t, uint32_t> SdlWindow::repositionChildHwnd(uint32_t pluginW, u
             XMoveResizeWindow(display, children[i], sidebarW, toolbarH, cw, ch);
             XMapWindow(display, children[i]);
             m_x11PluginChild = children[i];
+            m_x11Display = display;  // Cache for per-frame enforceChildPosition()
         }
     }
     XFree(children);
@@ -943,6 +940,19 @@ std::pair<uint32_t, uint32_t> SdlWindow::repositionChildHwnd(uint32_t pluginW, u
     (void)pluginW;
     (void)pluginH;
     return {pluginW, pluginH};
+#endif
+}
+
+void SdlWindow::enforceChildPosition() {
+#ifdef __linux__
+    if (!m_x11Display || !m_x11PluginChild || !m_sidebarEnabled) return;
+
+    int sidebarW = static_cast<int>(getSidebarWidth());
+    int toolbarH = static_cast<int>(getToolbarHeight());
+
+    XMoveWindow(static_cast<Display*>(m_x11Display),
+                static_cast<Window>(m_x11PluginChild),
+                sidebarW, toolbarH);
 #endif
 }
 

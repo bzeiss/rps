@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <atomic>
 #include <functional>
-#include <chrono>
 #include <set>
 #include <map>
 
@@ -142,6 +141,7 @@ private:
     bool m_xembedSent = false;  // Whether XEmbed activation was sent to child
 
     // X11 plugin child tracking (on Linux, plugin embeds into SDL window)
+    void* m_x11Display = nullptr;        // Cached Display* for per-frame use
     unsigned long m_x11PluginChild = 0;  // Plugin's child window XID
     bool m_mouseInPluginArea = false;    // Track mouse enter/leave for plugin area
 
@@ -151,7 +151,6 @@ private:
     bool m_splitterDragging = false;
     bool m_inResizeRender = false;  // Re-entrancy guard for renderDuringResize
     bool m_inProgrammaticResize = false; // Skip left-edge detection during sidebar toggle
-    std::chrono::steady_clock::time_point m_lastResizeTime{}; // Suppress rendering during resize
     int m_prevWinX = 0;    // Track window X position for left-edge drag detection
     int m_prevWinW = 0;    // Track window width for left-edge drag detection
 
@@ -174,6 +173,7 @@ private:
     void renderToolbar(int winW, int winH);
     void renderSidebar();
     void toggleSidebar(bool collapse);
+    void enforceChildPosition();  // Per-frame child reposition (Linux X11)
 };
 
 } // namespace rps::gui
