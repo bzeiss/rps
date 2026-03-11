@@ -249,6 +249,7 @@ void SdlWindow::resize(uint32_t width, uint32_t height) {
     }
 
     spdlog::info("SdlWindow::resize: {}x{} -> SDL total {}x{}", width, height, totalWidth, totalHeight);
+    ++m_resizeSerial;  // Mark this as a programmatic resize
     SDL_SetWindowSize(m_window, static_cast<int>(totalWidth), static_cast<int>(totalHeight));
 }
 
@@ -823,6 +824,15 @@ void SdlWindow::setResizeCallback(ResizeCallback cb) {
 void SdlWindow::handleResize(uint32_t width, uint32_t height) {
     if (!m_window) return;
 
+    // Skip the resize callback if this event is from our own programmatic resize.
+    // Without this, a feedback loop occurs: resize() → SDL_SetWindowSize →
+    // WM adjusts by a few pixels → handleResize fires → resizeCb tells plugin →
+    // plugin requests original size → resize() → ...
+    bool fromProgrammaticResize = (m_resizeSerial != m_lastHandledSerial);
+    if (fromProgrammaticResize) {
+        m_lastHandledSerial = m_resizeSerial;
+    }
+
     // Get current window position for left-edge drag detection
     int curX = 0;
     SDL_GetWindowPosition(m_window, &curX, nullptr);
@@ -869,13 +879,13 @@ void SdlWindow::handleResize(uint32_t width, uint32_t height) {
     }
 
     if (leftEdgeDragged) {
-        // Left-edge drag: sidebar absorbed the change, but still update child HWND offset
-        if (m_resizeCb) {
+        // Left-edge drag: sidebar absorbed the change, still update child HWND offset
+        if (m_resizeCb && !fromProgrammaticResize) {
             m_resizeCb(pluginWidth, pluginHeight);
         }
     } else {
-        // Normal resize (right/top/bottom edge or programmatic)
-        if (m_resizeCb) {
+        // Normal resize — only fire callback for user-initiated resizes (not our own)
+        if (m_resizeCb && !fromProgrammaticResize) {
             m_resizeCb(pluginWidth, pluginHeight);
         }
     }
