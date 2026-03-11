@@ -122,8 +122,14 @@ public:
     std::pair<uint32_t, uint32_t> repositionChildHwnd(uint32_t pluginW, uint32_t pluginH);
 
 
-    /// Check if a plugin child window has been detected (set by repositionChildHwnd).
-    bool hasPluginChild() const { return m_x11PluginChild != 0; }
+    /// Check if the plugin container window exists (Linux) or a child has been detected.
+    bool hasPluginChild() const {
+#ifdef __linux__
+        return m_pluginContainer != 0;
+#else
+        return m_x11PluginChild != 0;
+#endif
+    }
 
     /// Get the underlying SDL_Window pointer (for diagnostics).
     SDL_Window* sdlWindow() const { return m_window; }
@@ -140,10 +146,11 @@ private:
     bool m_sidebarEnabled = false;
     bool m_xembedSent = false;  // Whether XEmbed activation was sent to child
 
-    // X11 plugin child tracking (on Linux, plugin embeds into SDL window)
-    void* m_x11Display = nullptr;        // Cached Display* for per-frame use
-    unsigned long m_x11PluginChild = 0;  // Plugin's child window XID
-    bool m_mouseInPluginArea = false;    // Track mouse enter/leave for plugin area
+    // X11 plugin container and child tracking
+    void* m_x11Display = nullptr;            // Cached Display*
+    unsigned long m_pluginContainer = 0;      // X11 sub-window for plugin embedding
+    unsigned long m_x11PluginChild = 0;       // Plugin's child window XID (inside container)
+    bool m_mouseInPluginArea = false;         // Track mouse enter/leave for plugin area
 
     bool m_sidebarCollapsed = true;
     uint32_t m_sidebarWidth = 260;
@@ -175,7 +182,6 @@ private:
     void renderToolbar(int winW, int winH);
     void renderSidebar();
     void toggleSidebar(bool collapse);
-    void enforceChildPosition();  // Per-frame child reposition (Linux X11)
 };
 
 } // namespace rps::gui

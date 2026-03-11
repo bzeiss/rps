@@ -59,9 +59,21 @@ void SdlWindow::destroy() {
     }
     if (m_window) {
         SDL_RemoveEventWatch(sdlEventWatcher, this);
+#ifdef __linux__
+        // Destroy the plugin container sub-window before destroying the SDL window
+        if (m_x11Display && m_pluginContainer) {
+            XDestroyWindow(static_cast<Display*>(m_x11Display),
+                           static_cast<Window>(m_pluginContainer));
+        }
+#endif
         SDL_DestroyWindow(m_window);
         m_window = nullptr;
     }
+    m_pluginContainer = 0;
+    m_x11PluginChild = 0;
+    m_x11Display = nullptr;
+    m_xembedSent = false;
+    m_closeRequested.store(false, std::memory_order_relaxed);
     // Flush any stale quit/close events so they don't affect the next window
     SDL_FlushEvents(SDL_EVENT_FIRST, SDL_EVENT_LAST);
 }
@@ -88,6 +100,7 @@ void SdlWindow::create(const std::string& title, uint32_t width, uint32_t height
     m_closeRequested.store(false, std::memory_order_relaxed);
     m_x11PluginChild = 0;
     m_x11Display = nullptr;
+    m_pluginContainer = 0;
     m_sidebarEnabled = enableSidebar;
 
     // If sidebar is enabled, make the window wider/taller to accommodate sidebar + toolbar
@@ -147,6 +160,39 @@ void SdlWindow::create(const std::string& title, uint32_t width, uint32_t height
     // Initialize position tracking for left-edge drag detection
     SDL_GetWindowPosition(m_window, &m_prevWinX, nullptr);
     SDL_GetWindowSize(m_window, &m_prevWinW, nullptr);
+
+#ifdef __linux__
+    // Create X11 sub-window as the plugin container, positioned below toolbar
+    // and to the right of sidebar. The plugin embeds into this container,
+    // so its (0,0) is naturally at (sidebarW, toolbarH) in the SDL window.
+    // This eliminates the position fight between enforceChildPosition and
+    // the plugin's own layout code.
+    if (m_sidebarEnabled) {
+        SDL_PropertiesID props = SDL_GetWindowProperties(m_window);
+        if (props) {
+            auto* display = static_cast<Display*>(
+                SDL_GetPointerProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, nullptr));
+            auto parent = static_cast<Window>(
+                SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0));
+            if (display && parent) {
+                m_x11Display = display;
+                m_pluginContainer = XCreateSimpleWindow(
+                    display, parent,
+                    static_cast<int>(getSidebarWidth()),
+                    static_cast<int>(kToolbarHeight),
+                    width, height,
+                    0, 0, 0);
+                XMapWindow(display, static_cast<Window>(m_pluginContainer));
+                // XSync (not XFlush) ensures the X server has fully processed
+                // the window creation before the plugin's own Display connection
+                // tries to use it in set_parent().
+                XSync(display, 0);
+                spdlog::info("Created X11 plugin container: 0x{:x} at ({},{}) {}x{}",
+                             m_pluginContainer, getSidebarWidth(), kToolbarHeight, width, height);
+            }
+        }
+    }
+#endif
 }
 
 void SdlWindow::initImGui() {
@@ -228,6 +274,12 @@ void* SdlWindow::getNativeHandle() const {
     }
     return nsview;
 #elif defined(__linux__)
+    // Return the plugin container sub-window if it exists (sidebar enabled).
+    // The plugin embeds into the container, not the main SDL window.
+    if (m_pluginContainer) {
+        return reinterpret_cast<void*>(m_pluginContainer);
+    }
+    // Fallback: no container (sidebar disabled) — return SDL window directly
     auto xwindow = SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
     if (xwindow) {
         return reinterpret_cast<void*>(static_cast<uintptr_t>(xwindow));
@@ -334,10 +386,7 @@ bool SdlWindow::pollEvents(ResizeCallback /*resizeCb*/) {
         } while (SDL_PollEvent(&event));
     }
 
-    // Enforce plugin child position every frame (idempotent, ~1μs per call)
-    enforceChildPosition();
-
-    // Render toolbar/sidebar if ImGui active and child has been positioned
+    // Render toolbar/sidebar if ImGui active and plugin container exists
     if (m_imguiInitialized && m_renderer && hasPluginChild()) {
         renderSidebar();
     }
@@ -913,66 +962,24 @@ std::pair<uint32_t, uint32_t> SdlWindow::repositionChildHwnd(uint32_t pluginW, u
     }
     return {pluginW, pluginH};
 #elif defined(__linux__)
-    SDL_PropertiesID props = SDL_GetWindowProperties(m_window);
-    if (!props) return {pluginW, pluginH};
-
-    auto* display = static_cast<Display*>(
-        SDL_GetPointerProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, nullptr));
-    auto parent = static_cast<Window>(
-        SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0));
-    if (!display || !parent) return {pluginW, pluginH};
-
-    Window rootRet, parentRet, *children = nullptr;
-    unsigned int nChildren = 0;
-    if (!XQueryTree(display, parent, &rootRet, &parentRet, &children, &nChildren)
-        || !nChildren || !children) {
-        if (children) XFree(children);
-        return {pluginW, pluginH};
-    }
+    // With the container sub-window approach, just resize the container.
+    // The plugin's child is inside the container at (0,0) — no repositioning needed.
+    if (!m_x11Display || !m_pluginContainer) return {pluginW, pluginH};
 
     int sidebarW = static_cast<int>(getSidebarWidth());
     int toolbarH = static_cast<int>(getToolbarHeight());
-    uint32_t actualW = pluginW, actualH = pluginH;
 
-    for (unsigned int i = 0; i < nChildren; ++i) {
-        Window cr; int cx, cy; unsigned int cw, ch, cb, cd;
-        if (XGetGeometry(display, children[i], &cr, &cx, &cy, &cw, &ch, &cb, &cd)) {
-            if (cw > actualW) actualW = cw;
-            if (ch > actualH) actualH = ch;
-            XMoveResizeWindow(display, children[i], sidebarW, toolbarH, cw, ch);
-            XMapWindow(display, children[i]);
-            m_x11PluginChild = children[i];
-            m_x11Display = display;  // Cache for per-frame enforceChildPosition()
-        }
-    }
-    XFree(children);
+    XMoveResizeWindow(static_cast<Display*>(m_x11Display),
+                      static_cast<Window>(m_pluginContainer),
+                      sidebarW, toolbarH, pluginW, pluginH);
+    XFlush(static_cast<Display*>(m_x11Display));
 
-    if (actualW != pluginW || actualH != pluginH) {
-        SDL_SetWindowSize(m_window,
-            static_cast<int>(actualW) + sidebarW,
-            static_cast<int>(actualH) + toolbarH);
-    }
-    XFlush(display);
-
-    spdlog::debug("repositionChildHwnd: child at ({},{}) {}x{}", sidebarW, toolbarH, actualW, actualH);
-    return {actualW, actualH};
+    spdlog::debug("repositionChildHwnd: container at ({},{}) {}x{}", sidebarW, toolbarH, pluginW, pluginH);
+    return {pluginW, pluginH};
 #else
     (void)pluginW;
     (void)pluginH;
     return {pluginW, pluginH};
-#endif
-}
-
-void SdlWindow::enforceChildPosition() {
-#ifdef __linux__
-    if (!m_x11Display || !m_x11PluginChild || !m_sidebarEnabled) return;
-
-    int sidebarW = static_cast<int>(getSidebarWidth());
-    int toolbarH = static_cast<int>(getToolbarHeight());
-
-    XMoveWindow(static_cast<Display*>(m_x11Display),
-                static_cast<Window>(m_x11PluginChild),
-                sidebarW, toolbarH);
 #endif
 }
 
