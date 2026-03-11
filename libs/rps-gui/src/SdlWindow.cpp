@@ -6,7 +6,14 @@
 #endif
 
 #ifdef __linux__
-#include <dlfcn.h>   // dlopen, dlsym, dlclose
+#include <X11/Xlib.h>
+// Xlib.h pollutes the global namespace with macros like Status, Bool, None, etc.
+// These clash with protobuf/abseil headers. Undefine them after extracting what we need.
+#undef Status
+#undef Bool
+#undef None
+#undef Above
+#undef Below
 #endif
 
 #include <rps/gui/SdlWindow.hpp>
@@ -85,10 +92,11 @@ void SdlWindow::create(const std::string& title, uint32_t width, uint32_t height
         totalHeight += kToolbarHeight;
     }
 
+    // Don't set SDL_WINDOW_RESIZABLE — resizing is driven by the plugin's own
+    // resize control (request_resize → m_window.resize()). SDL_SetWindowSize
+    // still works programmatically without this flag.
     Uint32 flags = 0;
-    if (resizable) {
-        flags |= SDL_WINDOW_RESIZABLE;
-    }
+    (void)resizable;
 
 #ifdef _WIN32
     // Prevent SDL from painting black over the entire client area (including
@@ -889,93 +897,47 @@ std::pair<uint32_t, uint32_t> SdlWindow::repositionChildHwnd(uint32_t pluginW, u
     }
     return {pluginW, pluginH};
 #elif defined(__linux__)
-    // On Linux/X11, reposition the plugin's child window below the toolbar.
-    // Only move (don't resize) — let the plugin manage its own window size.
-    // If the child is larger than expected (plugin applies its own DPI), resize
-    // the SDL parent window to fit.
-
-    uint32_t actualW = pluginW, actualH = pluginH;
-
     SDL_PropertiesID props = SDL_GetWindowProperties(m_window);
     if (!props) return {pluginW, pluginH};
 
-    void* xdisplay = SDL_GetPointerProperty(props,
-        SDL_PROP_WINDOW_X11_DISPLAY_POINTER, nullptr);
-    auto parentXWin = static_cast<unsigned long>(SDL_GetNumberProperty(props,
-        SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0));
-    if (!xdisplay || !parentXWin) return {pluginW, pluginH};
+    auto* display = static_cast<Display*>(
+        SDL_GetPointerProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, nullptr));
+    auto parent = static_cast<Window>(
+        SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0));
+    if (!display || !parent) return {pluginW, pluginH};
 
-    void* libX11 = dlopen("libX11.so.6", RTLD_NOW | RTLD_NOLOAD);
-    if (!libX11) libX11 = dlopen("libX11.so", RTLD_NOW | RTLD_NOLOAD);
-    if (!libX11) return {pluginW, pluginH};
-
-    using XQueryTreeFn = int (*)(void*, unsigned long, unsigned long*,
-                                  unsigned long*, unsigned long**, unsigned int*);
-    using XGetGeometryFn = int (*)(void*, unsigned long, unsigned long*,
-                                    int*, int*, unsigned int*, unsigned int*,
-                                    unsigned int*, unsigned int*);
-    using XFreeFn = int (*)(void*);
-    using XFlushFn = int (*)(void*);
-
-    auto xQueryTree = reinterpret_cast<XQueryTreeFn>(dlsym(libX11, "XQueryTree"));
-    auto xMoveResize = reinterpret_cast<int (*)(void*, unsigned long, int, int, unsigned int, unsigned int)>(
-        dlsym(libX11, "XMoveResizeWindow"));
-    auto xGetGeom = reinterpret_cast<XGetGeometryFn>(dlsym(libX11, "XGetGeometry"));
-    auto xFree = reinterpret_cast<XFreeFn>(dlsym(libX11, "XFree"));
-    auto xFlush = reinterpret_cast<XFlushFn>(dlsym(libX11, "XFlush"));
-    auto xMapWindow = reinterpret_cast<int (*)(void*, unsigned long)>(dlsym(libX11, "XMapWindow"));
-
-    if (xQueryTree && xMoveResize && xGetGeom && xFree && xFlush) {
-        unsigned long rootRet = 0, parentRet = 0;
-        unsigned long* children = nullptr;
-        unsigned int nChildren = 0;
-
-        // Query children of the SDL window — the plugin embedded its child here
-        if (xQueryTree(xdisplay, parentXWin, &rootRet, &parentRet,
-                       &children, &nChildren) && nChildren > 0 && children) {
-            
-            int sidebarW = static_cast<int>(getSidebarWidth());
-            int toolbarH = static_cast<int>(getToolbarHeight());
-
-            for (unsigned int i = 0; i < nChildren; ++i) {
-                // Detect actual child size (e.g. if Diva is running at 110% DPI)
-                unsigned long croot = 0;
-                int cx = 0, cy = 0;
-                unsigned int cw = 0, ch = 0, cborder = 0, cdepth = 0;
-                if (xGetGeom(xdisplay, children[i], &croot, &cx, &cy, &cw, &ch, &cborder, &cdepth)) {
-                    spdlog::info("repositionChildHwnd: plugin child 0x{:x}: actual={}x{} (expected={}x{})",
-                                 children[i], cw, ch, pluginW, pluginH);
-                    
-                    if (cw > actualW) actualW = cw;
-                    if (ch > actualH) actualH = ch;
-
-                    // Position the plugin child at (sidebarW, toolbarH) to leave space
-                    // for ImGui toolbar at top and sidebar at left
-                    xMoveResize(xdisplay, children[i], sidebarW, toolbarH, cw, ch);
-                    if (xMapWindow) xMapWindow(xdisplay, children[i]);
-
-                    // Save the plugin child XID for reference
-                    m_x11PluginChild = children[i];
-                }
-            }
-
-            // If child is larger than expected, resize the SDL parent to fit
-            if (actualW != pluginW || actualH != pluginH) {
-                int newParentW = static_cast<int>(actualW) + sidebarW;
-                int newParentH = static_cast<int>(actualH) + toolbarH;
-                spdlog::info("repositionChildHwnd: resizing SDL window to {}x{}", newParentW, newParentH);
-                SDL_SetWindowSize(m_window, newParentW, newParentH);
-            }
-
-            spdlog::debug("repositionChildHwnd (X11): plugin child at ({},{}) size {}x{}",
-                          sidebarW, toolbarH, actualW, actualH);
-        } else {
-            spdlog::debug("repositionChildHwnd (X11): no children found in SDL window");
-        }
-        if (children) xFree(children);
-        xFlush(xdisplay);
+    Window rootRet, parentRet, *children = nullptr;
+    unsigned int nChildren = 0;
+    if (!XQueryTree(display, parent, &rootRet, &parentRet, &children, &nChildren)
+        || !nChildren || !children) {
+        if (children) XFree(children);
+        return {pluginW, pluginH};
     }
-    dlclose(libX11);
+
+    int sidebarW = static_cast<int>(getSidebarWidth());
+    int toolbarH = static_cast<int>(getToolbarHeight());
+    uint32_t actualW = pluginW, actualH = pluginH;
+
+    for (unsigned int i = 0; i < nChildren; ++i) {
+        Window cr; int cx, cy; unsigned int cw, ch, cb, cd;
+        if (XGetGeometry(display, children[i], &cr, &cx, &cy, &cw, &ch, &cb, &cd)) {
+            if (cw > actualW) actualW = cw;
+            if (ch > actualH) actualH = ch;
+            XMoveResizeWindow(display, children[i], sidebarW, toolbarH, cw, ch);
+            XMapWindow(display, children[i]);
+            m_x11PluginChild = children[i];
+        }
+    }
+    XFree(children);
+
+    if (actualW != pluginW || actualH != pluginH) {
+        SDL_SetWindowSize(m_window,
+            static_cast<int>(actualW) + sidebarW,
+            static_cast<int>(actualH) + toolbarH);
+    }
+    XFlush(display);
+
+    spdlog::debug("repositionChildHwnd: child at ({},{}) {}x{}", sidebarW, toolbarH, actualW, actualH);
     return {actualW, actualH};
 #else
     (void)pluginW;

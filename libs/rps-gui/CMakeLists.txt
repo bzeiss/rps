@@ -9,6 +9,10 @@ find_package(SDL3 REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 
+if(UNIX AND NOT APPLE)
+    find_package(X11 REQUIRED)
+endif()
+
 target_link_libraries(rps-gui
     PUBLIC
         rps-core
@@ -20,4 +24,5 @@ target_link_libraries(rps-gui
         Boost::program_options
     PRIVATE
         rps_warnings
+        $<$<PLATFORM_ID:Linux>:X11::X11>
 )
