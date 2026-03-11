@@ -776,9 +776,13 @@ void SdlWindow::renderSidebar() {
     // Render ImGui
     ImGui::Render();
 
-    // Draw only the toolbar and sidebar backgrounds — do NOT clear the entire
-    // window. SDL_RenderClear would overwrite the plugin's child window content
-    // (the child renders into its own X11 window inside the parent).
+    // Clear the back buffer before drawing. On X11, the plugin's child window
+    // has its own surface managed by the compositor — clearing the parent's
+    // renderer buffer does not affect it. Without this, the GL back buffer
+    // contains stale pixels from previous frames (double-buffering), causing
+    // ghost artifacts during resize.
+    SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 255);
+    SDL_RenderClear(m_renderer);
 
     // Sidebar background (full height, left side)
     if (!m_sidebarCollapsed) {
