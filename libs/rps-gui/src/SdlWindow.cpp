@@ -69,10 +69,12 @@ void SdlWindow::destroy() {
         SDL_DestroyWindow(m_window);
         m_window = nullptr;
     }
+#ifdef __linux__
     m_pluginContainer = 0;
     m_x11PluginChild = 0;
     m_x11Display = nullptr;
     m_xembedSent = false;
+#endif
     m_closeRequested.store(false, std::memory_order_relaxed);
     // Flush any stale quit/close events so they don't affect the next window
     SDL_FlushEvents(SDL_EVENT_FIRST, SDL_EVENT_LAST);
@@ -98,9 +100,11 @@ void SdlWindow::create(const std::string& title, uint32_t width, uint32_t height
     // m_closeRequested stays true from a previous close — without resetting it,
     // pollEvents() would return false immediately on the second open.
     m_closeRequested.store(false, std::memory_order_relaxed);
+#ifdef __linux__
     m_x11PluginChild = 0;
     m_x11Display = nullptr;
     m_pluginContainer = 0;
+#endif
     m_sidebarEnabled = enableSidebar;
 
     // If sidebar is enabled, make the window wider/taller to accommodate sidebar + toolbar

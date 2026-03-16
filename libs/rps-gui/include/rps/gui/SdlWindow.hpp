@@ -127,7 +127,7 @@ public:
 #ifdef __linux__
         return m_pluginContainer != 0;
 #else
-        return m_x11PluginChild != 0;
+        return false;
 #endif
     }
 
@@ -137,13 +137,15 @@ public:
 private:
     SDL_Window* m_window = nullptr;
     SDL_Renderer* m_renderer = nullptr;
-    // Rendering context
-    SDL_GLContext m_glContext = nullptr;
     std::atomic<bool> m_closeRequested{false};
     ResizeCallback m_resizeCb;
 
     // Sidebar state
     bool m_sidebarEnabled = false;
+
+#ifdef __linux__
+    // Rendering context (Linux/GL only)
+    SDL_GLContext m_glContext = nullptr;
     bool m_xembedSent = false;  // Whether XEmbed activation was sent to child
 
     // X11 plugin container and child tracking
@@ -151,6 +153,7 @@ private:
     unsigned long m_pluginContainer = 0;      // X11 sub-window for plugin embedding
     unsigned long m_x11PluginChild = 0;       // Plugin's child window XID (inside container)
     bool m_mouseInPluginArea = false;         // Track mouse enter/leave for plugin area
+#endif
 
     bool m_sidebarCollapsed = true;
     uint32_t m_sidebarWidth = 260;
