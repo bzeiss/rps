@@ -1,5 +1,9 @@
 build/
 build/*
+build-clang/
+build-clang/*
+build-vc/
+build-vc/*
 rps-plugins.db
 build/.ninja_log
 build/CMakeFiles/CMakeConfigureLog.yaml
@@ -73,3 +77,6 @@ vcpkg-manifest-install.log
 build.ninja
 CMakeCache.txt
 plans
+build_output.txt
+obj_sym.txt
+lib_sym.txt

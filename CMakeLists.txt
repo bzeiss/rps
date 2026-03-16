@@ -32,7 +32,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Force static MSVC runtime to match static vcpkg dependencies (e.g. gRPC)
 # We auto-enable this if we detect a static vcpkg triplet
-if(VCPKG_TARGET_TRIPLET MATCHES "-static$" AND NOT DEFINED RPS_MSVC_STATIC_RUNTIME)
+if(VCPKG_TARGET_TRIPLET MATCHES "-static" AND NOT DEFINED RPS_MSVC_STATIC_RUNTIME)
     set(RPS_MSVC_STATIC_RUNTIME ON CACHE BOOL "Use static MSVC runtime (/MT)" FORCE)
 else()
     option(RPS_MSVC_STATIC_RUNTIME "Use static MSVC runtime (/MT)" OFF)

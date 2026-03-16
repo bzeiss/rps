@@ -85,39 +85,36 @@ RPS uses `vcpkg` across **all platforms** (Windows, macOS, and Linux) to ensure 
    winget install Ninja-build.Ninja
    ```
 
-#### Windows (MSVC)
+#### Windows (MSVC/VSVC ABI)
+
+Must be run in the Developer Powershell for VS 18. Tested only with Visual Studio 2026.
 
 ```cmd
 # Configure CMake to use vcpkg and static linking
-# * leave out the VST2 parameters to build without it
-# * use Ninja for faster builds, but it requires running from Developer Command Prompt
+# * Enable VST2 with custom SDK path if needed: -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=/path/to/vstsdk2.4
 # * if using the MSBuild generator (e.g. -G "Visual Studio 18 2026"), CMake 4.2+ is required
 # * adapt the paths
 
-cmake -G Ninja -B build -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static -DRPS_MSVC_STATIC_RUNTIME=ON -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=c:/dev/vstsdk2.4
+cmake -G Ninja -B build-vc -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static -DRPS_MSVC_STATIC_RUNTIME=ON -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=c:/dev/vstsdk2.4
       
 # Build the project
-cmake --build build --config Release
+cmake --build build-vc --config Release
 ```
 
-> **Important Note regarding process termination on Windows:**
-> When using the example Java or C++ clients on Windows, it is recommended to run them from PowerShell rather than MSYS2/MinTTY terminals. MSYS2 terminals do not always translate `Ctrl+C` into proper Windows console control events, which can cause the client to abruptly terminate without running shutdown hooks, leaving the `rps-server.exe` running in the background as an orphaned process. Running from PowerShell or standard Command Prompt ensures proper process termination.
+#### Windows (Clang/MSVC ABI)
 
-#### Windows (Clang MSVC ABI)
+This uses a custom triplet to force the Clang MSVC ABI for compilation with LLVM tools (from the llvm.org website). The triplet is based on the x64-windows-static triplet but with the Clang MSVC ABI. MSVC is still required to be installed for some dependencies. Windows SDK must be discoverable through the LIB environment variable.
+
+Must be run in the Developer Powershell for VS 18. Tested only with Visual Studio 2026 and LLVM 22.1.0 from llvm.org.
 
 ```cmd
-# Enable VST2 with custom SDK path if needed: -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=/path/to/vstsdk2.4
-cmake -G Ninja -B build -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static
-cmake --build build --config Release
-```
-#### Windows (Clang GNU/MinGW ABI in MSYS2 CLANG64)
+# * Enable VST2 with custom SDK path if needed: -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=/path/to/vstsdk2.4
+# * adapt the paths
 
-```cmd
-# Enable VST2 with custom SDK path if needed: -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=/path/to/vstsdk2.4
-cmake -G Ninja -B build -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-mingw-static
-cmake --build build --config Release
-```
+cmake -G Ninja -B build-clang -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static-clang -DVCPKG_OVERLAY_TRIPLETS=triplets -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=c:/dev/vstsdk2.4
 
+cmake --build build-clang --config Release
+```
 
 #### macOS (Apple Silicon)
 
@@ -145,9 +142,8 @@ cmake --build build --config Release
 | OS          | Architecture  | Compiler            | Recommended `VCPKG_TARGET_TRIPLET` | CMake Flags Required                                        |
 |-------------|---------------|---------------------|------------------------------------|-------------------------------------------------------------|
 | **Windows** | x64           | MSVC                | `x64-windows-static`               | `-DRPS_MSVC_STATIC_RUNTIME=ON`                              |
-| **Windows** | x64           | Clang/MSVC ABI      | `x64-windows-static`               | `-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl` |
-| **Windows** | x64           | Clang/GNU/MinGW ABI | `x64-mingw-static`                 | `-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++`     |
-| **Windows** | arm64         | MSVC ABI            | `x64-windows-static`               | `-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl` |
+| **Windows** | x64           | Clang/MSVC ABI      | `x64-windows-static-clang`         | `-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl` |
+| **Windows** | arm64         | MSVC                | `arm64-windows-static`             |                                                             |
 | **macOS**   | arm64 (M1/M2) | Apple Clang         | `arm64-osx-release`                |                                                             |
 | **macOS**   | x64 (Intel)   | Apple Clang         | `x64-osx-release`                  |                                                             |
 | **Linux**   | x64           | GCC / Clang         | `x64-linux`                        |                                                             |
