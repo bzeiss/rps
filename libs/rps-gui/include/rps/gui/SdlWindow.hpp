@@ -11,6 +11,7 @@
 
 struct SDL_Window;
 struct SDL_Renderer;
+typedef struct SDL_GLContextState *SDL_GLContext;
 
 namespace rps::gui {
 
@@ -77,6 +78,12 @@ public:
     /// Safe to call multiple times. After this, create() can be called again.
     void destroy();
 
+    /// Hide the SDL window without destroying it. Used for CLAP GUI hide/show cycling.
+    void hide();
+
+    /// Show a previously hidden SDL window.
+    void show();
+
     /// Get the current window size (excluding sidebar and toolbar).
     void getSize(uint32_t& width, uint32_t& height) const;
 
@@ -110,16 +117,41 @@ public:
     /// Reposition the first child HWND to account for the sidebar offset and toolbar.
     /// Called automatically by handleResize() on Windows. Format hosts do NOT need
     /// to manage child HWND positioning themselves.
-    void repositionChildHwnd(uint32_t pluginW, uint32_t pluginH);
+    /// Repositions the plugin child window below the toolbar.
+    /// Returns the actual child window dimensions (which may differ from pluginW/H on Linux).
+    std::pair<uint32_t, uint32_t> repositionChildHwnd(uint32_t pluginW, uint32_t pluginH);
+
+
+    /// Check if the plugin container window exists (Linux) or a child has been detected.
+    bool hasPluginChild() const {
+#ifdef __linux__
+        return m_pluginContainer != 0;
+#else
+        return m_x11PluginChild != 0;
+#endif
+    }
+
+    /// Get the underlying SDL_Window pointer (for diagnostics).
+    SDL_Window* sdlWindow() const { return m_window; }
 
 private:
     SDL_Window* m_window = nullptr;
     SDL_Renderer* m_renderer = nullptr;
+    // Rendering context
+    SDL_GLContext m_glContext = nullptr;
     std::atomic<bool> m_closeRequested{false};
     ResizeCallback m_resizeCb;
 
     // Sidebar state
     bool m_sidebarEnabled = false;
+    bool m_xembedSent = false;  // Whether XEmbed activation was sent to child
+
+    // X11 plugin container and child tracking
+    void* m_x11Display = nullptr;            // Cached Display*
+    unsigned long m_pluginContainer = 0;      // X11 sub-window for plugin embedding
+    unsigned long m_x11PluginChild = 0;       // Plugin's child window XID (inside container)
+    bool m_mouseInPluginArea = false;         // Track mouse enter/leave for plugin area
+
     bool m_sidebarCollapsed = true;
     uint32_t m_sidebarWidth = 260;
     bool m_imguiInitialized = false;
@@ -128,6 +160,7 @@ private:
     bool m_inProgrammaticResize = false; // Skip left-edge detection during sidebar toggle
     int m_prevWinX = 0;    // Track window X position for left-edge drag detection
     int m_prevWinW = 0;    // Track window width for left-edge drag detection
+
     rps::v1::PresetList m_presets;
     int m_selectedPresetIndex = -1;
     char m_presetFilter[256] = {};

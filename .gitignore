@@ -80,3 +80,4 @@ plans
 build_output.txt
 obj_sym.txt
 lib_sym.txt
+examples/python/rps-pluginhost.*.log

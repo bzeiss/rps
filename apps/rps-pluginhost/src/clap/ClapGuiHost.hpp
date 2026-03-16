@@ -94,12 +94,16 @@ private:
 
     void cleanup();
     void discoverPresets();  // Crawl CLAP preset discovery factory
+    bool activatePlugin();   // Activate plugin (idempotent, no-op if already active)
+    void deactivatePlugin(); // Deactivate plugin (safe if not active)
 
     // Audio processing state
     const clap_plugin_audio_ports* m_audioPorts = nullptr;
     const clap_plugin_latency* m_latencyExt = nullptr;
     bool m_audioActive = false;
     bool m_processingStarted = false;  // start_processing() must be called from audio thread
+    uint32_t m_activateSampleRate = 48000;  // Stored for re-activation after deactivate
+    uint32_t m_activateBlockSize = 256;
     uint32_t m_audioInputChannels = 0;
     uint32_t m_audioOutputChannels = 0;
     uint32_t m_audioBlockSize = 0;
