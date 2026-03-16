@@ -86,6 +86,18 @@ static std::string formatSehException() {
     return fmt::format("SEH exception 0x{:08X} at instruction 0x{:016X}",
                        s_capturedEx.code, s_capturedEx.instruction);
 }
+
+/// Generic SEH-protected call. Callback + context pattern ensures ZERO C++
+/// objects in this function body (MSVC C2712).
+typedef void (*SehCallback)(void*);
+static bool sehProtectedCall(SehCallback fn, void* ctx) {
+    __try {
+        fn(ctx);
+        return true;
+    } __except(captureExceptionFilter(GetExceptionInformation())) {
+        return false;
+    }
+}
 #endif
 
 /// Print to both stderr (visible to user) and spdlog (log file).
@@ -107,20 +119,17 @@ static void safeReleasePlugins(
     for (auto it = hosts.begin(); it != hosts.end(); ) {
         auto nodeId = it->first;
 #ifdef _WIN32
-        bool ok = true;
-        [&]() {
-            __try {
-                // Follow proper VST3 lifecycle: stop processing before destroying
-                it->second->teardownAudioProcessing();
-                it->second.reset(); // Destroy the plugin host
-            } __except(captureExceptionFilter(GetExceptionInformation())) {
-                report(spdlog::level::warn, "Plugin '{}' crashed during teardown: {}", 
-                       nodeId, formatSehException());
-                ok = false;
-                // The unique_ptr may be in a bad state — release ownership without destroying
-                (void)it->second.release();
-            }
-        }();
+        auto* rawHost = it->second.get();
+        bool ok = sehProtectedCall([](void* p) {
+            static_cast<rps::gui::IPluginGuiHost*>(p)->teardownAudioProcessing();
+        }, rawHost);
+        if (ok) {
+            it->second.reset();
+        } else {
+            report(spdlog::level::warn, "Plugin '{}' crashed during teardown: {}", 
+                   nodeId, formatSehException());
+            (void)it->second.release();
+        }
 #else
         it->second->teardownAudioProcessing();
         it->second.reset();
@@ -245,14 +254,15 @@ int GraphWorkerMain::run(int argc, char* argv[], HostFactory factory) {
         try {
 #ifdef _WIN32
             // Wrap plugin loading in SEH — plugins can crash during init
-            [&]() {
-                __try {
-                    host->loadPlugin(boost::filesystem::path(cfg.pluginPath));
-                } __except(captureExceptionFilter(GetExceptionInformation())) {
-                    report(spdlog::level::err, "  CRASH during loadPlugin: {}", formatSehException());
-                    loadOk = false;
-                }
-            }();
+            struct LoadCtx { rps::gui::IPluginGuiHost* h; const char* path; };
+            LoadCtx lctx{host.get(), cfg.pluginPath.c_str()};
+            if (!sehProtectedCall([](void* p) {
+                auto* c = static_cast<LoadCtx*>(p);
+                c->h->loadPlugin(boost::filesystem::path(c->path));
+            }, &lctx)) {
+                report(spdlog::level::err, "  CRASH during loadPlugin: {}", formatSehException());
+                loadOk = false;
+            }
 #else
             host->loadPlugin(boost::filesystem::path(cfg.pluginPath));
 #endif
@@ -272,17 +282,15 @@ int GraphWorkerMain::run(int argc, char* argv[], HostFactory factory) {
 
 #ifdef _WIN32
             std::optional<rps::gui::AudioBusLayout> layoutOpt;
-            [&]() {
-                __try {
-                    layoutOpt = host->setupAudioProcessing(
-                        graph.config().sampleRate,
-                        graph.config().blockSize,
-                        channels);
-                } __except(captureExceptionFilter(GetExceptionInformation())) {
-                    report(spdlog::level::err, "  CRASH during setupAudioProcessing: {}", formatSehException());
-                    loadOk = false;
-                }
-            }();
+            struct SetupCtx { rps::gui::IPluginGuiHost* h; uint32_t sr, bs, ch; std::optional<rps::gui::AudioBusLayout>* out; };
+            SetupCtx sctx{host.get(), graph.config().sampleRate, graph.config().blockSize, channels, &layoutOpt};
+            if (!sehProtectedCall([](void* p) {
+                auto* c = static_cast<SetupCtx*>(p);
+                *c->out = c->h->setupAudioProcessing(c->sr, c->bs, c->ch);
+            }, &sctx)) {
+                report(spdlog::level::err, "  CRASH during setupAudioProcessing: {}", formatSehException());
+                loadOk = false;
+            }
 #else
             auto layoutOpt = host->setupAudioProcessing(
                 graph.config().sampleRate,
@@ -367,15 +375,15 @@ int GraphWorkerMain::run(int argc, char* argv[], HostFactory factory) {
         // Process through the plugin (with SEH protection)
         bool processOk = true;
 #ifdef _WIN32
-        [&]() {
-            __try {
-                host->processAudioBlock(scratch.interleavedIn.data(), scratch.interleavedOut.data(),
-                                        inCh, outCh, bs);
-            } __except(captureExceptionFilter(GetExceptionInformation())) {
-                spdlog::error("Plugin '{}' CRASH during process: {}", nodeId, formatSehException());
-                processOk = false;
-            }
-        }();
+        struct ProcCtx { rps::gui::IPluginGuiHost* h; float* in; float* out; uint32_t ic, oc, bs; };
+        ProcCtx pctx{host.get(), scratch.interleavedIn.data(), scratch.interleavedOut.data(), inCh, outCh, bs};
+        if (!sehProtectedCall([](void* p) {
+            auto* c = static_cast<ProcCtx*>(p);
+            c->h->processAudioBlock(c->in, c->out, c->ic, c->oc, c->bs);
+        }, &pctx)) {
+            spdlog::error("Plugin '{}' CRASH during process: {}", nodeId, formatSehException());
+            processOk = false;
+        }
 #else
         host->processAudioBlock(scratch.interleavedIn.data(), scratch.interleavedOut.data(),
                                 inCh, outCh, bs);

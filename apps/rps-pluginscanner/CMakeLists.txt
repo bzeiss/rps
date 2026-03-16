@@ -30,6 +30,12 @@ target_include_directories(rps-pluginscanner PRIVATE
 if(RPS_ENABLE_VST2)
     target_include_directories(rps-pluginscanner PRIVATE ${RPS_VST2_SDK_PATH})
     target_compile_definitions(rps-pluginscanner PRIVATE RPS_VST2_ENABLED)
+    # VST2 SDK headers contain non-UTF-8 bytes (copyright symbols) that
+    # conflict with /utf-8. Suppress C4828 for the VST2 scanner source.
+    if(MSVC)
+        set_source_files_properties(src/scanners/Vst2Scanner.cpp
+            PROPERTIES COMPILE_FLAGS "/wd4828")
+    endif()
 endif()
 
 target_link_libraries(rps-pluginscanner

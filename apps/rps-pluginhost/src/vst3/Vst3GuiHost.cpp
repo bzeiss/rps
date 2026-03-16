@@ -519,54 +519,62 @@ void Vst3GuiHost::cleanup() {
     // Each teardown step wrapped in SEH — some plugins crash during specific
     // lifecycle calls. Isolating each step lets cleanup continue after a crash.
 #ifdef _WIN32
+    // Generic SEH-protected call (MSVC C2712: no C++ objects in __try functions).
+    struct SehGuard {
+        typedef void (*Fn)(void*);
+        static bool call(Fn fn, void* ctx) {
+            __try {
+                fn(ctx);
+                return true;
+            } __except(EXCEPTION_EXECUTE_HANDLER) {
+                return false;
+            }
+        }
+    };
     // Release m_processor FIRST — it's a QI'd reference to the same COM object
     // as m_component. If not released before terminate/module-unload, its destructor
     // would call Release() on a freed object (crash in graph/headless mode).
     m_processor = nullptr;
 
     if (m_component) {
-        [&]() {
-            __try {
-                m_component->setActive(false);
-            } __except(EXCEPTION_EXECUTE_HANDLER) {
-                spdlog::warn("  SEH 0x{:08X} in setActive(false)", GetExceptionCode());
-            }
-        }();
+        auto* comp = m_component.get();
+        if (!SehGuard::call([](void* p) {
+            static_cast<decltype(comp)>(p)->setActive(false);
+        }, comp)) {
+            spdlog::warn("  SEH in setActive(false)");
+        }
     }
 
     if (m_controller) {
         spdlog::debug("  releasing controller");
-        [&]() {
-            __try {
-                m_controller->terminate();
-            } __except(EXCEPTION_EXECUTE_HANDLER) {
-                spdlog::warn("  SEH 0x{:08X} in controller->terminate()", GetExceptionCode());
-            }
-        }();
+        auto* ctrl = m_controller.get();
+        if (!SehGuard::call([](void* p) {
+            static_cast<decltype(ctrl)>(p)->terminate();
+        }, ctrl)) {
+            spdlog::warn("  SEH in controller->terminate()");
+        }
         m_controller = nullptr;
     }
 
     if (m_component) {
         spdlog::debug("  releasing component");
-        [&]() {
-            __try {
-                m_component->terminate();
-            } __except(EXCEPTION_EXECUTE_HANDLER) {
-                spdlog::warn("  SEH 0x{:08X} in component->terminate()", GetExceptionCode());
-            }
-        }();
+        auto* comp2 = m_component.get();
+        if (!SehGuard::call([](void* p) {
+            static_cast<decltype(comp2)>(p)->terminate();
+        }, comp2)) {
+            spdlog::warn("  SEH in component->terminate()");
+        }
         m_component = nullptr;
     }
 
     if (m_module) {
         spdlog::debug("  releasing module");
-        [&]() {
-            __try {
-                m_module.reset();
-            } __except(EXCEPTION_EXECUTE_HANDLER) {
-                spdlog::warn("  SEH 0x{:08X} in module.reset()", GetExceptionCode());
-            }
-        }();
+        auto* mod = &m_module;
+        if (!SehGuard::call([](void* p) {
+            static_cast<decltype(mod)>(p)->reset();
+        }, mod)) {
+            spdlog::warn("  SEH in module.reset()");
+        }
     }
 #else
     m_processor = nullptr;
@@ -768,23 +776,34 @@ rps::gui::IPluginGuiHost::OpenResult Vst3GuiHost::open(const boost::filesystem::
 
 #ifdef _WIN32
     // Use SEH to catch access violations in buggy plugins.
-    // Only catch fatal exceptions — NOT C++ exceptions (0xE06D7363) which
-    // should propagate normally through try/catch.
-    __try {
-#endif
-        m_view = owned(m_controller->createView(ViewType::kEditor));
-#ifdef _WIN32
-    } __except(GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ||
-               GetExceptionCode() == EXCEPTION_STACK_OVERFLOW
-               ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
-        DWORD code = GetExceptionCode();
-        spdlog::error("  createView() caused SEH exception: 0x{:08X}", code);
+    IPlugView* createdView = nullptr;
+    auto* ctrl = m_controller.get();
+    struct CreateViewCtx { decltype(ctrl) c; IPlugView** out; };
+    CreateViewCtx cvCtx{ctrl, &createdView};
+    struct SehGuardOpen {
+        typedef void (*Fn)(void*);
+        static bool call(Fn fn, void* ctx) {
+            __try {
+                fn(ctx);
+                return true;
+            } __except(GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ||
+                       GetExceptionCode() == EXCEPTION_STACK_OVERFLOW
+                       ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+                return false;
+            }
+        }
+    };
+    if (!SehGuardOpen::call([](void* p) {
+        auto* x = static_cast<CreateViewCtx*>(p);
+        *x->out = x->c->createView(ViewType::kEditor);
+    }, &cvCtx)) {
+        spdlog::error("  createView() caused SEH exception");
         spdlog::default_logger()->flush();
-        char hexBuf[32];
-        snprintf(hexBuf, sizeof(hexBuf), "0x%08lX", code);
-        throw std::runtime_error(std::string("createView() crashed with SEH exception ") +
-                                 hexBuf + " for " + m_pluginName);
+        throw std::runtime_error(std::string("createView() crashed with SEH exception for ") + m_pluginName);
     }
+    m_view = owned(createdView);
+#else
+        m_view = owned(m_controller->createView(ViewType::kEditor));
 #endif
 
     if (!m_view) {

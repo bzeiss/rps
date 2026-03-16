@@ -30,6 +30,24 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# MSVC global flags (applied to ALL targets, including third-party):
+#   /EHa   — async exception handling, allows __try/__except with C++ objects.
+#            Required because we wrap all plugin calls in SEH for crash safety.
+#   /Zc:__cplusplus — report correct __cplusplus value (MSVC defaults to 199711L).
+#            Needed by VST3 SDK's SMTG_CPP20 macro and std::filesystem::u8string.
+if(MSVC)
+    # Force-replace /EHsc with /EHa in the cached CMAKE_CXX_FLAGS.
+    # Must use CACHE FORCE because CMake caches this variable after compiler detection.
+    string(REPLACE "/EHsc" "/EHa" _fixed_cxx_flags "${CMAKE_CXX_FLAGS}")
+    if(NOT "${_fixed_cxx_flags}" MATCHES "/EHa")
+        string(APPEND _fixed_cxx_flags " /EHa")
+    endif()
+    if(NOT "${_fixed_cxx_flags}" MATCHES "/Zc:__cplusplus")
+        string(APPEND _fixed_cxx_flags " /Zc:__cplusplus")
+    endif()
+    set(CMAKE_CXX_FLAGS "${_fixed_cxx_flags}" CACHE STRING "" FORCE)
+endif()
+
 # Force static MSVC runtime to match static vcpkg dependencies (e.g. gRPC)
 # We auto-enable this if we detect a static vcpkg triplet
 if(VCPKG_TARGET_TRIPLET MATCHES "-static" AND NOT DEFINED RPS_MSVC_STATIC_RUNTIME)
@@ -57,7 +75,10 @@ add_definitions(-DBOOST_ALL_NO_LIB)
 # Strict warnings — applied only to our own targets, not third-party code
 add_library(rps_warnings INTERFACE)
 if(MSVC)
-    target_compile_options(rps_warnings INTERFACE /W4 /WX /permissive-)
+    target_compile_options(rps_warnings INTERFACE /W4 /WX /permissive- /utf-8
+        /wd4324           # structure padded due to alignas — intentional for cache-line atomics
+        /wd4267           # size_t to int conversion — unavoidable in protobuf generated code
+    )
 else()
     target_compile_options(rps_warnings INTERFACE -Wall -Wextra -Wpedantic -Werror)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -71,6 +92,7 @@ if(WIN32)
         NOMINMAX
         WIN32_LEAN_AND_MEAN
         _CRT_SECURE_NO_WARNINGS
+        _WIN32_WINNT=0x0A00    # Target Windows 10+ (suppresses Boost.Asio warning)
     )
 endif()
 

@@ -66,6 +66,19 @@ static LONG captureExceptionFilter(EXCEPTION_POINTERS* ep) {
     if (rec->NumberParameters >= 2) s_capturedEx.faultAddress = rec->ExceptionInformation[1];
     return EXCEPTION_EXECUTE_HANDLER;
 }
+
+/// Generic SEH-protected call. The callback + context pattern ensures this
+/// function body has ZERO C++ objects (MSVC C2712 forbids __try in functions
+/// that contain any object requiring C++ unwinding — even temporaries).
+typedef void (*SehCallback)(void*);
+static bool sehProtectedCall(SehCallback fn, void* ctx) {
+    __try {
+        fn(ctx);
+        return true;
+    } __except(captureExceptionFilter(GetExceptionInformation())) {
+        return false;
+    }
+}
 #endif
 
 /// Context passed to the IAudioDevice callback (real-time path).
@@ -436,17 +449,16 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
                                                     // Send silence to plugin (keep it alive)
                                                     std::vector<float> silenceBuf(inFloats, 0.0f);
 #ifdef _WIN32
-                                                    [&]() {
-                                                        __try {
-                                                            host->processAudioBlock(
-                                                                silenceBuf.data(), outputBuf.data(),
-                                                                inCh, outCh, bs);
-                                                        } __except(captureExceptionFilter(GetExceptionInformation())) {
-                                                            spdlog::error("SEH exception 0x{:08X} during bypass process",
-                                                                          s_capturedEx.code);
-                                                            processingOk = false;
-                                                        }
-                                                    }();
+                                                    struct ProcessCtx { IPluginGuiHost* h; float* in; float* out; uint32_t ic, oc, bs; };
+                                                    ProcessCtx pctx{host.get(), silenceBuf.data(), outputBuf.data(), inCh, outCh, bs};
+                                                    if (!sehProtectedCall([](void* p) {
+                                                        auto* c = static_cast<ProcessCtx*>(p);
+                                                        c->h->processAudioBlock(c->in, c->out, c->ic, c->oc, c->bs);
+                                                    }, &pctx)) {
+                                                        spdlog::error("SEH exception 0x{:08X} during bypass process",
+                                                                      s_capturedEx.code);
+                                                        processingOk = false;
+                                                    }
 #else
                                                     host->processAudioBlock(
                                                         silenceBuf.data(), outputBuf.data(),
@@ -463,29 +475,28 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
                                                 } else {
                                                     // Normal processing
 #ifdef _WIN32
-                                                    [&]() {
-                                                        __try {
-                                                            host->processAudioBlock(
-                                                                inputBuf.data(), outputBuf.data(),
-                                                                inCh, outCh, bs);
-                                                        } __except(captureExceptionFilter(GetExceptionInformation())) {
-                                                            if (s_capturedEx.code == 0xC0000005 && s_capturedEx.numParams >= 2) {
-                                                                spdlog::error(
-                                                                    "ACCESS_VIOLATION: {} at address 0x{:016X}, instruction at 0x{:016X}",
-                                                                    s_capturedEx.accessType == 0 ? "READ" : "WRITE",
-                                                                    s_capturedEx.faultAddress,
-                                                                    s_capturedEx.instruction);
-                                                            } else {
-                                                                spdlog::error(
-                                                                    "SEH exception 0x{:08X} at instruction 0x{:016X}",
-                                                                    s_capturedEx.code,
-                                                                    s_capturedEx.instruction);
-                                                            }
-                                                            spdlog::default_logger()->flush();
-                                                            processingOk = false;
-                                                            std::fill(outputBuf.begin(), outputBuf.end(), 0.0f);
+                                                    struct ProcessCtx2 { IPluginGuiHost* h; float* in; float* out; uint32_t ic, oc, bs; };
+                                                    ProcessCtx2 pctx2{host.get(), inputBuf.data(), outputBuf.data(), inCh, outCh, bs};
+                                                    if (!sehProtectedCall([](void* p) {
+                                                        auto* c = static_cast<ProcessCtx2*>(p);
+                                                        c->h->processAudioBlock(c->in, c->out, c->ic, c->oc, c->bs);
+                                                    }, &pctx2)) {
+                                                        if (s_capturedEx.code == 0xC0000005 && s_capturedEx.numParams >= 2) {
+                                                            spdlog::error(
+                                                                "ACCESS_VIOLATION: {} at address 0x{:016X}, instruction at 0x{:016X}",
+                                                                s_capturedEx.accessType == 0 ? "READ" : "WRITE",
+                                                                s_capturedEx.faultAddress,
+                                                                s_capturedEx.instruction);
+                                                        } else {
+                                                            spdlog::error(
+                                                                "SEH exception 0x{:08X} at instruction 0x{:016X}",
+                                                                s_capturedEx.code,
+                                                                s_capturedEx.instruction);
                                                         }
-                                                    }();
+                                                        spdlog::default_logger()->flush();
+                                                        processingOk = false;
+                                                        std::fill(outputBuf.begin(), outputBuf.end(), 0.0f);
+                                                    }
 #else
                                                     host->processAudioBlock(
                                                         inputBuf.data(), outputBuf.data(),
@@ -864,9 +875,9 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
                 *respEvt.mutable_set_state_result() = std::move(resp);
                 connection->sendProto(respEvt);
                 if (resp.success()) {
-                    auto params = host->getParameters();
+                    auto updatedParams = host->getParameters();
                     rps::host::HostEvent paramEvt;
-                    *paramEvt.mutable_parameter_list() = std::move(params);
+                    *paramEvt.mutable_parameter_list() = std::move(updatedParams);
                     connection->sendProto(paramEvt);
                 }
                 continue;
@@ -880,9 +891,9 @@ int GuiWorkerMain::run(int argc, char* argv[], std::unique_ptr<IPluginGuiHost> h
                 *respEvt.mutable_load_preset_result() = std::move(resp);
                 connection->sendProto(respEvt);
                 if (resp.success()) {
-                    auto params = host->getParameters();
+                    auto updatedParams = host->getParameters();
                     rps::host::HostEvent paramEvt;
-                    *paramEvt.mutable_parameter_list() = std::move(params);
+                    *paramEvt.mutable_parameter_list() = std::move(updatedParams);
                     connection->sendProto(paramEvt);
                 }
                 continue;

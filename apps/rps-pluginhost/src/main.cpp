@@ -114,22 +114,41 @@ int main(int argc, char* argv[]) {
 #ifdef _WIN32
         // Top-level SEH to catch crashes in VST3 COM static destructors during teardown.
         // Some VST3 plugins crash in global destructors when the module unloads.
-        __try {
-#endif
+        // Use function-pointer pattern to avoid C2712 (no C++ objects in __try).
+        struct GraphCtx { int argc; char** argv; int* result; };
+        struct SehGuardMain {
+            typedef void (*Fn)(void*);
+            static bool call(Fn fn, void* ctx) {
+                __try {
+                    fn(ctx);
+                    return true;
+                } __except(EXCEPTION_EXECUTE_HANDLER) {
+                    return false;
+                }
+            }
+        };
+        GraphCtx gctx{argc, argv, &result};
+        bool sehOk = SehGuardMain::call([](void* p) {
+            auto* ctx = static_cast<GraphCtx*>(p);
+            *ctx->result = rps::coordinator::GraphWorkerMain::run(ctx->argc, ctx->argv,
+                [](const std::string& format) -> std::unique_ptr<rps::gui::IPluginGuiHost> {
+                    if (format == "vst3") return std::make_unique<rps::scanner::Vst3GuiHost>();
+                    if (format == "clap") return std::make_unique<rps::scanner::ClapGuiHost>();
+                    return nullptr;
+                });
+            CoUninitialize();
+        }, &gctx);
+        if (!sehOk) {
+            // Silently swallow teardown crashes — the graph worker already completed.
+            spdlog::warn("Caught SEH exception during graph mode shutdown (suppressed)");
+        }
+#else
             result = rps::coordinator::GraphWorkerMain::run(argc, argv,
                 [](const std::string& format) -> std::unique_ptr<rps::gui::IPluginGuiHost> {
                     if (format == "vst3") return std::make_unique<rps::scanner::Vst3GuiHost>();
                     if (format == "clap") return std::make_unique<rps::scanner::ClapGuiHost>();
                     return nullptr;
                 });
-#ifdef _WIN32
-            CoUninitialize();
-        } __except(EXCEPTION_EXECUTE_HANDLER) {
-            // Silently swallow teardown crashes — the graph worker already completed.
-            // This catches crashes in VST3 DllMain or COM static destructors.
-            spdlog::warn("Caught exception 0x{:08X} during graph mode shutdown (suppressed)",
-                         GetExceptionCode());
-        }
 #endif
         // Use ExitProcess/_Exit to avoid triggering more static destructors that might crash
 #ifdef _WIN32
