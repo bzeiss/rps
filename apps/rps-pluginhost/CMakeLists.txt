@@ -42,11 +42,14 @@ target_include_directories(vst3-hosting-helpers PRIVATE
 )
 
 # Minimal warning flags for third-party SDK code (no -WX/rps_warnings)
+target_compile_definitions(vst3-hosting-helpers PRIVATE _CRT_SECURE_NO_WARNINGS)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     target_compile_options(vst3-hosting-helpers PRIVATE
         -Wno-unnecessary-virtual-specifier
         -Wno-pragma-pack
         -Wno-error=unused-parameter
+        -Wno-deprecated-declarations
+        -Wno-format
     )
 endif()
 # Do NOT link rps_warnings here — third-party code.
