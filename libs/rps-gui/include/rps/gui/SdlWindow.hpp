@@ -11,7 +11,7 @@
 
 struct SDL_Window;
 struct SDL_Renderer;
-typedef struct SDL_GLContextState *SDL_GLContext;
+
 
 namespace rps::gui {
 
@@ -144,8 +144,7 @@ private:
     bool m_sidebarEnabled = false;
 
 #ifdef __linux__
-    // Rendering context (Linux/GL only)
-    SDL_GLContext m_glContext = nullptr;
+    // X11 state (Linux only)
     bool m_xembedSent = false;  // Whether XEmbed activation was sent to child
 
     // X11 plugin container and child tracking

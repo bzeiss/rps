@@ -127,14 +127,31 @@ cmake --build build --config Release
 #### Linux (Ubuntu/Debian/Fedora)
 
 *Note: The default `x64-linux` triplet in vcpkg automatically builds static libraries.*
-```bash
-# Ensure you have build tools installed:
-# Ubuntu: sudo apt install build-essential cmake ninja-build pkg-config curl zip unzip tar autoconf autoconf-archive automake libtool
-# Fedora: sudo dnf install gcc-c++ cmake ninja-build pkgconf-pkg-config curl zip unzip tar autoconf autoconf-archive automake libtool
 
+**Prerequisites:**
+```bash
+# Ubuntu/Debian:
+sudo apt install build-essential cmake ninja-build pkg-config curl zip unzip tar autoconf autoconf-archive automake libtool
+# For Clang:
+sudo apt install clang
+
+# Fedora:
+sudo dnf install gcc-c++ cmake ninja-build pkgconf-pkg-config curl zip unzip tar autoconf autoconf-archive automake libtool
+# For Clang:
+sudo dnf install clang
+```
+
+**Build with GCC (default):**
+```bash
 # Enable VST2 with custom SDK path if needed: -DRPS_ENABLE_VST2=ON -DRPS_VST2_SDK_PATH=/path/to/vstsdk2.4
-cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux
-cmake --build build --config Release
+cmake -G Ninja -B build-gcc -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux
+cmake --build build-gcc --config Release
+```
+
+**Build with Clang:**
+```bash
+cmake -G Ninja -B build-clang -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux
+cmake --build build-clang --config Release
 ```
 
 #### Vcpkg Triplet Reference
