@@ -1060,11 +1060,20 @@ void SdlWindow::setToolbarCallbacks(ToolbarCallbacks cb) {
     m_toolbarCallbacks = std::move(cb);
 }
 
-
-
-
-
-
-
+bool SdlWindow::hasPluginChild() const {
+#ifdef __linux__
+    return m_pluginContainer != 0;
+#elif defined(_WIN32)
+    if (!m_window) return false;
+    SDL_PropertiesID props = SDL_GetWindowProperties(m_window);
+    if (!props) return false;
+    void* hwndPtr = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+    if (!hwndPtr) return false;
+    HWND parentHwnd = static_cast<HWND>(hwndPtr);
+    return GetWindow(parentHwnd, GW_CHILD) != nullptr;
+#else
+    return m_window != nullptr; // Fallback for macOS
+#endif
+}
 
 } // namespace rps::gui

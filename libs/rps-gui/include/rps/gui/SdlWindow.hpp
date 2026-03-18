@@ -123,13 +123,7 @@ public:
 
 
     /// Check if the plugin container window exists (Linux) or a child has been detected.
-    bool hasPluginChild() const {
-#ifdef __linux__
-        return m_pluginContainer != 0;
-#else
-        return false;
-#endif
-    }
+    bool hasPluginChild() const;
 
     /// Get the underlying SDL_Window pointer (for diagnostics).
     SDL_Window* sdlWindow() const { return m_window; }
