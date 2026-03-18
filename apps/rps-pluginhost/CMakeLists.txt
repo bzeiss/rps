@@ -51,6 +51,10 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         -Wno-deprecated-declarations
         -Wno-format
     )
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_compile_options(vst3-hosting-helpers PRIVATE
+        -Wno-deprecated-declarations
+    )
 endif()
 # Do NOT link rps_warnings here — third-party code.
 

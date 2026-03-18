@@ -4,6 +4,8 @@ build-clang/
 build-clang/*
 build-vc/
 build-vc/*
+build-gcc/
+build-gcc/*
 rps-plugins.db
 build/.ninja_log
 build/CMakeFiles/CMakeConfigureLog.yaml
