@@ -106,6 +106,60 @@ void checkBinaryArchitecture(const boost::filesystem::path& binaryPath) {
 }
 #endif
 
+// Resolves a .clap path to the actual loadable binary.
+// If given a bundle directory (.clap/), navigates into Contents/{arch}/ to find the binary.
+// If given a plain file, returns it unchanged.
+boost::filesystem::path resolveBinaryPath(const boost::filesystem::path& clapPath) {
+    namespace fs = boost::filesystem;
+
+    if (fs::is_regular_file(clapPath)) {
+        return clapPath; // Already a loadable file
+    }
+
+    if (!fs::is_directory(clapPath)) {
+        throw std::runtime_error("CLAP path is neither a file nor a directory: " + clapPath.string());
+    }
+
+    fs::path contentsPath = clapPath / "Contents";
+    if (!fs::exists(contentsPath) || !fs::is_directory(contentsPath)) {
+        throw std::runtime_error("CLAP bundle missing 'Contents' directory: " + clapPath.string());
+    }
+
+    // Architecture subdirectory candidates in priority order
+#if defined(_WIN32)
+    const std::vector<std::string> archDirs = {"x86_64-win", "x86-win"};
+#elif defined(__APPLE__)
+    const std::vector<std::string> archDirs = {"MacOS"};
+#else
+    const std::vector<std::string> archDirs = {"x86_64-linux", "aarch64-linux", "i686-linux"};
+#endif
+
+    for (const auto& arch : archDirs) {
+        fs::path archPath = contentsPath / arch;
+        if (!fs::exists(archPath) || !fs::is_directory(archPath)) continue;
+
+        // Look for the actual CLAP binary
+#if defined(_WIN32)
+        const std::vector<std::string> validExts = {".clap", ".dll"};
+#elif defined(__APPLE__)
+        const std::vector<std::string> validExts = {""};  // macOS Mach-O has no extension
+#else
+        const std::vector<std::string> validExts = {".clap", ".so"};
+#endif
+        for (const auto& entry : fs::directory_iterator(archPath)) {
+            if (!fs::is_regular_file(entry.path())) continue;
+            auto ext = entry.path().extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            for (const auto& valid : validExts) {
+                if (ext == valid) return entry.path();
+            }
+        }
+    }
+
+    throw std::runtime_error("SKIP: CLAP bundle contains no loadable binary for this platform: " + clapPath.string());
+}
+
 // ---------------------------------------------------------------------------
 // Minimal CLAP host — just enough to instantiate plugins for metadata extraction
 // ---------------------------------------------------------------------------
@@ -159,9 +213,14 @@ rps::ipc::ScanResult ClapScanner::scan(const boost::filesystem::path& pluginPath
     };
 
     // Architecture check — detect x86/x64/ARM64 mismatch before loading
-    progressCb(5, "Checking binary architecture...");
+    progressCb(5, "Resolving CLAP binary...");
+    logStage("Resolving binary path...");
+    boost::filesystem::path binaryPath = resolveBinaryPath(pluginPath);
+    logStage("Resolved to: " + binaryPath.string());
+
+    progressCb(8, "Checking binary architecture...");
     logStage("Checking binary architecture...");
-    checkBinaryArchitecture(pluginPath);
+    checkBinaryArchitecture(binaryPath);
     logStage("Architecture OK.");
 
     progressCb(10, "Loading CLAP binary...");
@@ -169,10 +228,10 @@ rps::ipc::ScanResult ClapScanner::scan(const boost::filesystem::path& pluginPath
 
     LibHandle lib;
 #ifdef _WIN32
-    lib.h = LoadLibraryW(pluginPath.c_str());
+    lib.h = LoadLibraryW(binaryPath.c_str());
     if (!lib.h) {
         DWORD err = GetLastError();
-        throw std::runtime_error("Failed to load CLAP DLL: " + pluginPath.string()
+        throw std::runtime_error("Failed to load CLAP DLL: " + binaryPath.string()
                                  + " (Win32 error: " + std::to_string(err) + ")");
     }
     logStage("LoadLibrary succeeded.");
@@ -183,9 +242,15 @@ rps::ipc::ScanResult ClapScanner::scan(const boost::filesystem::path& pluginPath
     }
     const clap_plugin_entry* entry = reinterpret_cast<const clap_plugin_entry*>(procAddress);
 #else
-    lib.h = dlopen(pluginPath.c_str(), RTLD_NOW | RTLD_LOCAL);
+    lib.h = dlopen(binaryPath.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!lib.h) {
-        throw std::runtime_error(std::string("Failed to load CLAP library: ") + dlerror());
+        const char* errPtr = dlerror();
+        std::string errStr = errPtr ? errPtr : "Unknown error";
+        if (errStr.find("missing compatible architecture") != std::string::npos ||
+            errStr.find("wrong architecture") != std::string::npos) {
+            throw std::runtime_error("SKIP: Architecture mismatch: " + errStr);
+        }
+        throw std::runtime_error("Failed to load CLAP library: " + errStr);
     }
     logStage("dlopen succeeded.");
 

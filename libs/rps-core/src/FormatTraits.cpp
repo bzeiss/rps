@@ -107,18 +107,15 @@ public:
     }
 
     bool isBundleDirectory() const override {
-#if defined(__APPLE__)
-        return true;
-#else
-        return false;
-#endif
+        return true; // CLAP can be a bundle on all platforms.
     }
 
     bool isPluginPath(const fs::path& path) const override {
         std::string ext = path.extension().string();
         std::transform(ext.begin(), ext.end(), ext.begin(),
                        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        return ext == ".clap" && (isBundleDirectory() ? fs::is_directory(path) : fs::is_regular_file(path));
+        if (ext != ".clap") return false;
+        return fs::is_directory(path) || fs::is_regular_file(path);
     }
 };
 

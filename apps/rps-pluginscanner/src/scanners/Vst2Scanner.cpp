@@ -223,8 +223,14 @@ rps::ipc::ScanResult Vst2Scanner::scan(const boost::filesystem::path& pluginPath
 #else
     void* handle = dlopen(pluginPath.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!handle) {
+        const char* errPtr = dlerror();
+        std::string errStr = errPtr ? errPtr : "Unknown error";
+        if (errStr.find("missing compatible architecture") != std::string::npos ||
+            errStr.find("wrong architecture") != std::string::npos) {
+            throw std::runtime_error("SKIP: Architecture mismatch: " + errStr);
+        }
         throw std::runtime_error("Failed to load VST2 shared library: " + pluginPath.string()
-                                 + " (" + dlerror() + ")");
+                                 + " (" + errStr + ")");
     }
     logStage("dlopen succeeded.");
 
