@@ -614,7 +614,7 @@ void ClapGuiHost::cleanup() {
         std::lock_guard lock(s_timerMutex);
         s_timers.clear();
     }
-#ifndef _WIN32
+#ifdef __linux__
     {
         std::lock_guard lock(s_fdMutex);
         s_fds.clear();

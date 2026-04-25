@@ -9,6 +9,24 @@
 #ifndef _WIN32
 #include <fcntl.h>
 #include <time.h>
+#include <errno.h>
+#endif
+
+#ifdef __APPLE__
+static int sem_timedwait(sem_t* sem, const struct timespec* abs_timeout) {
+    while (sem_trywait(sem) == -1) {
+        if (errno != EAGAIN) return -1;
+        struct timespec now;
+        clock_gettime(CLOCK_REALTIME, &now);
+        if (now.tv_sec > abs_timeout->tv_sec ||
+            (now.tv_sec == abs_timeout->tv_sec && now.tv_nsec >= abs_timeout->tv_nsec)) {
+            errno = ETIMEDOUT;
+            return -1;
+        }
+        std::this_thread::yield();
+    }
+    return 0;
+}
 #endif
 
 namespace bip = boost::interprocess;

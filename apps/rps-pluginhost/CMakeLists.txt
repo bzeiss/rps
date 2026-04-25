@@ -31,6 +31,9 @@ elseif(APPLE)
     target_sources(vst3-hosting-helpers PRIVATE
         ${VST3_SDK_ROOT}/public.sdk/source/vst/hosting/module_mac.mm
     )
+    set_source_files_properties(${VST3_SDK_ROOT}/public.sdk/source/vst/hosting/module_mac.mm
+        PROPERTIES COMPILE_FLAGS "-fobjc-arc"
+    )
 else()
     target_sources(vst3-hosting-helpers PRIVATE
         ${VST3_SDK_ROOT}/public.sdk/source/vst/hosting/module_linux.cpp

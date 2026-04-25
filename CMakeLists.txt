@@ -5,7 +5,7 @@ cmake_policy(SET CMP0167 NEW)
 project(rps-plugin-scanner
     VERSION 0.2.1
     DESCRIPTION "RPS"
-    LANGUAGES C CXX
+    LANGUAGES C CXX OBJCXX
 )
 
 # x64-windows* vcpkg triplets produce MSVC-ABI binaries. Using GNU-targeting
