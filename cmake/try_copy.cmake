@@ -8,6 +8,11 @@ if(NOT DEFINED SRC OR NOT DEFINED DST)
     message(FATAL_ERROR "try_copy.cmake: SRC and DST must be defined")
 endif()
 
+# If source doesn't exist, just exit silently. This handles optional binaries.
+if(NOT EXISTS "${SRC}")
+    return()
+endif()
+
 # Force the copy if the destination doesn't exist, otherwise use copy_if_different
 if(NOT EXISTS "${DST}")
     set(_CMD copy)

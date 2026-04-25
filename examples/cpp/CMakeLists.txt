@@ -100,5 +100,10 @@ add_custom_command(TARGET rps-example-client POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:rps-pluginscanner>
         "$<TARGET_FILE_DIR:rps-example-client>/$<TARGET_FILE_NAME:rps-pluginscanner>"
+    # Optional Rosetta fallback scanner
+    COMMAND ${CMAKE_COMMAND} 
+        -DSRC="$<TARGET_FILE_DIR:rps-pluginscanner>/rps-pluginscanner_x86_64" 
+        -DDST="$<TARGET_FILE_DIR:rps-example-client>/rps-pluginscanner_x86_64" 
+        -P "${CMAKE_SOURCE_DIR}/cmake/try_copy.cmake"
     COMMENT "Ensuring server binaries are present for C++ example"
 )

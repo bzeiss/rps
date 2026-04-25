@@ -67,6 +67,7 @@ void DatabaseManager::initializeSchema() {
             file_hash TEXT,
             factory_email TEXT,
             factory_flags INTEGER DEFAULT 0,
+            architecture TEXT,
             last_scanned TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     )";
@@ -166,6 +167,13 @@ void DatabaseManager::initializeSchema() {
     )";
 
     executeQuery(createTablePlugins);
+    
+    // Migration: add architecture column if it doesn't exist
+    try {
+        executeQuery("ALTER TABLE plugins ADD COLUMN architecture TEXT;");
+    } catch (...) {
+        // Column likely already exists
+    }
     executeQuery(createTableParameters);
     executeQuery(createTableAaxPlugins);
     executeQuery(createTableVst3Classes);
@@ -310,7 +318,8 @@ void DatabaseManager::initializeSchema() {
 }
 
 void DatabaseManager::upsertPluginResult(const boost::filesystem::path& pluginPath, const rps::ipc::ScanResult& result,
-                                          int64_t scanTimeMs, const std::string& fileMtime, const std::string& fileHash) {
+                                          int64_t scanTimeMs, const std::string& fileMtime, const std::string& fileHash,
+                                          const std::string& architecture) {
     std::lock_guard<std::mutex> lock(m_dbMutex);
 
     // Wrap the entire operation in a single transaction. Without this, each
@@ -323,8 +332,8 @@ void DatabaseManager::upsertPluginResult(const boost::filesystem::path& pluginPa
     
     // 1. Upsert into plugins table
     const std::string upsertPluginSql = R"(
-        INSERT INTO plugins (format, path, name, uid, vendor, version, description, url, category, num_inputs, num_outputs, status, error_message, scan_time_ms, file_mtime, file_hash, factory_email, factory_flags, last_scanned)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUCCESS', NULL, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO plugins (format, path, name, uid, vendor, version, description, url, category, num_inputs, num_outputs, status, error_message, scan_time_ms, file_mtime, file_hash, factory_email, factory_flags, architecture, last_scanned)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUCCESS', NULL, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(path) DO UPDATE SET
             format=excluded.format,
             name=excluded.name,
@@ -343,6 +352,7 @@ void DatabaseManager::upsertPluginResult(const boost::filesystem::path& pluginPa
             file_hash=excluded.file_hash,
             factory_email=excluded.factory_email,
             factory_flags=excluded.factory_flags,
+            architecture=excluded.architecture,
             last_scanned=excluded.last_scanned;
     )";
 
@@ -378,6 +388,7 @@ void DatabaseManager::upsertPluginResult(const boost::filesystem::path& pluginPa
     }
     sqlite3_bind_text(stmt, 15, factoryEmail.c_str(), -1, SQLITE_TRANSIENT);      // factory_email
     sqlite3_bind_int(stmt, 16, factoryFlags);                                     // factory_flags
+    sqlite3_bind_text(stmt, 17, architecture.c_str(), -1, SQLITE_TRANSIENT);      // architecture
 
     if (sqlite3_step(stmt) != SQLITE_DONE) {
         std::cerr << "Failed to execute plugin upsert.\n";

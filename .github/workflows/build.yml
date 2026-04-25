@@ -219,6 +219,15 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }}
 
+          if [ "${{ matrix.vcpkg_triplet }}" = "arm64-osx-release" ]; then
+            echo "Configuring Rosetta fallback build..."
+            cmake -G Ninja -B build_x86_64 \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+              -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
+              -DVCPKG_TARGET_TRIPLET=x64-osx-release
+          fi
+
       - name: Save vcpkg binary archives (Unix)
         if: ${{ runner.os != 'Windows' && always() && steps.vcpkg_cache_restore_unix.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
@@ -228,7 +237,12 @@ jobs:
 
       - name: Build (Unix)
         if: runner.os != 'Windows'
-        run: cmake --build build --config Release
+        run: |
+          cmake --build build --config Release
+          if [ "${{ matrix.vcpkg_triplet }}" = "arm64-osx-release" ]; then
+            echo "Building Rosetta fallback workers..."
+            cmake --build build_x86_64 --target rps-pluginscanner rps-pluginhost
+          fi
 
       - name: Configure CMake (Windows MSVC)
         if: runner.os == 'Windows' && matrix.toolchain == 'msvc'
@@ -258,6 +272,12 @@ jobs:
           cp build/apps/rps-pluginscanner/rps-pluginscanner release_stage/
           cp build/apps/rps-vstscannermaster/vstscannermaster release_stage/
           cp build/examples/cpp/rps-example-client release_stage/
+
+          if [ "${{ matrix.vcpkg_triplet }}" = "arm64-osx-release" ]; then
+            cp build_x86_64/apps/rps-pluginscanner/rps-pluginscanner release_stage/rps-pluginscanner_x86_64
+            cp build_x86_64/apps/rps-pluginhost/rps-pluginhost release_stage/rps-pluginhost_x86_64
+          fi
+
           cd release_stage
           if [ "${{ matrix.archive_ext }}" = "tar.gz" ]; then
             tar -czvf "../${{ matrix.artifact_name }}.tar.gz" ./*

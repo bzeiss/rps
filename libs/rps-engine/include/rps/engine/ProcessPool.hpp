@@ -33,6 +33,7 @@ struct ScanJob {
     size_t maxRetries = 3;
     size_t attempt = 0;  // 0 = first try, 1 = first retry, etc.
     std::string format;  // e.g. "vst3", "clap", "aax" — used to persist skips
+    std::string architecture; // e.g. "arm64" or "x86_64" (Rosetta fallback)
 };
 
 class ProcessPool {

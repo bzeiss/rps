@@ -224,6 +224,17 @@ ScanSummary ScanEngine::runScan(const ScanConfig& config, ScanObserver* observer
     // --- Build job list ---
     size_t totalPlugins = pluginsToScan.size();
     std::vector<ScanJob> jobs;
+    std::string nativeArch;
+#if defined(__APPLE__) && defined(__aarch64__)
+    nativeArch = "arm64";
+#elif defined(__APPLE__) && defined(__x86_64__)
+    nativeArch = "x86_64";
+#elif defined(_WIN32)
+    nativeArch = "x86_64"; // Assuming Windows is x86_64 for now
+#else
+    nativeArch = "x86_64"; // Defaulting to x86_64 for Linux/others
+#endif
+
     for (size_t i = 0; i < pluginsToScan.size(); ++i) {
         std::string fmt;
         for (const auto* traits : formatsToScan) {
@@ -233,7 +244,7 @@ ScanSummary ScanEngine::runScan(const ScanConfig& config, ScanObserver* observer
             }
         }
         jobs.push_back({ pluginsToScan[i], scannerPath.string(), config.timeoutMs, config.verbose,
-                          i, totalPlugins, config.retries, 0, fmt });
+                          i, totalPlugins, config.retries, 0, fmt, nativeArch });
     }
 
     // --- Notify observer ---

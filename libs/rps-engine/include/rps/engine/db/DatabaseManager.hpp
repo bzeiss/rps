@@ -27,7 +27,8 @@ public:
 
     // Insert or update a plugin scan result
     void upsertPluginResult(const boost::filesystem::path& pluginPath, const rps::ipc::ScanResult& result,
-                            int64_t scanTimeMs, const std::string& fileMtime = "", const std::string& fileHash = "");
+                            int64_t scanTimeMs, const std::string& fileMtime, const std::string& fileHash,
+                            const std::string& architecture = "");
 
     // Record a failed scan
     void recordPluginFailure(const boost::filesystem::path& pluginPath, const std::string& errorMsg,

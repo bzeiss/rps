@@ -8,6 +8,7 @@
 
 #include <iostream>
 #include <string>
+#include <fstream>
 #include <thread>
 #include <chrono>
 #include <vector>
@@ -86,6 +87,8 @@ int main(int argc, char* argv[]) {
         ("help,h", "Produce help message")
         ("ipc-id,i", po::value<std::string>(), "IPC connection handle ID")
         ("plugin-path,p", po::value<std::string>(), "Path to plugin to scan")
+        ("rosetta-file", po::value<std::string>(), "Output ScanResult to temp file (bypass MQ)")
+        ("format", po::value<std::string>(), "Plugin format (for rosetta fallback)")
         ("worker-id,w", po::value<int>()->default_value(0), "Worker ID (for log file naming)");
         
     po::variables_map vm;
@@ -102,8 +105,8 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    if (!vm.count("ipc-id")) {
-        std::cerr << "Error: --ipc-id is required.\n";
+    if (!vm.count("ipc-id") && !vm.count("rosetta-file")) {
+        std::cerr << "Error: --ipc-id or --rosetta-file is required.\n";
         return 1;
     }
 
@@ -116,27 +119,34 @@ int main(int argc, char* argv[]) {
     // Set g_verbose based on the effective spdlog level (used by scanner implementations)
     g_verbose = (spdlog::default_logger()->level() <= spdlog::level::debug);
 
-    std::string ipcId = vm["ipc-id"].as<std::string>();
+    std::string ipcId = vm.count("ipc-id") ? vm["ipc-id"].as<std::string>() : "";
     std::string pluginPathStr = vm.count("plugin-path") ? vm["plugin-path"].as<std::string>() : "unknown";
+    std::string rosettaFile = vm.count("rosetta-file") ? vm["rosetta-file"].as<std::string>() : "";
+    std::string reqFormat = vm.count("format") ? vm["format"].as<std::string>() : "";
+
     fs::path pluginPath(pluginPathStr);
 
     try {
-        spdlog::info("{}: Connecting to IPC queue...", pluginPath.filename().string());
-        // 1. Connect to Orchestrator IPC Queue
-        auto connection = rps::ipc::MessageQueueConnection::createClient(ipcId);
+        std::unique_ptr<rps::ipc::MessageQueueConnection> connection;
+        
+        if (rosettaFile.empty()) {
+            spdlog::info("{}: Connecting to IPC queue...", pluginPath.filename().string());
+            // 1. Connect to Orchestrator IPC Queue
+            connection = rps::ipc::MessageQueueConnection::createClient(ipcId);
 
-        spdlog::info("{}: Waiting for ScanCommand...", pluginPath.filename().string());
-        // 2. Wait for the ScanCommand (protobuf over MQ)
-        rps::scanner::ScanCommand scanCmd;
-        if (!connection->receiveProto(scanCmd, 5000)) {
-            spdlog::error("Failed to receive ScanCommand from Orchestrator.");
-            std::cerr << "Failed to receive ScanCommand from Orchestrator.\n";
-            return 1;
+            spdlog::info("{}: Waiting for ScanCommand...", pluginPath.filename().string());
+            // 2. Wait for the ScanCommand (protobuf over MQ)
+            rps::scanner::ScanCommand scanCmd;
+            if (!connection->receiveProto(scanCmd, 5000)) {
+                spdlog::error("Failed to receive ScanCommand from Orchestrator.");
+                std::cerr << "Failed to receive ScanCommand from Orchestrator." << std::endl;
+                return 1;
+            }
+
+            reqFormat = scanCmd.format();
+            pluginPathStr = scanCmd.plugin_path();
+            pluginPath = boost::filesystem::path(pluginPathStr);
         }
-
-        std::string reqFormat = scanCmd.format();
-        pluginPathStr = scanCmd.plugin_path();
-        pluginPath = boost::filesystem::path(pluginPathStr);
 
         spdlog::info("{}: Finding {} scanner...", pluginPath.filename().string(), reqFormat);
         // 3. Find appropriate scanner
@@ -165,17 +175,27 @@ int main(int argc, char* argv[]) {
             auto* err = evtMsg.mutable_error();
             err->set_error("Unsupported Format");
             err->set_details("No scanner handles: " + pluginPathStr);
-            connection->sendProto(evtMsg);
-            return 1;
+            if (connection) {
+                connection->sendProto(evtMsg);
+            } else {
+                std::ofstream ofs(rosettaFile, std::ios::binary);
+                if (ofs.is_open()) {
+                    evtMsg.SerializeToOstream(&ofs);
+                    ofs.close();
+                }
+            }
+            _exit(1);
         }
 
         // 4. Progress Callback closure
         auto progressCb = [&connection](int percentage, const std::string& status) {
-            rps::scanner::ScannerEvent evtMsg;
-            auto* prog = evtMsg.mutable_progress();
-            prog->set_status(status);
-            prog->set_progress_percentage(percentage);
-            connection->sendProto(evtMsg);
+            if (connection) {
+                rps::scanner::ScannerEvent evtMsg;
+                auto* prog = evtMsg.mutable_progress();
+                prog->set_status(status);
+                prog->set_progress_percentage(percentage);
+                connection->sendProto(evtMsg);
+            }
         };
 
         // --- CRASH TEST SIMULATION ---
@@ -235,21 +255,38 @@ int main(int argc, char* argv[]) {
                 }
 
                 auto t2 = std::chrono::steady_clock::now();
-                bool sent = connection->sendProto(evtMsg);
-                auto t3 = std::chrono::steady_clock::now();
-
-                auto sendMs = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
-                spdlog::debug("{}: IPC sendProto {} in {}ms",
-                              pluginPath.filename().string(), sent ? "OK" : "FAILED", sendMs);
+                if (connection) {
+                    bool sent = connection->sendProto(evtMsg);
+                    auto t3 = std::chrono::steady_clock::now();
+                    auto sendMs = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
+                    spdlog::debug("{}: IPC sendProto {} in {}ms",
+                                  pluginPath.filename().string(), sent ? "OK" : "FAILED", sendMs);
+                } else {
+                    std::ofstream ofs(rosettaFile, std::ios::binary);
+                    if (ofs.is_open()) {
+                        evtMsg.SerializeToOstream(&ofs);
+                        ofs.close();
+                        spdlog::debug("{}: Wrote to rosetta-file {}", pluginPath.filename().string(), rosettaFile);
+                    } else {
+                        std::cerr << "Failed to open rosetta-file for writing: " << rosettaFile << "\n";
+                    }
+                }
             } catch (const std::exception& scanErr) {
                 std::string what = scanErr.what();
                 spdlog::error("{}: Scan error: {}", pluginPath.filename().string(), what);
-                std::cerr << "Scanner Fatal Error: " << what << "\n";
                 rps::scanner::ScannerEvent evtMsg;
                 auto* err = evtMsg.mutable_error();
                 err->set_error("Scan Error");
                 err->set_details(what);
-                connection->sendProto(evtMsg);
+                if (connection) {
+                    connection->sendProto(evtMsg);
+                } else {
+                    std::ofstream ofs(rosettaFile, std::ios::binary);
+                    if (ofs.is_open()) {
+                        evtMsg.SerializeToOstream(&ofs);
+                        ofs.close();
+                    }
+                }
             }
         }
 
@@ -258,17 +295,25 @@ int main(int argc, char* argv[]) {
 
     } catch (const std::exception& e) {
         spdlog::error("Scanner fatal error: {}", e.what());
-        std::cerr << "Scanner Fatal Error: " << e.what() << "\n";
-        // Fall through to _exit below
+        // Ensure error is written to rosetta-file if requested
+        std::string rosettaFile = vm.count("rosetta-file") ? vm["rosetta-file"].as<std::string>() : "";
+        if (!rosettaFile.empty()) {
+            rps::scanner::ScannerEvent evtMsg;
+            auto* err = evtMsg.mutable_error();
+            err->set_error("Fatal Error");
+            err->set_details(e.what());
+            std::ofstream ofs(rosettaFile, std::ios::binary);
+            if (ofs.is_open()) {
+                evtMsg.SerializeToOstream(&ofs);
+                ofs.close();
+            }
+        }
+        _exit(1);
     }
 
     // Terminate immediately. All IPC data has been sent; nothing left to clean up.
-    // On Windows, _exit() still calls ExitProcess() which triggers DLL_PROCESS_DETACH
-    // for every loaded plugin DLL -- many plugins hang there for 30-60+ seconds.
-    // TerminateProcess bypasses DLL_PROCESS_DETACH entirely.
+    _exit(0);
 #ifdef _WIN32
     TerminateProcess(GetCurrentProcess(), 0);
-#else
-    _exit(0);
 #endif
 }

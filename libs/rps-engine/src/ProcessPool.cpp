@@ -10,6 +10,7 @@
 #include <rps/engine/ProcessPool.hpp>
 #include <scanner.pb.h>
 #include <string>
+#include <fstream>
 #include <iostream>
 #include <algorithm>
 #include <thread>
@@ -306,10 +307,31 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
     };
 
     try {
-        auto connection = rps::ipc::MessageQueueConnection::createServer(ipcId);
+        std::string uuidStr = boost::uuids::to_string(uuid);
+        ipcId = "rps_scan_" + uuidStr;
+        std::unique_ptr<rps::ipc::MessageQueueConnection> connection;
+        std::string rosettaFile;
 
-        std::vector<std::string> scanArgs = {"--ipc-id", ipcId, "--plugin-path", job.pluginPath.string(),
-                                               "--worker-id", std::to_string(workerId)};
+        if (job.architecture == "x86_64") {
+            rosettaFile = (fs::temp_directory_path() / ("rps_rosetta_" + uuidStr + ".bin")).string();
+        } else {
+            connection = rps::ipc::MessageQueueConnection::createServer(ipcId);
+        }
+
+        std::vector<std::string> scanArgs = {"--worker-id", std::to_string(workerId)};
+        if (!rosettaFile.empty()) {
+            scanArgs.push_back("--rosetta-file");
+            scanArgs.push_back(rosettaFile);
+            scanArgs.push_back("--plugin-path");
+            scanArgs.push_back(job.pluginPath.string());
+            scanArgs.push_back("--format");
+            scanArgs.push_back(job.format);
+        } else {
+            scanArgs.push_back("--ipc-id");
+            scanArgs.push_back(ipcId);
+            scanArgs.push_back("--plugin-path");
+            scanArgs.push_back(job.pluginPath.string());
+        }
 
         bp::ipstream errStream;
         bp::ipstream outStream;
@@ -400,24 +422,26 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
         // joinable, triggering std::terminate().
         try {
 
-        rps::scanner::ScanCommand scanCmd;
-        scanCmd.set_plugin_path(job.pluginPath.string());
-        scanCmd.set_format(job.format);
-        scanCmd.set_requires_ui(false);
-        
-        if (!connection->sendProto(scanCmd)) {
-            std::string errMsg = "Failed to send ScanCommand";
-            if (!enqueueRetry(job, errMsg, workerId)) {
-                if (m_observer) {
-                    m_observer->onPluginCompleted(workerId, pluginFullPath, ScanOutcome::Fail, 0, nullptr, &errMsg);
+        if (connection) {
+            rps::scanner::ScanCommand scanCmd;
+            scanCmd.set_plugin_path(job.pluginPath.string());
+            scanCmd.set_format(job.format);
+            scanCmd.set_requires_ui(false);
+            
+            if (!connection->sendProto(scanCmd)) {
+                std::string errMsg = "Failed to send ScanCommand";
+                if (!enqueueRetry(job, errMsg, workerId)) {
+                    if (m_observer) {
+                        m_observer->onPluginCompleted(workerId, pluginFullPath, ScanOutcome::Fail, 0, nullptr, &errMsg);
+                    }
+                    recordFailure(pluginFullPath, errMsg);
+                    ++m_fail;
                 }
-                recordFailure(pluginFullPath, errMsg);
-                ++m_fail;
+                scannerProc.terminate();
+                safeJoinDrainer();
+                deregisterWorker();
+                return;
             }
-            scannerProc.terminate();
-            safeJoinDrainer();
-            deregisterWorker();
-            return;
         }
 
         bool done = false;
@@ -428,7 +452,28 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
 
         while (!done && !m_stop) {
             rps::scanner::ScannerEvent evt;
-            bool gotEvent = connection->receiveProto(evt, 100); // 100ms polling
+            bool gotEvent = false;
+            
+            if (connection) {
+                gotEvent = connection->receiveProto(evt, 100); // 100ms polling
+            } else {
+                // Rosetta file fallback: poll process exit
+                if (!scannerProc.running()) {
+                    // Process exited. Try to read the result file.
+                    for (int retry = 0; retry < 10; ++retry) {
+                        std::ifstream ifs(rosettaFile, std::ios::binary);
+                        if (ifs.is_open() && evt.ParseFromIstream(&ifs)) {
+                            gotEvent = true;
+                            break;
+                        }
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    }
+                    if (!gotEvent) break; 
+                } else {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                }
+            }
+            
             auto now = std::chrono::steady_clock::now();
 
             // Warn once if scan is taking unusually long
@@ -479,7 +524,7 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                     }
                     if (m_db) {
                         auto dbT0 = std::chrono::steady_clock::now();
-                        m_db->upsertPluginResult(job.pluginPath, res, elapsedMs, fileMtime, fileHash);
+                        m_db->upsertPluginResult(job.pluginPath, res, elapsedMs, fileMtime, fileHash, job.architecture);
                         auto dbMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                             std::chrono::steady_clock::now() - dbT0).count();
                         {
@@ -504,7 +549,33 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                     std::string errMsg = pbErr.error() + ": " + pbErr.details();
                     // Detect SKIP: prefix — plugin is not scannable (e.g. empty bundle)
                     bool isSkip = pbErr.details().rfind("SKIP:", 0) == 0;
-                    if (isSkip) {
+                    
+                    bool rosettaFallbackTriggered = false;
+#if defined(__APPLE__) && defined(__aarch64__)
+                    if (isSkip && job.architecture == "arm64" && pbErr.details().find("Architecture mismatch") != std::string::npos) {
+                        // Determine the path to the x86_64 scanner binary
+                        boost::filesystem::path nativeScannerPath(job.scannerBin);
+                        std::string fallbackBinName = nativeScannerPath.stem().string() + "_x86_64" + nativeScannerPath.extension().string();
+                        boost::filesystem::path fallbackScannerPath = nativeScannerPath.parent_path() / fallbackBinName;
+                        
+                        if (boost::filesystem::exists(fallbackScannerPath)) {
+                            rosettaFallbackTriggered = true;
+                            if (m_observer) {
+                                m_observer->onPluginRetry(workerId, pluginFullPath, 1, 1, "Rosetta fallback (Architecture mismatch)");
+                            }
+                            ScanJob fallbackJob = job;
+                            fallbackJob.attempt = 0; // Reset attempts for the new architecture
+                            fallbackJob.scannerBin = fallbackScannerPath.string();
+                            fallbackJob.architecture = "x86_64";
+                            {
+                                std::lock_guard<std::mutex> lock(m_retryMutex);
+                                m_retryQueue.push_back(fallbackJob);
+                            }
+                        }
+                    }
+#endif
+
+                    if (isSkip && !rosettaFallbackTriggered) {
                         if (m_observer) {
                             m_observer->onPluginCompleted(workerId, pluginFullPath, ScanOutcome::Skipped, elapsedMs, nullptr, &errMsg);
                         }
@@ -531,6 +602,18 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
                 if (!scannerProc.running()) {
                     auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count();
                     int exitCode = scannerProc.exit_code();
+
+                    // IF ROSETTA JOB: Try reading the file ONE LAST TIME before treating it as a crash
+                    if (!rosettaFile.empty()) {
+                        std::ifstream ifs(rosettaFile, std::ios::binary);
+                        if (ifs.is_open() && evt.ParseFromIstream(&ifs)) {
+                            // We got it! Set gotEvent and continue the while loop one more time to hit the Success block.
+                            gotEvent = true;
+                            lastResponseTime = now;
+                            continue; 
+                        }
+                    }
+
                     bool isHardCrash = (exitCode < 0 || exitCode > 1);
                     std::string codeDesc = describeExitCode(exitCode);
                     std::string errMsg = isHardCrash
@@ -631,6 +714,7 @@ void ProcessPool::processJob(const ScanJob& job, size_t workerId) {
 
         // Always close the pipe and join the drainer, even if the above failed
         safeJoinDrainer();
+        if (!rosettaFile.empty()) { fs::remove(rosettaFile); }
 
         } catch (...) {
             // Join drainer before re-throwing so ~thread doesn't call std::terminate

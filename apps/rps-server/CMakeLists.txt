@@ -96,6 +96,15 @@ add_custom_command(TARGET rps-server POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:rps-pluginhost>
         "$<TARGET_FILE_DIR:rps-server>/$<TARGET_FILE_NAME:rps-pluginhost>"
+    # Optional Rosetta fallback binaries
+    COMMAND ${CMAKE_COMMAND} 
+        -DSRC="$<TARGET_FILE_DIR:rps-pluginscanner>/rps-pluginscanner_x86_64" 
+        -DDST="$<TARGET_FILE_DIR:rps-server>/rps-pluginscanner_x86_64" 
+        -P "${CMAKE_SOURCE_DIR}/cmake/try_copy.cmake"
+    COMMAND ${CMAKE_COMMAND} 
+        -DSRC="$<TARGET_FILE_DIR:rps-pluginhost>/rps-pluginhost_x86_64" 
+        -DDST="$<TARGET_FILE_DIR:rps-server>/rps-pluginhost_x86_64" 
+        -P "${CMAKE_SOURCE_DIR}/cmake/try_copy.cmake"
     COMMAND ${CMAKE_COMMAND}
         -DSRC=$<TARGET_FILE:rps-server>
         -DDST=${CMAKE_SOURCE_DIR}/examples/python/$<TARGET_FILE_NAME:rps-server>
